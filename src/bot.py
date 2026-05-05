@@ -44,6 +44,7 @@ class TradingBot:
         # Daily trade limit tracking - resets at market open (9:30 AM EST)
         self.daily_trade_count: int = 0
         self.last_trade_date: datetime.date = None
+        self.signals_used_today: set = set()  # Tracks used signals to prevent re-entry on same breakout
 
     def log_audit(self, action: str, symbol: str, direction: str, price: float, reason: str, 
                   adx: Optional[float] = None, vwap: Optional[float] = None, 
@@ -81,6 +82,7 @@ class TradingBot:
         if self.last_trade_date != today:
             self.daily_trade_count = 0
             self.last_trade_date = today
+            self.signals_used_today.clear()
             logger.info(f"Daily trade count reset for {today}")
 
     def get_current_price(self, symbol: str) -> float:
@@ -226,7 +228,7 @@ class TradingBot:
             
             # 2. Calculate ADX (Trend Strength)
             adx_indicator = ta.trend.ADXIndicator(
-                high=df['high'], low=df['low'], close=df['close'], window=14
+                high=df['high'], low=df['low'], close=df['close'], window=50
             )
             df['ADX'] = adx_indicator.adx()
 
@@ -282,6 +284,11 @@ class TradingBot:
             logger.warning(f"Already in an active trade for {symbol}. Skipping.")
             return
 
+        # Prevent re-entry on the same breakout signal for the day
+        if (symbol, direction) in self.signals_used_today:
+            logger.info(f"Signal ({symbol}, {direction}) already used today. Skipping re-entry.")
+            return
+
         # Check daily trade limit
         self.check_and_reset_daily_trade_count()
         if self.daily_trade_count >= config.MAX_TRADES_PER_DAY:
@@ -293,8 +300,9 @@ class TradingBot:
             return
 
         # Calculate ATM and OTM strikes
-        atm_strike = round(underlying_price)
-        strike_width = 1  # $1 wide spread
+        step = config.STRIKE_STEP.get(symbol, 1)
+        atm_strike = round(underlying_price / step) * step
+        strike_width = step  # Spread width matches strike step
         
         if direction == "CALL":
             long_strike = atm_strike
@@ -315,13 +323,13 @@ class TradingBot:
             )
             return
         
-        qty_to_buy = int(config.MAX_POSITION_SIZE // spread_cost)
+        qty_to_buy = int(config.MAX_POSITION_SIZE // (spread_cost * 100))
         
         if qty_to_buy < 1:
-            logger.warning(f"Spread cost ${spread_cost:.2f} exceeds max position size of ${config.MAX_POSITION_SIZE}.")
+            logger.warning(f"Spread cost ${spread_cost:.2f} per share (${spread_cost*100:.2f} per contract) exceeds max position size of ${config.MAX_POSITION_SIZE}.")
             return
             
-        total_investment = qty_to_buy * spread_cost
+        total_investment = qty_to_buy * spread_cost * 100
         
         try:
             self.active_trades[symbol] = {
@@ -334,7 +342,8 @@ class TradingBot:
                 'entry_indicators': indicators  # Store indicators for potential exit logging
             }
             self.daily_trade_count += 1
-            logger.info(f"EXECUTED {direction} SPREAD: {qty_to_buy} contracts of {symbol} at ${spread_cost:.2f} (Total: ${total_investment})")
+            self.signals_used_today.add((symbol, direction))
+            logger.info(f"EXECUTED {direction} SPREAD: {qty_to_buy} contracts of {symbol} at ${spread_cost:.2f} per share (${spread_cost*100:.2f} per contract) (Total: ${total_investment})")
             logger.info(f"Underlying Entry Price: ${underlying_price:.2f} | Long Strike: ${long_strike} | Short Strike: ${short_strike}")
             logger.info(f"Entry Indicators - ADX: {indicators.get('adx', 'N/A'):.2f if indicators.get('adx') else 'N/A'}, VWAP: {indicators.get('vwap', 'N/A'):.2f if indicators.get('vwap') else 'N/A'}, ORB: ({indicators.get('orb_low', 'N/A'):.2f if indicators.get('orb_low') else 'N/A'}, {indicators.get('orb_high', 'N/A'):.2f if indicators.get('orb_high') else 'N/A'})")
             logger.info(f"Daily trades: {self.daily_trade_count}/{config.MAX_TRADES_PER_DAY}")
@@ -420,7 +429,7 @@ class TradingBot:
                 df['VWAP'] = vwap_indicator.volume_weighted_average_price()
                 
                 adx_indicator = ta.trend.ADXIndicator(
-                    high=df['high'], low=df['low'], close=df['close'], window=14
+                    high=df['high'], low=df['low'], close=df['close'], window=50
                 )
                 df['ADX'] = adx_indicator.adx()
                 
@@ -440,7 +449,7 @@ class TradingBot:
             
             logger.info(f"[{symbol}] CLOSED SPREAD POSITION: {trade['direction']} at ${current_spread_value:.2f}")
             profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
-            dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty']
+            dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
             self.log_audit(
                 "SELL", symbol, trade['direction'], current_spread_value, reason,
                 adx=exit_indicators.get('adx'),
@@ -451,16 +460,21 @@ class TradingBot:
                 profit_pct=profit_pct,
                 dollar_pnl=dollar_pnl
             )
-            
-            del self.active_trades[symbol]
-        except Exception as e:
-            logger.error(f"Failed to close position for {symbol}: {e}")
+        finally:
+            self.active_trades.pop(symbol, None)
 
     def run(self):
         """Main execution loop."""
         logger.info("Starting Options Spread Trading Bot...")
         while True:
             try:
+                # Check market hours
+                clock = self.api.get_clock()
+                if not clock.is_open:
+                    logger.info("Market is closed. Sleeping for 5 minutes.")
+                    time.sleep(300)
+                    continue
+
                 # Evaluate exits for all active trades
                 self.evaluate_exit_conditions()
                 
