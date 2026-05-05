@@ -2,6 +2,9 @@ import time
 from typing import Dict, Optional
 import alpaca_trade_api as tradeapi
 from alpaca_trade_api.rest import TimeFrame
+from alpaca.data.historical.option import OptionHistoricalDataClient
+from alpaca.data.requests import OptionChainRequest, OptionLatestQuoteRequest, OptionLatestTradeRequest
+from alpaca.trading.enums import ContractType
 import logging
 import pandas as pd
 import ta
@@ -21,10 +24,17 @@ class TradingBot:
     def __init__(self):
         # Initialize Alpaca API using config variables
         self.api = tradeapi.REST(
-            config.ALPACA_API_KEY, 
-            config.ALPACA_SECRET_KEY, 
-            config.ALPACA_BASE_URL, 
+            config.ALPACA_API_KEY,
+            config.ALPACA_SECRET_KEY,
+            config.ALPACA_BASE_URL,
             api_version='v2'
+        )
+
+        self.options_client = OptionHistoricalDataClient(
+            api_key=config.ALPACA_API_KEY,
+            secret_key=config.ALPACA_SECRET_KEY,
+            use_basic_auth=False,
+            raw_data=False,
         )
         
         # State Management - tracks one active trade per symbol
@@ -79,51 +89,88 @@ class TradingBot:
             logger.error(f"Error fetching price for {symbol}: {e}")
             return 0.0
 
+    def _format_occ_symbol(self, symbol: str, expiration_date: str, direction: str, strike: float) -> str:
+        expiration_code = datetime.datetime.strptime(expiration_date, "%Y-%m-%d").strftime("%y%m%d")
+        option_letter = "C" if direction == "CALL" else "P"
+        strike_code = f"{int(round(strike * 1000)):08d}"
+        return f"{symbol.upper()}{expiration_code}{option_letter}{strike_code}"
+
+    def _quote_mid(self, quote) -> float:
+        if not quote:
+            return 0.0
+        bid_price = float(quote.bid_price) if quote.bid_price is not None else 0.0
+        ask_price = float(quote.ask_price) if quote.ask_price is not None else 0.0
+        if bid_price > 0 and ask_price > 0:
+            return (bid_price + ask_price) / 2
+        if bid_price > 0:
+            return bid_price
+        if ask_price > 0:
+            return ask_price
+        return 0.0
+
+    def _trade_price(self, trade) -> float:
+        if not trade or trade.price is None:
+            return 0.0
+        return float(trade.price)
+
     def get_spread_value(self, symbol: str, direction: str, long_strike: float, short_strike: float) -> float:
-        """Fetch the current market value of the option spread from Alpaca API."""
+        """Fetch the current market value of the option spread from Alpaca's options data API."""
         try:
-            # Get option chains for the symbol
-            # Assuming same-day expiration (0DTE) - fetch options for today
             today = datetime.datetime.now(pytz.timezone('America/New_York')).date()
             expiration_date = today.isoformat()
-            
-            # Fetch option chain data
-            option_chain = self.api.get_option_chain(symbol, feed='iex')
-            if not option_chain:
-                logger.warning(f"No option chain data available for {symbol}")
+            option_type = ContractType.CALL if direction == 'CALL' else ContractType.PUT
+
+            def fetch_leg_price(strike: float) -> float:
+                # First try to load the option chain for the exact strike.
+                chain_request = OptionChainRequest(
+                    underlying_symbol=symbol,
+                    type=option_type,
+                    expiration_date=expiration_date,
+                    strike_price_gte=strike,
+                    strike_price_lte=strike,
+                )
+                option_chain = self.options_client.get_option_chain(chain_request)
+                if option_chain:
+                    snapshot = next(iter(option_chain.values()), None)
+                    if snapshot is not None:
+                        mid = self._quote_mid(getattr(snapshot, 'latest_quote', None))
+                        if mid > 0:
+                            return mid
+                        mid = self._trade_price(getattr(snapshot, 'latest_trade', None))
+                        if mid > 0:
+                            return mid
+
+                # Fallback: use direct latest quote/trade on the specific OCC contract symbol.
+                occ_symbol = self._format_occ_symbol(symbol, expiration_date, direction, strike)
+                logger.info(f"Falling back to latest option quote for {occ_symbol}")
+
+                quote_request = OptionLatestQuoteRequest(symbol_or_symbols=occ_symbol)
+                latest_quote = self.options_client.get_option_latest_quote(quote_request)
+                if latest_quote and occ_symbol in latest_quote:
+                    mid = self._quote_mid(latest_quote[occ_symbol])
+                    if mid > 0:
+                        return mid
+
+                trade_request = OptionLatestTradeRequest(symbol_or_symbols=occ_symbol)
+                latest_trade = self.options_client.get_option_latest_trade(trade_request)
+                if latest_trade and occ_symbol in latest_trade:
+                    mid = self._trade_price(latest_trade[occ_symbol])
+                    if mid > 0:
+                        return mid
+
                 return 0.0
-            
-            # Filter for the right expiration and strikes
-            contracts = option_chain.df if hasattr(option_chain, 'df') else option_chain
-            
-            # Filter for CALL or PUT and our specific strikes
-            option_type = 'call' if direction == 'CALL' else 'put'
-            long_contract = contracts[
-                (contracts['strike'] == long_strike) & 
-                (contracts['option_type'] == option_type)
-            ]
-            short_contract = contracts[
-                (contracts['strike'] == short_strike) & 
-                (contracts['option_type'] == option_type)
-            ]
-            
-            if long_contract.empty or short_contract.empty:
-                logger.warning(f"Could not find option contracts for {symbol} {direction} strikes {long_strike}/{short_strike}")
+
+            long_mid = fetch_leg_price(long_strike)
+            short_mid = fetch_leg_price(short_strike)
+
+            if long_mid <= 0 or short_mid <= 0:
+                logger.warning(
+                    f"Could not find option contracts for {symbol} {direction} strikes {long_strike}/{short_strike}"
+                )
                 return 0.0
-            
-            # Get bid/ask midpoints
-            long_bid = float(long_contract['bid'].iloc[0]) if long_contract['bid'].iloc[0] else 0.0
-            long_ask = float(long_contract['ask'].iloc[0]) if long_contract['ask'].iloc[0] else 0.0
-            long_mid = (long_bid + long_ask) / 2 if long_bid > 0 and long_ask > 0 else 0.0
-            
-            short_bid = float(short_contract['bid'].iloc[0]) if short_contract['bid'].iloc[0] else 0.0
-            short_ask = float(short_contract['ask'].iloc[0]) if short_contract['ask'].iloc[0] else 0.0
-            short_mid = (short_bid + short_ask) / 2 if short_bid > 0 and short_ask > 0 else 0.0
-            
-            # Spread value = long leg cost - short leg credit (for debit spreads)
-            spread_value = long_mid - short_mid
-            return max(spread_value, 0.01)  # Minimum value of $0.01
-            
+
+            return max(long_mid - short_mid, 0.01)
+
         except Exception as e:
             logger.error(f"Error fetching spread value for {symbol}: {e}")
             return 0.0
