@@ -228,7 +228,7 @@ class TradingBot:
             
             # 2. Calculate ADX (Trend Strength)
             adx_indicator = ta.trend.ADXIndicator(
-                high=df['high'], low=df['low'], close=df['close'], window=50
+                high=df['high'], low=df['low'], close=df['close'], window=30
             )
             df['ADX'] = adx_indicator.adx()
 
@@ -290,7 +290,6 @@ class TradingBot:
             return
 
         # Check daily trade limit
-        self.check_and_reset_daily_trade_count()
         if self.daily_trade_count >= config.MAX_TRADES_PER_DAY:
             logger.warning(f"Daily trade limit of {config.MAX_TRADES_PER_DAY} reached. No new entries.")
             return
@@ -302,7 +301,7 @@ class TradingBot:
         # Calculate ATM and OTM strikes
         step = config.STRIKE_STEP.get(symbol, 1)
         atm_strike = round(underlying_price / step) * step
-        strike_width = step  # Spread width matches strike step
+        strike_width = config.SPREAD_WIDTH.get(symbol, 1)  # Spread width in dollars
         
         if direction == "CALL":
             long_strike = atm_strike
@@ -421,7 +420,7 @@ class TradingBot:
         try:
             # Fetch current indicators at exit time for logging context
             df = self.fetch_intraday_data(symbol)
-            exit_indicators = {}
+            exit_indicators = trade.get('entry_indicators', {}).copy()
             if not df.empty:
                 vwap_indicator = ta.volume.VolumeWeightedAveragePrice(
                     high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
@@ -429,7 +428,7 @@ class TradingBot:
                 df['VWAP'] = vwap_indicator.volume_weighted_average_price()
                 
                 adx_indicator = ta.trend.ADXIndicator(
-                    high=df['high'], low=df['low'], close=df['close'], window=50
+                    high=df['high'], low=df['low'], close=df['close'], window=30
                 )
                 df['ADX'] = adx_indicator.adx()
                 
@@ -474,6 +473,9 @@ class TradingBot:
                     logger.info("Market is closed. Sleeping for 5 minutes.")
                     time.sleep(300)
                     continue
+
+                # Reset daily counters if needed
+                self.check_and_reset_daily_trade_count()
 
                 # Evaluate exits for all active trades
                 self.evaluate_exit_conditions()
