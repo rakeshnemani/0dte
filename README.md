@@ -66,8 +66,9 @@ The bot uses `pandas` and `ta` to fetch intraday 1-minute bars and calculates:
 It executes ATM debit spreads and manages risk via a strict set of trailing stop and hard stop loss configurations defined in the `.env` file.
 
 ### Entry Filters
-- **Daily Trade Limit:** Maximum 5 trades opened per day (resets at 9:30 AM EST). This prevents over-trading during choppy days when the bot could churn through capital quickly without generating profits.
-- **Time-of-Day Filter:** No entries after 1:00 PM EST (14:00). This prevents trading late-day 0DTE spreads when theta decay accelerates and small adverse moves can cause rapid value collapse.
+- **Time-of-Day Filter:** No entries after 1:00 PM EST (14:00). This cutoff is checked at the loop level before any API calls, preventing unnecessary market data fetches. Protects against late-day theta decay.
+- **Daily Trade Limit:** Maximum 5 trades opened per day (resets at 9:30 AM EST). Prevents over-trading during choppy days.
+- **Minimum Spread Cost:** Spread must cost at least $0.10 (configurable via `MIN_SPREAD_COST`). Prevents trading nearly-worthless spreads with no liquidity.
 - **Trend Filter:** ADX must be > 25 to indicate a strong directional trend.
 - **Price Action Filter:** Price must break above/below the 30-minute opening range AND be on the correct side of VWAP.
 

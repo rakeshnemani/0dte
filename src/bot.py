@@ -198,17 +198,16 @@ class TradingBot:
             logger.error(f"Failed to fetch intraday data: {e}")
             return pd.DataFrame()
 
+    def _is_entry_window(self) -> bool:
+        now = datetime.datetime.now(pytz.timezone('America/New_York'))
+        return now.hour < 14
+
     def evaluate_entry_strategy(self, symbol: str) -> Tuple[Optional[str], str, dict]:
         """
         Calculates VWAP, 30-min ORB, and ADX to determine trend direction.
         Returns (direction, reason, indicators_dict) where direction is 'CALL'/'PUT' or None.
         indicators_dict contains: {adx, vwap, orb_high, orb_low, current_price}
         """
-        # Time filter: Do not enter after 1:00 PM EST (14:00 in 24-hour format)
-        now = datetime.datetime.now(pytz.timezone('America/New_York'))
-        if now.hour >= 14:  # 2:00 PM or later
-            return None, "", {}  # No entries after 1:00 PM to avoid late-day theta decay
-        
         df = self.fetch_intraday_data(symbol)
         if df.empty or len(df) < 30:
             return None, "", {}  # Not enough data (e.g. market just opened)
@@ -303,6 +302,12 @@ class TradingBot:
         spread_cost = self.get_spread_value(symbol, direction, long_strike, short_strike)
         if spread_cost <= 0:
             logger.warning(f"Could not fetch valid spread cost for {symbol}. Aborting trade.")
+            return
+
+        if spread_cost < config.MIN_SPREAD_COST:
+            logger.warning(
+                f"Spread cost ${spread_cost:.2f} is below minimum allowed ${config.MIN_SPREAD_COST:.2f}. Skipping trade for {symbol}."
+            )
             return
         
         qty_to_buy = int(config.MAX_POSITION_SIZE // spread_cost)
@@ -450,12 +455,15 @@ class TradingBot:
                 # Evaluate exits for all active trades
                 self.evaluate_exit_conditions()
                 
-                # Look for new entries in symbols without active trades
-                for symbol in config.SYMBOLS:
-                    if symbol not in self.active_trades:
-                        direction, reason, indicators = self.evaluate_entry_strategy(symbol)
-                        if direction in ["CALL", "PUT"]:
-                            self.execute_trade(symbol, direction, reason, indicators)
+                # Skip new entries entirely after 1:00 PM EST
+                if not self._is_entry_window():
+                    logger.info("Entry window closed after 1:00 PM EST; skipping new entries.")
+                else:
+                    for symbol in config.SYMBOLS:
+                        if symbol not in self.active_trades:
+                            direction, reason, indicators = self.evaluate_entry_strategy(symbol)
+                            if direction in ["CALL", "PUT"]:
+                                self.execute_trade(symbol, direction, reason, indicators)
                 
                 time.sleep(60)
             except KeyboardInterrupt:

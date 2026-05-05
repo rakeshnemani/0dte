@@ -19,19 +19,24 @@ The key improvement is **per-symbol concurrency**: You can have one active trade
 ```mermaid
 graph TD
     Start[Start main.py] --> Init[Initialize Alpaca API & Variables]
-    Init --> Loop[For each symbol in watchlist]
-    Loop --> HasTrade{Does this symbol have an active trade?}
-    HasTrade -- No --> Scan[Scan for Entry Signals]
-    Scan --> TimeCheck{Is it before 1:00 PM EST?}
-    TimeCheck -- Yes --> DailyCheck{Daily trade limit reached?}
-    TimeCheck -- No --> NoEntry[No entries after 1 PM]
-    DailyCheck -- No --> EvalSignals[Evaluate VWAP, ORB, ADX]
-    DailyCheck -- Yes --> LimitReached[Daily limit hit, skip]
-    EvalSignals --> Sleep[Sleep 60 Seconds]
-    NoEntry --> Sleep
-    LimitReached --> Sleep
-    HasTrade -- Yes --> Monitor[Monitor Exit Conditions]
-    Monitor --> Sleep
+    Init --> Loop[60-second heartbeat]
+    Loop --> TimeCheck{Is it before 1:00 PM EST?}
+    TimeCheck -- No --> Sleep[Sleep 60 Seconds]
+    TimeCheck -- Yes --> ExitCheck[Evaluate exits for active trades]
+    ExitCheck --> ForEach[For each symbol in watchlist]
+    ForEach --> HasTrade{Active trade for symbol?}
+    HasTrade -- Yes --> Sleep
+    HasTrade -- No --> DailyCheck{Daily limit reached?}
+    DailyCheck -- Yes --> Sleep
+    DailyCheck -- No --> Scan[Fetch intraday data & evaluate signals]
+    Scan --> SignalFound{Entry signal generated?}
+    SignalFound -- No --> Sleep
+    SignalFound -- Yes --> FetchSpread[Fetch spread cost from Alpaca]
+    FetchSpread --> CostCheck{Cost >= $0.10 min?}
+    CostCheck -- No --> SkipLow[Skip low-cost spread]
+    CostCheck -- Yes --> Execute[Execute trade]
+    Execute --> Sleep
+    SkipLow --> Sleep
     Sleep --> Loop
 ```
 
@@ -41,16 +46,16 @@ graph TD
 
 If the bot has no active trade for a given symbol, it enters the **Scanning Phase**.
 
-### Step 1: Fetch Live Intraday Data
+### Step 1: Time-of-Day Filter (Early Check)
+**Critical:** Before fetching any intraday data, the bot checks if it is past 1:00 PM EST. If so, it skips the entire entry phase for the remaining day.
+
+**Why check early?** This prevents unnecessary Alpaca API calls for market data after the cutoff. 0DTE spreads decay rapidly in the final hours, and entering after 1 PM exposes the trade to unmanageable theta risk. The bot enforces a hard cutoff at 1:00 PM to avoid chasing time decay in unfavorable conditions.
+
+### Step 2: Fetch Live Intraday Data
 The bot asks Alpaca for all 1-minute candlesticks from 9:30 AM EST up to the current minute.
 
-### Step 2: Time-of-Day Filter
-**Critical:** If the current time is 1:00 PM EST or later, the bot skips entry evaluation for this symbol and moves to the next one.
-
-**Why?** 0DTE spreads decay rapidly in the final hours. An adverse move of just $0.10 on the underlying can wipe out your entire spread value due to theta decay and gamma risk. The bot enforces a hard cutoff at 1:00 PM to avoid chasing time decay in unfavorable conditions.
-
-### Step 2b: Daily Trade Limit Check
-Before executing a trade, the bot checks if it has already reached the daily trade limit (default: 5 trades per day). The counter resets at market open (9:30 AM EST each day).
+### Step 3: Daily Trade Limit Check
+Before evaluating signals, the bot checks if it has already reached the daily trade limit (default: 5 trades per day). The counter resets at market open (9:30 AM EST each day).
 
 **Why?** On choppy, range-bound days, the bot can generate many false signals and churn through trades without profit. A daily limit protects capital by forcing the bot to be selective and prevents over-trading during low-conviction periods. Real traders don't enter dozens of trades per day on 0DTE spreads—they limit exposure and wait for the highest-confidence setups.
 
@@ -58,7 +63,7 @@ Before executing a trade, the bot checks if it has already reached the daily tra
 - Day 1: Bot executes 5 trades, limit reached. No new entries for rest of day.
 - Day 2 (9:30 AM): Counter resets. Bot can execute up to 5 more trades.
 
-### Step 3: Calculate Technical Indicators
+### Step 4: Calculate Technical Indicators
 The bot calculates:
 
 #### VWAP (Volume-Weighted Average Price)
@@ -92,13 +97,16 @@ The bot checks two conditions:
 - Price < VWAP (trading below institutional cost)
 - Price < ORB Low (breaking out below morning range)
 
-### Step 5: Execution
+### Step 5: Fetch Spread Cost and Check Minimum Threshold
 If a signal is generated:
 1. Fetch the current underlying price
 2. Calculate ATM (At-The-Money) and OTM (Out-Of-The-Money) strike prices
-3. **Fetch actual option bid/ask prices from Alpaca API** to determine the real spread cost (not simulated)
-4. Calculate how many spreads you can afford under your max position size
-5. Execute the trade and record it to audit.csv
+3. **Fetch actual option bid/ask prices from Alpaca's options data API** to determine the real spread cost (not simulated)
+4. **Check minimum spread cost:** If spread cost < $0.10 (configurable), skip the trade. Low-cost spreads have almost no premium and likely indicate poor liquidity.
+5. If valid, calculate how many spreads you can afford under your max position size
+
+### Step 6: Execution
+Execute the trade and record it to audit.csv
 
 ---
 
@@ -207,6 +215,21 @@ The 5-trade daily limit ensures:
 - **Resiliency:** If the bot is generating whipsaws, it stops trading and waits for tomorrow
 
 The counter resets at 9:30 AM EST daily, aligning with market open.
+
+### Minimum Spread Cost Floor ($0.10)
+Originally, the bot would enter any trade if a signal was generated and the cost was > $0.00. However, spreads with nearly zero premium (e.g., $0.02–$0.05) indicate:
+- Poor liquidity (wide bid-ask spreads)
+- Almost no theta decay profit potential
+- High risk of slippage when exiting
+
+The **minimum spread cost floor** (default: $0.10, configurable via `MIN_SPREAD_COST`) ensures:
+- **Liquidity:** Only trade spreads with meaningful bid-ask volumes
+- **Realistic Profit Potential:** Avoid chasing pennies in illiquid contracts
+- **Risk/Reward:** Respects the hard realities of option contract liquidity
+
+Example:
+- Spread signals a bullish CALL, but the 5-wide spread costs only $0.03 → Skipped (below $0.10 floor)
+- Spread signals a bearish PUT, and the 5-wide spread costs $0.15 → Executed
 
 ### Fixed 9:30 AM for ORB (Not df.index[0])
 Early versions used `df.index[0]` (the first bar returned by the API) to anchor the ORB window. This broke if the bot restarted mid-day, because the API would return bars starting from 9:30 AM, but `df.index[0]` might be 2:00 PM. The fix ensures ORB always references the true market open at 9:30 AM EST.
