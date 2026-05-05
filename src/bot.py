@@ -48,7 +48,8 @@ class TradingBot:
     def log_audit(self, action: str, symbol: str, direction: str, price: float, reason: str, 
                   adx: Optional[float] = None, vwap: Optional[float] = None, 
                   orb_high: Optional[float] = None, orb_low: Optional[float] = None,
-                  underlying_price: Optional[float] = None):
+                  underlying_price: Optional[float] = None, profit_pct: Optional[float] = None, 
+                  dollar_pnl: Optional[float] = None):
         """Logs trade decisions to an audit.csv file with full indicator context."""
         file_exists = os.path.isfile("audit.csv")
         try:
@@ -57,7 +58,7 @@ class TradingBot:
                 if not file_exists:
                     writer.writerow([
                         "Timestamp", "Action", "Symbol", "Direction", "Price", "Underlying_Price",
-                        "ADX", "VWAP", "ORB_High", "ORB_Low", "Reason"
+                        "ADX", "VWAP", "ORB_High", "ORB_Low", "Reason", "Profit_Pct", "Dollar_PnL"
                     ])
                 writer.writerow([
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -67,7 +68,9 @@ class TradingBot:
                     f"{vwap:.2f}" if vwap else "",
                     f"{orb_high:.2f}" if orb_high else "",
                     f"{orb_low:.2f}" if orb_low else "",
-                    reason
+                    reason,
+                    f"{profit_pct:.2f}%" if profit_pct is not None else "",
+                    f"{dollar_pnl:.2f}" if dollar_pnl is not None else ""
                 ])
         except Exception as e:
             logger.error(f"Failed to write to audit log: {e}")
@@ -200,7 +203,7 @@ class TradingBot:
 
     def _is_entry_window(self) -> bool:
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
-        return now.hour < 14
+        return now.hour < 13
 
     def evaluate_entry_strategy(self, symbol: str) -> Tuple[Optional[str], str, dict]:
         """
@@ -208,6 +211,8 @@ class TradingBot:
         Returns (direction, reason, indicators_dict) where direction is 'CALL'/'PUT' or None.
         indicators_dict contains: {adx, vwap, orb_high, orb_low, current_price}
         """
+        now = datetime.datetime.now(pytz.timezone('America/New_York'))
+        
         df = self.fetch_intraday_data(symbol)
         if df.empty or len(df) < 30:
             return None, "", {}  # Not enough data (e.g. market just opened)
@@ -434,13 +439,17 @@ class TradingBot:
                     }
             
             logger.info(f"[{symbol}] CLOSED SPREAD POSITION: {trade['direction']} at ${current_spread_value:.2f}")
+            profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
+            dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty']
             self.log_audit(
                 "SELL", symbol, trade['direction'], current_spread_value, reason,
                 adx=exit_indicators.get('adx'),
                 vwap=exit_indicators.get('vwap'),
                 orb_high=exit_indicators.get('orb_high'),
                 orb_low=exit_indicators.get('orb_low'),
-                underlying_price=exit_indicators.get('current_price')
+                underlying_price=exit_indicators.get('current_price'),
+                profit_pct=profit_pct,
+                dollar_pnl=dollar_pnl
             )
             
             del self.active_trades[symbol]

@@ -54,6 +54,8 @@ The bot maintains an `audit.csv` file that captures every trade with full contex
 | ORB_High | 30-minute Opening Range high |
 | ORB_Low | 30-minute Opening Range low |
 | Reason | Signal reason (bullish breakout, hard stop loss, etc.) |
+| Profit_Pct | Profit/loss percentage (SELL rows only) |
+| Dollar_PnL | Dollar profit/loss amount (SELL rows only) |
 
 This detailed logging enables quick review of trades and helps tune the strategy by analyzing which market conditions lead to winners vs. losers.
 
@@ -66,7 +68,7 @@ The bot uses `pandas` and `ta` to fetch intraday 1-minute bars and calculates:
 It executes ATM debit spreads and manages risk via a strict set of trailing stop and hard stop loss configurations defined in the `.env` file.
 
 ### Entry Filters
-- **Time-of-Day Filter:** No entries after 1:00 PM EST (14:00). This cutoff is checked at the loop level before any API calls, preventing unnecessary market data fetches. Protects against late-day theta decay.
+- **Time-of-Day Filter:** No entries after 1:00 PM EST (13:00). This cutoff is checked at the loop level before any API calls, preventing unnecessary market data fetches. Protects against late-day theta decay.
 - **Daily Trade Limit:** Maximum 5 trades opened per day (resets at 9:30 AM EST). Prevents over-trading during choppy days.
 - **Minimum Spread Cost:** Spread must cost at least $0.10 (configurable via `MIN_SPREAD_COST`). Prevents trading nearly-worthless spreads with no liquidity.
 - **Trend Filter:** ADX must be > 25 to indicate a strong directional trend.
