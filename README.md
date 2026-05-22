@@ -65,7 +65,7 @@ The bot uses `pandas` and `ta` to fetch intraday 1-minute bars and calculates:
 - **30-Minute ORB** (Opening Range Breakout from 9:30 AM - 10:00 AM EST)
 - **ADX** (Trend strength indicator)
 
-It executes ATM debit spreads and manages risk via a strict set of trailing stop and hard stop loss configurations defined in the `.env` file.
+It executes ATM spreads and manages risk via a strict set of trailing stop loss configurations defined in the `.env` file.
 
 ### Entry Filters
 - **Time-of-Day Filter:** No entries after 1:00 PM EST (13:00). This cutoff is checked at the loop level before any API calls, preventing unnecessary market data fetches. Protects against late-day theta decay.

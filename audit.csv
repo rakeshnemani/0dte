@@ -1,0 +1,4 @@
+Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Reason,Profit_Pct,Dollar_PnL
+2026-05-05 12:08:22,SELL,SPY,CALL,0.19,723.38,16.57,723.52,722.76,721.58,Hard Stop Loss 50% Hit. (Current: -50.00%),-0.50%,-133.00
+2026-05-15 12:42:16,BUY,SPY,CALL,0.3999999999999999,742.25,26.31,741.71,741.90,737.96,Bullish: Price (742.25) > VWAP (741.71) and ORB High (741.90). ADX: 26.31,,
+2026-05-15 12:47:17,SELL,SPY,CALL,0.4500000000000002,742.45,23.06,742.52,741.90,737.96,"Dropped to 70% of Max Profit. (Max: 25.00%, Current: 12.50%)",0.13%,35.00

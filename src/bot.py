@@ -4,7 +4,9 @@ import alpaca_trade_api as tradeapi
 from alpaca_trade_api.rest import TimeFrame
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest, OptionLatestQuoteRequest, OptionLatestTradeRequest
-from alpaca.trading.enums import ContractType
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
+from alpaca.trading.enums import ContractType, OrderSide, TimeInForce, OrderClass, PositionIntent
 import logging
 import pandas as pd
 import ta
@@ -13,6 +15,7 @@ import pytz
 import os
 import csv
 from typing import Tuple
+import requests
 
 import config
 
@@ -37,6 +40,12 @@ class TradingBot:
             raw_data=False,
         )
         
+        self.trading_client = TradingClient(
+            api_key=config.ALPACA_API_KEY,
+            secret_key=config.ALPACA_SECRET_KEY,
+            paper=True
+        )
+        
         # State Management - tracks one active trade per symbol
         # {symbol: {direction, entry_price, qty, max_profit_pct, long_strike, short_strike}}
         self.active_trades: Dict[str, dict] = {}
@@ -45,6 +54,26 @@ class TradingBot:
         self.daily_trade_count: int = 0
         self.last_trade_date: datetime.date = None
         self.signals_used_today: set = set()  # Tracks used signals to prevent re-entry on same breakout
+
+    def send_discord_alert(self, title: str, description: str, color: int):
+        """Send a rich embed message to the configured Discord webhook."""
+        if not config.DISCORD_WEBHOOK_URL:
+            return
+            
+        payload = {
+            "embeds": [{
+                "title": title,
+                "description": description,
+                "color": color
+            }]
+        }
+        
+        try:
+            response = requests.post(config.DISCORD_WEBHOOK_URL, json=payload, timeout=5)
+            if response.status_code not in (200, 204):
+                logger.error(f"Failed to send Discord alert: HTTP {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.error(f"Failed to send Discord alert (Network error): {e}")
 
     def log_audit(self, action: str, symbol: str, direction: str, price: float, reason: str, 
                   adx: Optional[float] = None, vwap: Optional[float] = None, 
@@ -197,6 +226,7 @@ class TradingBot:
             
             # Ensure index is datetime
             if not bars.empty:
+                bars = bars.copy()
                 bars.index = pd.to_datetime(bars.index).tz_convert('America/New_York')
             return bars
         except Exception as e:
@@ -205,7 +235,7 @@ class TradingBot:
 
     def _is_entry_window(self) -> bool:
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
-        return now.hour < 13
+        return now.hour < 15
 
     def evaluate_entry_strategy(self, symbol: str) -> Tuple[Optional[str], str, dict]:
         """
@@ -216,7 +246,7 @@ class TradingBot:
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
         
         df = self.fetch_intraday_data(symbol)
-        if df.empty or len(df) < 30:
+        if df.empty or len(df) < 20:
             return None, "", {}  # Not enough data (e.g. market just opened)
 
         try:
@@ -224,13 +254,13 @@ class TradingBot:
             vwap_indicator = ta.volume.VolumeWeightedAveragePrice(
                 high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
             )
-            df['VWAP'] = vwap_indicator.volume_weighted_average_price()
+            df.loc[:, 'VWAP'] = vwap_indicator.volume_weighted_average_price()
             
             # 2. Calculate ADX (Trend Strength)
             adx_indicator = ta.trend.ADXIndicator(
-                high=df['high'], low=df['low'], close=df['close'], window=30
+                high=df['high'], low=df['low'], close=df['close'], window=14
             )
-            df['ADX'] = adx_indicator.adx()
+            df.loc[:, 'ADX'] = adx_indicator.adx()
 
             # 3. Calculate 30-Minute ORB (Opening Range Breakout)
             # Anchor to fixed market open time (9:30 AM EST), not df.index[0]
@@ -328,36 +358,46 @@ class TradingBot:
             logger.warning(f"Spread cost ${spread_cost:.2f} per share (${spread_cost*100:.2f} per contract) exceeds max position size of ${config.MAX_POSITION_SIZE}.")
             return
             
-        total_investment = qty_to_buy * spread_cost * 100
-        
         try:
+            today = datetime.datetime.now(pytz.timezone('America/New_York')).date().isoformat()
+            occ_long = self._format_occ_symbol(symbol, today, direction, long_strike)
+            occ_short = self._format_occ_symbol(symbol, today, direction, short_strike)
+            
+            # Submit real MLEG limit order to Alpaca
+            req = LimitOrderRequest(
+                qty=qty_to_buy,
+                limit_price=round(spread_cost, 2),
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+                order_class=OrderClass.MLEG,
+                legs=[
+                    OptionLegRequest(symbol=occ_long, ratio_qty=1, side=OrderSide.BUY, position_intent=PositionIntent.BUY_TO_OPEN),
+                    OptionLegRequest(symbol=occ_short, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
+                ]
+            )
+            
+            order = self.trading_client.submit_order(req)
+            
             self.active_trades[symbol] = {
                 'direction': direction,
-                'entry_price': spread_cost,
+                'target_entry_price': spread_cost,
+                'status': 'PENDING_ENTRY',
+                'order_id': str(order.id),
                 'qty': qty_to_buy,
                 'max_profit_pct': 0.0,
                 'long_strike': long_strike,
                 'short_strike': short_strike,
-                'entry_indicators': indicators  # Store indicators for potential exit logging
+                'occ_long': occ_long,
+                'occ_short': occ_short,
+                'entry_indicators': indicators,
+                'reason': reason
             }
             self.daily_trade_count += 1
             self.signals_used_today.add((symbol, direction))
-            logger.info(f"EXECUTED {direction} SPREAD: {qty_to_buy} contracts of {symbol} at ${spread_cost:.2f} per share (${spread_cost*100:.2f} per contract) (Total: ${total_investment})")
-            logger.info(f"Underlying Entry Price: ${underlying_price:.2f} | Long Strike: ${long_strike} | Short Strike: ${short_strike}")
-            logger.info(f"Entry Indicators - ADX: {indicators.get('adx', 'N/A'):.2f if indicators.get('adx') else 'N/A'}, VWAP: {indicators.get('vwap', 'N/A'):.2f if indicators.get('vwap') else 'N/A'}, ORB: ({indicators.get('orb_low', 'N/A'):.2f if indicators.get('orb_low') else 'N/A'}, {indicators.get('orb_high', 'N/A'):.2f if indicators.get('orb_high') else 'N/A'})")
-            logger.info(f"Daily trades: {self.daily_trade_count}/{config.MAX_TRADES_PER_DAY}")
+            logger.info(f"SUBMITTED {direction} SPREAD ORDER to Alpaca: {qty_to_buy} contracts of {symbol} at LIMIT ${spread_cost:.2f} (Order ID: {order.id})")
             
-            # Log to audit with full indicator context
-            self.log_audit(
-                "BUY", symbol, direction, spread_cost, reason,
-                adx=indicators.get('adx'),
-                vwap=indicators.get('vwap'),
-                orb_high=indicators.get('orb_high'),
-                orb_low=indicators.get('orb_low'),
-                underlying_price=underlying_price
-            )
         except Exception as e:
-            logger.error(f"Failed to execute spread: {e}")
+            logger.error(f"Failed to execute live spread order on Alpaca: {e}")
 
     def evaluate_exit_conditions(self):
         """Evaluates risk management rules for all active trades."""
@@ -383,6 +423,55 @@ class TradingBot:
             logger.warning(f"Could not fetch current spread value for {symbol}. Skipping exit evaluation.")
             return
 
+        # Check order fill status on Alpaca
+        if trade.get('status') == 'PENDING_ENTRY':
+            try:
+                order = self.trading_client.get_order_by_id(trade['order_id'])
+                if order.status == 'filled':
+                    filled_price = float(order.filled_avg_price)
+                    logger.info(f"[{symbol}] ALPACA ORDER FILLED at ${filled_price:.2f}")
+                    trade['status'] = 'ACTIVE'
+                    trade['entry_price'] = filled_price
+                    # Log entry to audit now that it is filled
+                    self.log_audit(
+                        "BUY", symbol, trade['direction'], filled_price, trade.get('reason', 'Filled Alpaca order'),
+                        adx=trade['entry_indicators'].get('adx'),
+                        vwap=trade['entry_indicators'].get('vwap'),
+                        orb_high=trade['entry_indicators'].get('orb_high'),
+                        orb_low=trade['entry_indicators'].get('orb_low'),
+                        underlying_price=trade['entry_indicators'].get('current_price')
+                    )
+                    
+                    # Fire Discord Alert
+                    adx_val = trade['entry_indicators'].get('adx')
+                    vwap_val = trade['entry_indicators'].get('vwap')
+                    orb_high_val = trade['entry_indicators'].get('orb_high')
+                    orb_low_val = trade['entry_indicators'].get('orb_low')
+                    curr_price = trade['entry_indicators'].get('current_price')
+                    
+                    desc = (
+                        f"**📊 Ticker:** {symbol}\n"
+                        f"**🎯 Direction:** {trade['direction']} Spread\n"
+                        f"**⚙️ Strikes:** Long ${trade['long_strike']:.2f} / Short ${trade['short_strike']:.2f}\n"
+                        f"**💰 Entry Price:** ${filled_price:.2f} per contract\n"
+                        f"**📈 Quantity:** {trade['qty']} Contracts\n"
+                        f"**💸 Total Investment:** ${filled_price * trade['qty'] * 100:.2f}\n\n"
+                        f"**📉 Indicators at Entry:**\n"
+                        f"• ADX: {adx_val:.2f if adx_val else 0}\n"
+                        f"• Price vs VWAP: ${curr_price:.2f if curr_price else 0} / ${vwap_val:.2f if vwap_val else 0}\n"
+                        f"• ORB: High ${orb_high_val:.2f if orb_high_val else 0} / Low ${orb_low_val:.2f if orb_low_val else 0}\n\n"
+                        f"**📝 Reason:** {trade.get('reason', 'N/A')}"
+                    )
+                    self.send_discord_alert("🟢 NEW 0DTE SPREAD ENTRY", desc, 0x2ECC71)
+                elif order.status in ('canceled', 'expired', 'rejected'):
+                    logger.warning(f"[{symbol}] Alpaca order {order.status}. Removing from tracking.")
+                    self.active_trades.pop(symbol, None)
+                else:
+                    logger.info(f"[{symbol}] Alpaca order still pending (Status: {order.status}).")
+            except Exception as e:
+                logger.error(f"[{symbol}] Error checking Alpaca order status: {e}")
+            return
+
         profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
         
         if profit_pct > trade['max_profit_pct']:
@@ -393,11 +482,7 @@ class TradingBot:
         exit_triggered = False
         exit_reason = ""
 
-        if profit_pct <= config.HARD_STOP_LOSS_PCT:
-            exit_triggered = True
-            exit_reason = f"Hard Stop Loss 50% Hit. (Current: {profit_pct*100:.2f}%)"
-
-        elif trade['max_profit_pct'] > 0 and profit_pct <= (trade['max_profit_pct'] * config.MAX_PROFIT_EXIT_MULTIPLIER):
+        if trade['max_profit_pct'] > 0 and profit_pct <= (trade['max_profit_pct'] * config.MAX_PROFIT_EXIT_MULTIPLIER):
             exit_triggered = True
             exit_reason = f"Dropped to 70% of Max Profit. (Max: {trade['max_profit_pct']*100:.2f}%, Current: {profit_pct*100:.2f}%)"
 
@@ -418,19 +503,51 @@ class TradingBot:
         
         trade = self.active_trades[symbol]
         try:
+            # Submit reversing order to Alpaca
+            req = LimitOrderRequest(
+                qty=trade['qty'],
+                limit_price=round(current_spread_value, 2),
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+                order_class=OrderClass.MLEG,
+                legs=[
+                    OptionLegRequest(symbol=trade['occ_long'], ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_CLOSE),
+                    OptionLegRequest(symbol=trade['occ_short'], ratio_qty=1, side=OrderSide.BUY, position_intent=PositionIntent.BUY_TO_CLOSE),
+                ]
+            )
+            exit_order = self.trading_client.submit_order(req)
+            logger.info(f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to Alpaca at LIMIT ${current_spread_value:.2f} (Order ID: {exit_order.id})")
+            
+            profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
+            dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
+            
+            # Fire Discord Alert
+            color = 0x3498DB if profit_pct > 0 else 0xE74C3C
+            desc = (
+                f"**📊 Ticker:** {symbol}\n"
+                f"**🎯 Direction:** {trade['direction']} Spread\n"
+                f"**🚪 Exit Price:** ${current_spread_value:.2f} per contract\n\n"
+                f"**📈 Performance:**\n"
+                f"• Net Profit: {profit_pct*100:+.2f}%\n"
+                f"• Dollar PnL: ${dollar_pnl:+.2f}\n"
+                f"• Max Profit Reached: {trade.get('max_profit_pct', 0)*100:.2f}%\n\n"
+                f"**📝 Exit Reason:** {reason}"
+            )
+            self.send_discord_alert("🔵 CLOSED 0DTE SPREAD POSITION", desc, color)
+            
             # Fetch current indicators at exit time for logging context
             df = self.fetch_intraday_data(symbol)
             exit_indicators = trade.get('entry_indicators', {}).copy()
-            if not df.empty:
+            if not df.empty and len(df) >= 20:
                 vwap_indicator = ta.volume.VolumeWeightedAveragePrice(
                     high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
                 )
-                df['VWAP'] = vwap_indicator.volume_weighted_average_price()
+                df.loc[:, 'VWAP'] = vwap_indicator.volume_weighted_average_price()
                 
                 adx_indicator = ta.trend.ADXIndicator(
-                    high=df['high'], low=df['low'], close=df['close'], window=30
+                    high=df['high'], low=df['low'], close=df['close'], window=14
                 )
-                df['ADX'] = adx_indicator.adx()
+                df.loc[:, 'ADX'] = adx_indicator.adx()
                 
                 now = datetime.datetime.now(pytz.timezone('America/New_York'))
                 market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -446,7 +563,6 @@ class TradingBot:
                         'current_price': df['close'].iloc[-1]
                     }
             
-            logger.info(f"[{symbol}] CLOSED SPREAD POSITION: {trade['direction']} at ${current_spread_value:.2f}")
             profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
             dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
             self.log_audit(
@@ -459,6 +575,8 @@ class TradingBot:
                 profit_pct=profit_pct,
                 dollar_pnl=dollar_pnl
             )
+        except Exception as e:
+            logger.error(f"[{symbol}] Failed to submit Alpaca closing order: {e}")
         finally:
             self.active_trades.pop(symbol, None)
 
@@ -480,9 +598,9 @@ class TradingBot:
                 # Evaluate exits for all active trades
                 self.evaluate_exit_conditions()
                 
-                # Skip new entries entirely after 1:00 PM EST
+                # Skip new entries entirely after 3:00 PM EST
                 if not self._is_entry_window():
-                    logger.info("Entry window closed after 1:00 PM EST; skipping new entries.")
+                    logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
                 else:
                     for symbol in config.SYMBOLS:
                         if symbol not in self.active_trades:

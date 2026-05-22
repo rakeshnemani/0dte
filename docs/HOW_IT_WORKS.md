@@ -122,13 +122,7 @@ Every 60 seconds, the bot:
 5. Evaluates three exit rules to decide whether to sell
 
 ### Exit Rules
-
-#### Rule #1: Hard Stop Loss (50%)
-If the spread value drops to 50% below entry price or lower, **SELL immediately**.
-
-**Example:** You bought a spread for $1.00. If it falls to $0.50 or less, the bot exits.
-
-#### Rule #2: Max Profit Exit (70% Trail)
+#### Rule #1: Max Profit Exit (70% Trail)
 The bot remembers the highest profit achieved. If profit drops to 70% of that peak, **SELL**.
 
 **Example:** 
@@ -137,7 +131,7 @@ The bot remembers the highest profit achieved. If profit drops to 70% of that pe
 - Exit threshold = 70% of max = +35%
 - If profit falls to +35% or below, SELL
 
-#### Rule #3: 10% Trailing Stop (Triggered at 40% Profit)
+#### Rule #2: 10% Trailing Stop (Triggered at 40% Profit)
 If the profit reaches 40% or higher, a 10% trailing stop activates.
 
 **Example:**
@@ -153,15 +147,13 @@ graph TD
     MaxProfit -- No --> Rules
     Update --> Rules
     
-    Rules --> Rule1{Is Profit <= -50%?}
-    Rule1 -- Yes --> Sell["🔴 SELL: Hard Stop Loss"]
-    Rule1 -- No --> Rule2{Is Max Profit > 0 AND<br/>Profit <= 70% of Max?}
+    Rules --> Rule1{Is Max Profit > 0 AND<br/>Profit <= 70% of Max?}
+    
+    Rule1 -- Yes --> Sell
+    Rule1 -- No --> Rule2{Is Max Profit >= 40% AND<br/>Profit <= Max - 10%?}
     
     Rule2 -- Yes --> Sell
-    Rule2 -- No --> Rule3{Is Max Profit >= 40% AND<br/>Profit <= Max - 10%?}
-    
-    Rule3 -- Yes --> Sell
-    Rule3 -- No --> Hold["🟢 HOLD: All conditions ok"]
+    Rule2 -- No --> Hold["🟢 HOLD: All conditions ok"]
 ```
 
 ---
