@@ -1,12 +1,6 @@
 import time
-from typing import Dict, Optional
-import alpaca_trade_api as tradeapi
-from alpaca_trade_api.rest import TimeFrame
-from alpaca.data.historical.option import OptionHistoricalDataClient
-from alpaca.data.requests import OptionChainRequest, OptionLatestQuoteRequest, OptionLatestTradeRequest
-from alpaca.trading.client import TradingClient
-from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
-from alpaca.trading.enums import ContractType, OrderSide, TimeInForce, OrderClass, PositionIntent
+from typing import Dict, Optional, Tuple
+from ib_insync import IB, Stock, Option, Index, Contract, ComboLeg, LimitOrder, util
 import logging
 import pandas as pd
 import ta
@@ -14,73 +8,106 @@ import datetime
 import pytz
 import os
 import csv
-from typing import Tuple
 import requests
 
 import config
 
-# Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
 class TradingBot:
     def __init__(self):
-        # Initialize Alpaca API using config variables
-        self.api = tradeapi.REST(
-            config.ALPACA_API_KEY,
-            config.ALPACA_SECRET_KEY,
-            config.ALPACA_BASE_URL,
-            api_version='v2'
-        )
+        self.ib = IB()
+        self._connect()
 
-        self.options_client = OptionHistoricalDataClient(
-            api_key=config.ALPACA_API_KEY,
-            secret_key=config.ALPACA_SECRET_KEY,
-            use_basic_auth=False,
-            raw_data=False,
-        )
-        
-        self.trading_client = TradingClient(
-            api_key=config.ALPACA_API_KEY,
-            secret_key=config.ALPACA_SECRET_KEY,
-            paper=True
-        )
-        
-        # State Management - tracks one active trade per symbol
-        # {symbol: {direction, entry_price, qty, max_profit_pct, long_strike, short_strike}}
+        # State management — one active trade per symbol
         self.active_trades: Dict[str, dict] = {}
-        
-        # Daily trade limit tracking - resets at market open (9:30 AM EST)
         self.daily_trade_count: int = 0
         self.last_trade_date: datetime.date = None
-        self.signals_used_today: set = set()  # Tracks used signals to prevent re-entry on same breakout
+        self.signals_used_today: set = set()
+        self.consecutive_losses: int = 0
+        self.circuit_breaker_tripped: bool = False
+
+    def _connect(self):
+        logger.info(f"Connecting to IBKR at {config.IBKR_HOST}:{config.IBKR_PORT} (clientId={config.IBKR_CLIENT_ID})")
+        self.ib.connect(config.IBKR_HOST, config.IBKR_PORT, clientId=config.IBKR_CLIENT_ID)
+        # Use delayed data (type 4) so paper accounts work without live subscriptions
+        self.ib.reqMarketDataType(4)
+        logger.info("Connected to IBKR")
+
+    def _ensure_connected(self):
+        if not self.ib.isConnected():
+            logger.warning("IBKR connection lost. Reconnecting...")
+            try:
+                self._connect()
+            except Exception as e:
+                logger.error(f"Reconnect failed: {e}")
+
+    # ── Contract helpers ─────────────────────────────────────────────────────
+
+    def _underlying_contract(self, symbol: str):
+        """Return the correct IBKR contract type for an underlying symbol."""
+        if symbol == 'SPX':
+            return Index('SPX', 'CBOE', 'USD')
+        return Stock(symbol, 'SMART', 'USD')
+
+    def _option_symbol(self, symbol: str) -> str:
+        """Map 0DTE underlying symbol to the correct IBKR option root (SPX → SPXW)."""
+        return 'SPXW' if symbol == 'SPX' else symbol
+
+    def _get_option_contract(self, symbol: str, direction: str, strike: float) -> Option:
+        today_str = datetime.datetime.now(pytz.timezone('America/New_York')).strftime('%Y%m%d')
+        right = 'C' if direction == 'CALL' else 'P'
+        contract = Option(self._option_symbol(symbol), today_str, strike, right, 'SMART')
+        qualified = self.ib.qualifyContracts(contract)
+        if not qualified:
+            raise ValueError(f"Cannot qualify option: {self._option_symbol(symbol)} {today_str} {right} {strike}")
+        return qualified[0]
+
+    # ── Market data helpers ──────────────────────────────────────────────────
+
+    def _ticker_mid(self, ticker) -> float:
+        """Return mid-price from a ticker, falling back through bid → last → close."""
+        def valid(v):
+            return v is not None and v == v and v > 0  # truthy and not NaN
+        bid = float(ticker.bid) if valid(ticker.bid) else 0.0
+        ask = float(ticker.ask) if valid(ticker.ask) else 0.0
+        if bid > 0 and ask > 0:
+            return (bid + ask) / 2
+        for fallback in (ticker.last, ticker.close):
+            v = float(fallback) if valid(fallback) else 0.0
+            if v > 0:
+                return v
+        return 0.0
+
+    def _request_snapshot(self, contract) -> object:
+        """Subscribe to market data, wait for snapshot, cancel subscription."""
+        ticker = self.ib.reqMktData(contract, '', snapshot=False, regulatorySnapshot=False)
+        self.ib.sleep(2)
+        self.ib.cancelMktData(contract)
+        return ticker
+
+    # ── Notifications ────────────────────────────────────────────────────────
 
     def send_discord_alert(self, title: str, description: str, color: int):
-        """Send a rich embed message to the configured Discord webhook."""
         if not config.DISCORD_WEBHOOK_URL:
             return
-            
-        payload = {
-            "embeds": [{
-                "title": title,
-                "description": description,
-                "color": color
-            }]
-        }
-        
+        payload = {"embeds": [{"title": title, "description": description, "color": color}]}
         try:
             response = requests.post(config.DISCORD_WEBHOOK_URL, json=payload, timeout=5)
             if response.status_code not in (200, 204):
-                logger.error(f"Failed to send Discord alert: HTTP {response.status_code} - {response.text}")
+                logger.error(f"Discord alert failed: HTTP {response.status_code}")
         except Exception as e:
-            logger.error(f"Failed to send Discord alert (Network error): {e}")
+            logger.error(f"Discord alert failed: {e}")
 
-    def log_audit(self, action: str, symbol: str, direction: str, price: float, reason: str, 
-                  adx: Optional[float] = None, vwap: Optional[float] = None, 
+    # ── Audit log ────────────────────────────────────────────────────────────
+
+    def log_audit(self, action: str, symbol: str, direction: str, price: float, reason: str,
+                  adx: Optional[float] = None, vwap: Optional[float] = None,
                   orb_high: Optional[float] = None, orb_low: Optional[float] = None,
-                  underlying_price: Optional[float] = None, profit_pct: Optional[float] = None, 
+                  underlying_price: Optional[float] = None, profit_pct: Optional[float] = None,
                   dollar_pnl: Optional[float] = None):
-        """Logs trade decisions to an audit.csv file with full indicator context."""
         file_exists = os.path.isfile("audit.csv")
         try:
             with open("audit.csv", mode='a', newline='') as file:
@@ -92,7 +119,7 @@ class TradingBot:
                     ])
                 writer.writerow([
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    action, symbol, direction, price, 
+                    action, symbol, direction, price,
                     f"{underlying_price:.2f}" if underlying_price else "",
                     f"{adx:.2f}" if adx else "",
                     f"{vwap:.2f}" if vwap else "",
@@ -103,352 +130,293 @@ class TradingBot:
                     f"{dollar_pnl:.2f}" if dollar_pnl is not None else ""
                 ])
         except Exception as e:
-            logger.error(f"Failed to write to audit log: {e}")
+            logger.error(f"Failed to write audit log: {e}")
+
+    # ── Daily reset ──────────────────────────────────────────────────────────
 
     def check_and_reset_daily_trade_count(self) -> None:
-        """Resets daily trade count at market open (9:30 AM EST)."""
         today = datetime.datetime.now(pytz.timezone('America/New_York')).date()
         if self.last_trade_date != today:
             self.daily_trade_count = 0
             self.last_trade_date = today
             self.signals_used_today.clear()
+            self.consecutive_losses = 0
+            self.circuit_breaker_tripped = False
             logger.info(f"Daily trade count reset for {today}")
 
-    def get_current_price(self, symbol: str) -> float:
-        """Fetch the latest trade price for an underlying symbol."""
-        try:
-            latest_trade = self.api.get_latest_trade(symbol, feed='iex')
-            return float(latest_trade.price)
-        except Exception as e:
-            logger.error(f"Error fetching price for {symbol}: {e}")
-            return 0.0
+    # ── Market hours ─────────────────────────────────────────────────────────
 
-    def _format_occ_symbol(self, symbol: str, expiration_date: str, direction: str, strike: float) -> str:
-        expiration_code = datetime.datetime.strptime(expiration_date, "%Y-%m-%d").strftime("%y%m%d")
-        option_letter = "C" if direction == "CALL" else "P"
-        strike_code = f"{int(round(strike * 1000)):08d}"
-        return f"{symbol.upper()}{expiration_code}{option_letter}{strike_code}"
-
-    def _quote_mid(self, quote) -> float:
-        if not quote:
-            return 0.0
-        bid_price = float(quote.bid_price) if quote.bid_price is not None else 0.0
-        ask_price = float(quote.ask_price) if quote.ask_price is not None else 0.0
-        if bid_price > 0 and ask_price > 0:
-            return (bid_price + ask_price) / 2
-        if bid_price > 0:
-            return bid_price
-        if ask_price > 0:
-            return ask_price
-        return 0.0
-
-    def _trade_price(self, trade) -> float:
-        if not trade or trade.price is None:
-            return 0.0
-        return float(trade.price)
-
-    def get_spread_value(self, symbol: str, direction: str, long_strike: float, short_strike: float) -> float:
-        """Fetch the current market value of the option spread from Alpaca's options data API."""
-        try:
-            today = datetime.datetime.now(pytz.timezone('America/New_York')).date()
-            expiration_date = today.isoformat()
-            option_type = ContractType.CALL if direction == 'CALL' else ContractType.PUT
-
-            def fetch_leg_price(strike: float) -> float:
-                # First try to load the option chain for the exact strike.
-                chain_request = OptionChainRequest(
-                    underlying_symbol=symbol,
-                    type=option_type,
-                    expiration_date=expiration_date,
-                    strike_price_gte=strike,
-                    strike_price_lte=strike,
-                )
-                option_chain = self.options_client.get_option_chain(chain_request)
-                if option_chain:
-                    snapshot = next(iter(option_chain.values()), None)
-                    if snapshot is not None:
-                        mid = self._quote_mid(getattr(snapshot, 'latest_quote', None))
-                        if mid > 0:
-                            return mid
-                        mid = self._trade_price(getattr(snapshot, 'latest_trade', None))
-                        if mid > 0:
-                            return mid
-
-                # Fallback: use direct latest quote/trade on the specific OCC contract symbol.
-                occ_symbol = self._format_occ_symbol(symbol, expiration_date, direction, strike)
-                logger.info(f"Falling back to latest option quote for {occ_symbol}")
-
-                quote_request = OptionLatestQuoteRequest(symbol_or_symbols=occ_symbol)
-                latest_quote = self.options_client.get_option_latest_quote(quote_request)
-                if latest_quote and occ_symbol in latest_quote:
-                    mid = self._quote_mid(latest_quote[occ_symbol])
-                    if mid > 0:
-                        return mid
-
-                trade_request = OptionLatestTradeRequest(symbol_or_symbols=occ_symbol)
-                latest_trade = self.options_client.get_option_latest_trade(trade_request)
-                if latest_trade and occ_symbol in latest_trade:
-                    mid = self._trade_price(latest_trade[occ_symbol])
-                    if mid > 0:
-                        return mid
-
-                return 0.0
-
-            long_mid = fetch_leg_price(long_strike)
-            short_mid = fetch_leg_price(short_strike)
-
-            if long_mid <= 0 or short_mid <= 0:
-                logger.warning(
-                    f"Could not find option contracts for {symbol} {direction} strikes {long_strike}/{short_strike}"
-                )
-                return 0.0
-
-            return max(long_mid - short_mid, 0.01)
-
-        except Exception as e:
-            logger.error(f"Error fetching spread value for {symbol}: {e}")
-            return 0.0
-
-    def fetch_intraday_data(self, symbol: str) -> pd.DataFrame:
-        """Fetch 1-minute bar data for the current day to calculate indicators."""
-        try:
-            now = datetime.datetime.now(pytz.timezone('America/New_York'))
-            start_of_day = now.replace(hour=9, minute=30, second=0, microsecond=0)
-            
-            bars = self.api.get_bars(
-                symbol,
-                TimeFrame.Minute,
-                start=start_of_day.isoformat(),
-                end=now.isoformat(),
-                limit=1000,
-                feed='iex'
-            ).df
-            
-            # Ensure index is datetime
-            if not bars.empty:
-                bars = bars.copy()
-                bars.index = pd.to_datetime(bars.index).tz_convert('America/New_York')
-            return bars
-        except Exception as e:
-            logger.error(f"Failed to fetch intraday data: {e}")
-            return pd.DataFrame()
+    def is_market_open(self) -> bool:
+        now = datetime.datetime.now(pytz.timezone('America/New_York'))
+        if now.weekday() >= 5:
+            return False
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= now <= market_close
 
     def _is_entry_window(self) -> bool:
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
         return now.hour < 15
 
+    # ── Broker API calls ─────────────────────────────────────────────────────
+
+    def get_current_price(self, symbol: str) -> float:
+        """Fetch latest price for an underlying symbol from IBKR."""
+        try:
+            contract = self._underlying_contract(symbol)
+            self.ib.qualifyContracts(contract)
+            ticker = self._request_snapshot(contract)
+            price = self._ticker_mid(ticker)
+            return price
+        except Exception as e:
+            logger.error(f"Error fetching price for {symbol}: {e}")
+            return 0.0
+
+    def fetch_intraday_data(self, symbol: str) -> pd.DataFrame:
+        """Fetch 1-minute bars for the current trading day from IBKR."""
+        try:
+            contract = self._underlying_contract(symbol)
+            self.ib.qualifyContracts(contract)
+
+            # SPX is a cash index — use MIDPOINT since it has no "trade" volume
+            what_to_show = 'MIDPOINT' if symbol == 'SPX' else 'TRADES'
+            bars = self.ib.reqHistoricalData(
+                contract,
+                endDateTime='',
+                durationStr='1 D',
+                barSizeSetting='1 min',
+                whatToShow=what_to_show,
+                useRTH=True,
+                formatDate=1,
+                timeout=30,
+            )
+            if not bars:
+                return pd.DataFrame()
+
+            df = util.df(bars)
+            df['date'] = pd.to_datetime(df['date'])
+            if df['date'].dt.tz is None:
+                df['date'] = df['date'].dt.tz_localize('America/New_York')
+            else:
+                df['date'] = df['date'].dt.tz_convert('America/New_York')
+            df = df.set_index('date')
+
+            # SPX MIDPOINT bars have no volume; set dummy volume=1 so VWAP math works
+            if 'volume' not in df.columns or (df['volume'] == 0).all():
+                df['volume'] = 1
+
+            return df[['open', 'high', 'low', 'close', 'volume']]
+        except Exception as e:
+            logger.error(f"Failed to fetch intraday data for {symbol}: {e}")
+            return pd.DataFrame()
+
+    def _get_option_mid(self, contract: Option) -> float:
+        """Fetch the mid-price (bid/ask midpoint) for a single option leg."""
+        try:
+            ticker = self._request_snapshot(contract)
+            return self._ticker_mid(ticker)
+        except Exception as e:
+            logger.error(f"Error fetching option mid price: {e}")
+            return 0.0
+
+    def get_spread_value(self, symbol: str, direction: str, long_strike: float, short_strike: float) -> float:
+        """Fetch the current market value of the debit spread from IBKR."""
+        try:
+            long_c = self._get_option_contract(symbol, direction, long_strike)
+            short_c = self._get_option_contract(symbol, direction, short_strike)
+            long_mid = self._get_option_mid(long_c)
+            short_mid = self._get_option_mid(short_c)
+            if long_mid <= 0 or short_mid <= 0:
+                logger.warning(f"Could not price {symbol} {direction} {long_strike}/{short_strike}: long_mid={long_mid} short_mid={short_mid}")
+                return 0.0
+            return max(long_mid - short_mid, 0.01)
+        except Exception as e:
+            logger.error(f"Error fetching spread value for {symbol}: {e}")
+            return 0.0
+
+    # ── Strategy ─────────────────────────────────────────────────────────────
+
     def evaluate_entry_strategy(self, symbol: str) -> Tuple[Optional[str], str, dict]:
         """
-        Calculates VWAP, 30-min ORB, and ADX to determine trend direction.
-        Returns (direction, reason, indicators_dict) where direction is 'CALL'/'PUT' or None.
-        indicators_dict contains: {adx, vwap, orb_high, orb_low, current_price}
+        Calculate VWAP, 30-min ORB, and ADX to determine trade direction.
+        Returns (direction, reason, indicators) where direction is 'CALL'/'PUT'/None.
         """
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
-        
         df = self.fetch_intraday_data(symbol)
         if df.empty or len(df) < 20:
-            return None, "", {}  # Not enough data (e.g. market just opened)
+            return None, "", {}
 
         try:
-            # 1. Calculate VWAP
             vwap_indicator = ta.volume.VolumeWeightedAveragePrice(
                 high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
             )
             df.loc[:, 'VWAP'] = vwap_indicator.volume_weighted_average_price()
-            
-            # 2. Calculate ADX (Trend Strength)
+
             adx_indicator = ta.trend.ADXIndicator(
                 high=df['high'], low=df['low'], close=df['close'], window=14
             )
             df.loc[:, 'ADX'] = adx_indicator.adx()
 
-            # 3. Calculate 30-Minute ORB (Opening Range Breakout)
-            # Anchor to fixed market open time (9:30 AM EST), not df.index[0]
-            # This ensures correct ORB calculation even if bot restarts mid-day
             market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
             orb_end_time = market_open + datetime.timedelta(minutes=30)
-            
             orb_bars = df[(df.index >= market_open) & (df.index < orb_end_time)]
             if orb_bars.empty:
                 return None, "", {}
-                
+
             orb_high = orb_bars['high'].max()
             orb_low = orb_bars['low'].min()
 
-            # Strategy Evaluation
             current_close = df['close'].iloc[-1]
             current_vwap = df['VWAP'].iloc[-1]
             current_adx = df['ADX'].iloc[-1]
 
-            # We want strong trend (ADX > 25)
             if pd.isna(current_adx) or current_adx < 25:
-                return None, "", {}  # Trend is not strong enough
+                return None, "", {}
 
-            # Store indicators for logging
             indicators = {
-                'adx': current_adx,
-                'vwap': current_vwap,
-                'orb_high': orb_high,
-                'orb_low': orb_low,
-                'current_price': current_close
+                'adx': current_adx, 'vwap': current_vwap,
+                'orb_high': orb_high, 'orb_low': orb_low, 'current_price': current_close
             }
 
-            # Bullish: Price > VWAP and Price breaks above 30-min ORB High
             if current_close > current_vwap and current_close > orb_high:
                 reason = f"Bullish: Price ({current_close:.2f}) > VWAP ({current_vwap:.2f}) and ORB High ({orb_high:.2f}). ADX: {current_adx:.2f}"
                 return "CALL", reason, indicators
-            
-            # Bearish: Price < VWAP and Price breaks below 30-min ORB Low
+
             if current_close < current_vwap and current_close < orb_low:
                 reason = f"Bearish: Price ({current_close:.2f}) < VWAP ({current_vwap:.2f}) and ORB Low ({orb_low:.2f}). ADX: {current_adx:.2f}"
                 return "PUT", reason, indicators
 
         except Exception as e:
-            logger.error(f"Error calculating strategy indicators: {e}")
+            logger.error(f"Error calculating indicators for {symbol}: {e}")
 
         return None, "", {}
 
+    # ── Trade execution ──────────────────────────────────────────────────────
+
     def execute_trade(self, symbol: str, direction: str, reason: str, indicators: dict):
-        """Execute an ATM Option Debit Spread."""
+        """Execute an ATM debit spread via IBKR BAG combo order."""
         if symbol in self.active_trades:
-            logger.warning(f"Already in an active trade for {symbol}. Skipping.")
+            logger.warning(f"Already in active trade for {symbol}. Skipping.")
             return
 
-        # Prevent re-entry on the same breakout signal for the day
         if (symbol, direction) in self.signals_used_today:
-            logger.info(f"Signal ({symbol}, {direction}) already used today. Skipping re-entry.")
+            logger.info(f"Signal ({symbol}, {direction}) already used today. Skipping.")
             return
 
-        # Check daily trade limit
+        if self.circuit_breaker_tripped:
+            logger.warning(f"Circuit breaker active — {self.consecutive_losses} consecutive losses. No new entries today.")
+            return
+
         if self.daily_trade_count >= config.MAX_TRADES_PER_DAY:
-            logger.warning(f"Daily trade limit of {config.MAX_TRADES_PER_DAY} reached. No new entries.")
+            logger.warning(f"Daily trade limit of {config.MAX_TRADES_PER_DAY} reached.")
             return
 
         underlying_price = self.get_current_price(symbol)
         if underlying_price <= 0:
             return
 
-        # Calculate ATM and OTM strikes
         step = config.STRIKE_STEP.get(symbol, 1)
         atm_strike = round(underlying_price / step) * step
-        strike_width = config.SPREAD_WIDTH.get(symbol, 1)  # Spread width in dollars
-        
+        strike_width = config.SPREAD_WIDTH.get(symbol, 1)
+
         if direction == "CALL":
-            long_strike = atm_strike
-            short_strike = atm_strike + strike_width
-        else:  # PUT
-            long_strike = atm_strike
-            short_strike = atm_strike - strike_width
-        
-        # Fetch actual spread cost from Alpaca API
+            long_strike, short_strike = atm_strike, atm_strike + strike_width
+        else:
+            long_strike, short_strike = atm_strike, atm_strike - strike_width
+
         spread_cost = self.get_spread_value(symbol, direction, long_strike, short_strike)
         if spread_cost <= 0:
-            logger.warning(f"Could not fetch valid spread cost for {symbol}. Aborting trade.")
+            logger.warning(f"Could not fetch valid spread cost for {symbol}. Aborting.")
             return
 
         if spread_cost < config.MIN_SPREAD_COST:
-            logger.warning(
-                f"Spread cost ${spread_cost:.2f} is below minimum allowed ${config.MIN_SPREAD_COST:.2f}. Skipping trade for {symbol}."
-            )
+            logger.warning(f"Spread cost ${spread_cost:.2f} below minimum ${config.MIN_SPREAD_COST:.2f}. Skipping.")
             return
-        
+
         qty_to_buy = int(config.MAX_POSITION_SIZE // (spread_cost * 100))
-        
         if qty_to_buy < 1:
-            logger.warning(f"Spread cost ${spread_cost:.2f} per share (${spread_cost*100:.2f} per contract) exceeds max position size of ${config.MAX_POSITION_SIZE}.")
+            logger.warning(f"Spread cost ${spread_cost:.2f}/share exceeds max position size ${config.MAX_POSITION_SIZE}.")
             return
-            
+
         try:
-            today = datetime.datetime.now(pytz.timezone('America/New_York')).date().isoformat()
-            occ_long = self._format_occ_symbol(symbol, today, direction, long_strike)
-            occ_short = self._format_occ_symbol(symbol, today, direction, short_strike)
-            
-            # Submit real MLEG limit order to Alpaca
-            req = LimitOrderRequest(
-                qty=qty_to_buy,
-                limit_price=round(spread_cost, 2),
-                side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY,
-                order_class=OrderClass.MLEG,
-                legs=[
-                    OptionLegRequest(symbol=occ_long, ratio_qty=1, side=OrderSide.BUY, position_intent=PositionIntent.BUY_TO_OPEN),
-                    OptionLegRequest(symbol=occ_short, ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_OPEN),
-                ]
-            )
-            
-            order = self.trading_client.submit_order(req)
-            
+            long_c = self._get_option_contract(symbol, direction, long_strike)
+            short_c = self._get_option_contract(symbol, direction, short_strike)
+
+            bag = Contract()
+            bag.symbol = self._option_symbol(symbol)
+            bag.secType = 'BAG'
+            bag.currency = 'USD'
+            bag.exchange = 'SMART'
+            bag.comboLegs = [
+                ComboLeg(conId=long_c.conId, ratio=1, action='BUY', exchange='SMART'),
+                ComboLeg(conId=short_c.conId, ratio=1, action='SELL', exchange='SMART'),
+            ]
+
+            order = LimitOrder('BUY', qty_to_buy, round(spread_cost, 2))
+            ibkr_trade = self.ib.placeOrder(bag, order)
+
             self.active_trades[symbol] = {
                 'direction': direction,
                 'target_entry_price': spread_cost,
                 'status': 'PENDING_ENTRY',
-                'order_id': str(order.id),
+                'ibkr_trade': ibkr_trade,
+                'bag_contract': bag,
                 'qty': qty_to_buy,
                 'max_profit_pct': 0.0,
                 'long_strike': long_strike,
                 'short_strike': short_strike,
-                'occ_long': occ_long,
-                'occ_short': occ_short,
                 'entry_indicators': indicators,
-                'reason': reason
+                'reason': reason,
             }
             self.daily_trade_count += 1
             self.signals_used_today.add((symbol, direction))
-            logger.info(f"SUBMITTED {direction} SPREAD ORDER to Alpaca: {qty_to_buy} contracts of {symbol} at LIMIT ${spread_cost:.2f} (Order ID: {order.id})")
-            
+            logger.info(
+                f"SUBMITTED {direction} SPREAD ORDER to IBKR: {qty_to_buy} contracts {symbol} "
+                f"at LIMIT ${spread_cost:.2f} (OrderId: {ibkr_trade.order.orderId})"
+            )
+
         except Exception as e:
-            logger.error(f"Failed to execute live spread order on Alpaca: {e}")
+            logger.error(f"Failed to place IBKR spread order for {symbol}: {e}")
+
+    # ── Exit management ──────────────────────────────────────────────────────
 
     def evaluate_exit_conditions(self):
-        """Evaluates risk management rules for all active trades."""
         for symbol in list(self.active_trades.keys()):
             self.evaluate_exit_conditions_for_symbol(symbol)
 
     def evaluate_exit_conditions_for_symbol(self, symbol: str):
-        """Evaluates risk management rules and exits if necessary for a specific symbol."""
         if symbol not in self.active_trades:
             return
 
         trade = self.active_trades[symbol]
-        
-        # Fetch current spread value from Alpaca API
+
         current_spread_value = self.get_spread_value(
-            symbol, 
-            trade['direction'], 
-            trade['long_strike'], 
-            trade['short_strike']
+            symbol, trade['direction'], trade['long_strike'], trade['short_strike']
         )
-        
         if current_spread_value <= 0:
-            logger.warning(f"Could not fetch current spread value for {symbol}. Skipping exit evaluation.")
+            logger.warning(f"Could not fetch spread value for {symbol}. Skipping exit eval.")
             return
 
-        # Check order fill status on Alpaca
         if trade.get('status') == 'PENDING_ENTRY':
             try:
-                order = self.trading_client.get_order_by_id(trade['order_id'])
-                if order.status == 'filled':
-                    filled_price = float(order.filled_avg_price)
-                    logger.info(f"[{symbol}] ALPACA ORDER FILLED at ${filled_price:.2f}")
+                self.ib.sleep(0)  # flush event loop so orderStatus is current
+                ibkr_trade = trade['ibkr_trade']
+                status = ibkr_trade.orderStatus.status
+
+                if status == 'Filled':
+                    filled_price = float(ibkr_trade.orderStatus.avgFillPrice)
+                    logger.info(f"[{symbol}] IBKR ORDER FILLED at ${filled_price:.2f}")
                     trade['status'] = 'ACTIVE'
                     trade['entry_price'] = filled_price
-                    # Log entry to audit now that it is filled
                     self.log_audit(
-                        "BUY", symbol, trade['direction'], filled_price, trade.get('reason', 'Filled Alpaca order'),
+                        "BUY", symbol, trade['direction'], filled_price, trade.get('reason', ''),
                         adx=trade['entry_indicators'].get('adx'),
                         vwap=trade['entry_indicators'].get('vwap'),
                         orb_high=trade['entry_indicators'].get('orb_high'),
                         orb_low=trade['entry_indicators'].get('orb_low'),
                         underlying_price=trade['entry_indicators'].get('current_price')
                     )
-                    
-                    # Fire Discord Alert
-                    adx_val = trade['entry_indicators'].get('adx')
-                    vwap_val = trade['entry_indicators'].get('vwap')
-                    orb_high_val = trade['entry_indicators'].get('orb_high')
-                    orb_low_val = trade['entry_indicators'].get('orb_low')
-                    curr_price = trade['entry_indicators'].get('current_price')
-                    
+                    ind = trade['entry_indicators']
                     desc = (
                         f"**📊 Ticker:** {symbol}\n"
                         f"**🎯 Direction:** {trade['direction']} Spread\n"
@@ -457,71 +425,88 @@ class TradingBot:
                         f"**📈 Quantity:** {trade['qty']} Contracts\n"
                         f"**💸 Total Investment:** ${filled_price * trade['qty'] * 100:.2f}\n\n"
                         f"**📉 Indicators at Entry:**\n"
-                        f"• ADX: {adx_val:.2f if adx_val else 0}\n"
-                        f"• Price vs VWAP: ${curr_price:.2f if curr_price else 0} / ${vwap_val:.2f if vwap_val else 0}\n"
-                        f"• ORB: High ${orb_high_val:.2f if orb_high_val else 0} / Low ${orb_low_val:.2f if orb_low_val else 0}\n\n"
+                        f"• ADX: {ind.get('adx', 0):.2f}\n"
+                        f"• Price vs VWAP: ${ind.get('current_price', 0):.2f} / ${ind.get('vwap', 0):.2f}\n"
+                        f"• ORB: High ${ind.get('orb_high', 0):.2f} / Low ${ind.get('orb_low', 0):.2f}\n\n"
                         f"**📝 Reason:** {trade.get('reason', 'N/A')}"
                     )
                     self.send_discord_alert("🟢 NEW 0DTE SPREAD ENTRY", desc, 0x2ECC71)
-                elif order.status in ('canceled', 'expired', 'rejected'):
-                    logger.warning(f"[{symbol}] Alpaca order {order.status}. Removing from tracking.")
+
+                elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
+                    logger.warning(f"[{symbol}] IBKR order {status}. Removing from tracking.")
                     self.active_trades.pop(symbol, None)
                 else:
-                    logger.info(f"[{symbol}] Alpaca order still pending (Status: {order.status}).")
+                    logger.info(f"[{symbol}] IBKR order still pending (Status: {status}).")
             except Exception as e:
-                logger.error(f"[{symbol}] Error checking Alpaca order status: {e}")
+                logger.error(f"[{symbol}] Error checking IBKR order status: {e}")
             return
 
         profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
-        
+
         if profit_pct > trade['max_profit_pct']:
             trade['max_profit_pct'] = profit_pct
             if profit_pct > 0:
-                logger.info(f"[{symbol}] New Max Profit Reached: {trade['max_profit_pct']*100:.2f}%")
+                logger.info(f"[{symbol}] New Max Profit: {profit_pct*100:.2f}%")
 
         exit_triggered = False
         exit_reason = ""
 
-        if trade['max_profit_pct'] > 0 and profit_pct <= (trade['max_profit_pct'] * config.MAX_PROFIT_EXIT_MULTIPLIER):
+        # Rule 1: Hard stop loss
+        if profit_pct <= -config.HARD_STOP_LOSS_PCT:
+            exit_triggered = True
+            exit_reason = f"Hard stop loss: spread lost {abs(profit_pct)*100:.1f}% of entry value"
+
+        # Rule 2: Max profit trailing exit (dropped to 70% of peak)
+        elif trade['max_profit_pct'] > 0 and profit_pct <= (trade['max_profit_pct'] * config.MAX_PROFIT_EXIT_MULTIPLIER):
             exit_triggered = True
             exit_reason = f"Dropped to 70% of Max Profit. (Max: {trade['max_profit_pct']*100:.2f}%, Current: {profit_pct*100:.2f}%)"
 
+        # Rule 3: 10% trailing stop (activated after 40% profit)
         elif trade['max_profit_pct'] >= config.TAKE_PROFIT_TRAIL_TRIGGER:
-            trailing_stop_threshold = trade['max_profit_pct'] - config.TRAILING_STOP_LOSS_PCT
-            if profit_pct <= trailing_stop_threshold:
+            trailing_threshold = trade['max_profit_pct'] - config.TRAILING_STOP_LOSS_PCT
+            if profit_pct <= trailing_threshold:
                 exit_triggered = True
-                exit_reason = f"10% Trailing Stop Triggered. (Max: {trade['max_profit_pct']*100:.2f}%, Threshold: {trailing_stop_threshold*100:.2f}%, Current: {profit_pct*100:.2f}%)"
+                exit_reason = f"10% Trailing Stop. (Max: {trade['max_profit_pct']*100:.2f}%, Threshold: {trailing_threshold*100:.2f}%, Current: {profit_pct*100:.2f}%)"
 
         if exit_triggered:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")
             self.close_position(symbol, current_spread_value, exit_reason)
 
     def close_position(self, symbol: str, current_spread_value: float, reason: str):
-        """Closes the active spread position for a symbol."""
+        """Submit a closing BAG order for the active spread position."""
         if symbol not in self.active_trades:
             return
-        
+
         trade = self.active_trades[symbol]
         try:
-            # Submit reversing order to Alpaca
-            req = LimitOrderRequest(
-                qty=trade['qty'],
-                limit_price=round(current_spread_value, 2),
-                side=OrderSide.SELL,
-                time_in_force=TimeInForce.DAY,
-                order_class=OrderClass.MLEG,
-                legs=[
-                    OptionLegRequest(symbol=trade['occ_long'], ratio_qty=1, side=OrderSide.SELL, position_intent=PositionIntent.SELL_TO_CLOSE),
-                    OptionLegRequest(symbol=trade['occ_short'], ratio_qty=1, side=OrderSide.BUY, position_intent=PositionIntent.BUY_TO_CLOSE),
-                ]
+            # Use the same BAG contract structure — a SELL order closes the position
+            closing_order = LimitOrder('SELL', trade['qty'], round(current_spread_value, 2))
+            exit_ibkr_trade = self.ib.placeOrder(trade['bag_contract'], closing_order)
+            logger.info(
+                f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to IBKR at LIMIT "
+                f"${current_spread_value:.2f} (OrderId: {exit_ibkr_trade.order.orderId})"
             )
-            exit_order = self.trading_client.submit_order(req)
-            logger.info(f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to Alpaca at LIMIT ${current_spread_value:.2f} (Order ID: {exit_order.id})")
-            
+
             profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
             dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
-            
-            # Fire Discord Alert
+
+            # Update circuit breaker counter
+            if profit_pct < 0:
+                self.consecutive_losses += 1
+                if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES and not self.circuit_breaker_tripped:
+                    self.circuit_breaker_tripped = True
+                    logger.warning(
+                        f"CIRCUIT BREAKER TRIPPED: {self.consecutive_losses} consecutive losses. "
+                        f"No new entries for the rest of the day."
+                    )
+                    self.send_discord_alert(
+                        "🚨 CIRCUIT BREAKER TRIPPED",
+                        f"**{self.consecutive_losses} consecutive losing trades.**\nNo new entries will be placed for the rest of today.",
+                        0xFF0000
+                    )
+            else:
+                self.consecutive_losses = 0
+
             color = 0x3498DB if profit_pct > 0 else 0xE74C3C
             desc = (
                 f"**📊 Ticker:** {symbol}\n"
@@ -534,84 +519,71 @@ class TradingBot:
                 f"**📝 Exit Reason:** {reason}"
             )
             self.send_discord_alert("🔵 CLOSED 0DTE SPREAD POSITION", desc, color)
-            
-            # Fetch current indicators at exit time for logging context
+
+            # Capture exit-time indicators for the audit log
             df = self.fetch_intraday_data(symbol)
             exit_indicators = trade.get('entry_indicators', {}).copy()
             if not df.empty and len(df) >= 20:
-                vwap_indicator = ta.volume.VolumeWeightedAveragePrice(
+                vwap_ind = ta.volume.VolumeWeightedAveragePrice(
                     high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
                 )
-                df.loc[:, 'VWAP'] = vwap_indicator.volume_weighted_average_price()
-                
-                adx_indicator = ta.trend.ADXIndicator(
+                df.loc[:, 'VWAP'] = vwap_ind.volume_weighted_average_price()
+                adx_ind = ta.trend.ADXIndicator(
                     high=df['high'], low=df['low'], close=df['close'], window=14
                 )
-                df.loc[:, 'ADX'] = adx_indicator.adx()
-                
+                df.loc[:, 'ADX'] = adx_ind.adx()
                 now = datetime.datetime.now(pytz.timezone('America/New_York'))
                 market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-                orb_end_time = market_open + datetime.timedelta(minutes=30)
-                orb_bars = df[(df.index >= market_open) & (df.index < orb_end_time)]
-                
+                orb_bars = df[(df.index >= market_open) & (df.index < market_open + datetime.timedelta(minutes=30))]
                 if not orb_bars.empty:
                     exit_indicators = {
-                        'adx': df['ADX'].iloc[-1],
-                        'vwap': df['VWAP'].iloc[-1],
-                        'orb_high': orb_bars['high'].max(),
-                        'orb_low': orb_bars['low'].min(),
+                        'adx': df['ADX'].iloc[-1], 'vwap': df['VWAP'].iloc[-1],
+                        'orb_high': orb_bars['high'].max(), 'orb_low': orb_bars['low'].min(),
                         'current_price': df['close'].iloc[-1]
                     }
-            
-            profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
-            dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
+
             self.log_audit(
                 "SELL", symbol, trade['direction'], current_spread_value, reason,
-                adx=exit_indicators.get('adx'),
-                vwap=exit_indicators.get('vwap'),
-                orb_high=exit_indicators.get('orb_high'),
-                orb_low=exit_indicators.get('orb_low'),
+                adx=exit_indicators.get('adx'), vwap=exit_indicators.get('vwap'),
+                orb_high=exit_indicators.get('orb_high'), orb_low=exit_indicators.get('orb_low'),
                 underlying_price=exit_indicators.get('current_price'),
-                profit_pct=profit_pct,
-                dollar_pnl=dollar_pnl
+                profit_pct=profit_pct, dollar_pnl=dollar_pnl
             )
         except Exception as e:
-            logger.error(f"[{symbol}] Failed to submit Alpaca closing order: {e}")
+            logger.error(f"[{symbol}] Failed to submit IBKR closing order: {e}")
         finally:
             self.active_trades.pop(symbol, None)
 
+    # ── Main loop ────────────────────────────────────────────────────────────
+
     def run(self):
-        """Main execution loop."""
-        logger.info("Starting Options Spread Trading Bot...")
+        logger.info("Starting 0DTE Options Spread Trading Bot (IBKR)...")
         while True:
             try:
-                # Check market hours
-                clock = self.api.get_clock()
-                if not clock.is_open:
+                self._ensure_connected()
+
+                if not self.is_market_open():
                     logger.info("Market is closed. Sleeping for 5 minutes.")
-                    time.sleep(300)
+                    self.ib.sleep(300)
                     continue
 
-                # Reset daily counters if needed
                 self.check_and_reset_daily_trade_count()
-
-                # Evaluate exits for all active trades
                 self.evaluate_exit_conditions()
-                
-                # Skip new entries entirely after 3:00 PM EST
+
                 if not self._is_entry_window():
                     logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
                 else:
                     for symbol in config.SYMBOLS:
                         if symbol not in self.active_trades:
                             direction, reason, indicators = self.evaluate_entry_strategy(symbol)
-                            if direction in ["CALL", "PUT"]:
+                            if direction in ("CALL", "PUT"):
                                 self.execute_trade(symbol, direction, reason, indicators)
-                
-                time.sleep(60)
+
+                self.ib.sleep(60)
             except KeyboardInterrupt:
-                logger.info("Bot Stopped Manually.")
+                logger.info("Bot stopped manually.")
+                self.ib.disconnect()
                 break
             except Exception as e:
                 logger.error(f"Unexpected error in main loop: {e}")
-                time.sleep(60)
+                self.ib.sleep(60)
