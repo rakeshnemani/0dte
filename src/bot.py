@@ -25,7 +25,10 @@ class TradingBot:
         self.active_trades: Dict[str, dict] = {}
         self.daily_trade_count: int = 0
         self.last_trade_date: datetime.date = None
-        self.signals_used_today: set = set()
+        # Cooldown: maps (symbol, direction) → datetime when the cooldown expires.
+        # Replaces the old all-day block so the same signal can re-trigger after
+        # SIGNAL_COOLDOWN_MINUTES (default 30) minutes, enabling continuation trades.
+        self.signal_cooldowns: Dict[tuple, datetime.datetime] = {}
         self.consecutive_losses: int = 0
         self.circuit_breaker_tripped: bool = False
 
@@ -34,7 +37,36 @@ class TradingBot:
         self.ib.connect(config.IBKR_HOST, config.IBKR_PORT, clientId=config.IBKR_CLIENT_ID)
         # Use delayed data (type 4) so paper accounts work without live subscriptions
         self.ib.reqMarketDataType(4)
+        # Silence ib_insync's internal wrapper logger — it prints every IBKR error code
+        # (including expected ones like 162 "no data yet") as ERROR. We handle real errors
+        # ourselves via errorEvent below.
+        import logging as _logging
+        _logging.getLogger('ib_insync.wrapper').setLevel(_logging.CRITICAL)
+        self.ib.errorEvent += self._on_ibkr_error
         logger.info("Connected to IBKR")
+
+    # Error codes that are routine/informational and should not be logged as errors
+    _IBKR_INFO_CODES = {
+        162,   # HMDS no data yet — expected at/before market open
+        200,   # No security definition — expected when option contract doesn't exist yet
+        354,   # Requested market data is not subscribed — expected on delayed feed
+        10091, # Part of market data requires additional subscription — delayed data notice
+        10167, # Displaying delayed market data — expected on paper account
+        10349, # Order TIF set to DAY based on preset — informational
+        2104,  # Market data farm connection OK
+        2106,  # HMDS data farm connection OK
+        2107,  # HMDS data farm connection inactive
+        2108,  # Market data farm connection inactive
+        2158,  # Sec-def data farm connection OK
+        2119,  # Market data farm is connecting
+    }
+
+    def _on_ibkr_error(self, reqId: int, errorCode: int, errorString: str, contract):
+        """Route IBKR error events: suppress expected codes, log real problems."""
+        if errorCode in self._IBKR_INFO_CODES:
+            logger.debug(f"IBKR [{errorCode}] reqId={reqId}: {errorString}")
+        else:
+            logger.warning(f"IBKR error [{errorCode}] reqId={reqId}: {errorString}")
 
     def _ensure_connected(self):
         if not self.ib.isConnected():
@@ -139,7 +171,7 @@ class TradingBot:
         if self.last_trade_date != today:
             self.daily_trade_count = 0
             self.last_trade_date = today
-            self.signals_used_today.clear()
+            self.signal_cooldowns.clear()
             self.consecutive_losses = 0
             self.circuit_breaker_tripped = False
             logger.info(f"Daily trade count reset for {today}")
@@ -157,6 +189,16 @@ class TradingBot:
     def _is_entry_window(self) -> bool:
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
         return now.hour < 15
+
+    def _seconds_until_market_open(self) -> int:
+        """Return seconds until the next 9:30 AM EST weekday open."""
+        now = datetime.datetime.now(pytz.timezone('America/New_York'))
+        next_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        if now >= next_open:
+            next_open += datetime.timedelta(days=1)
+        while next_open.weekday() >= 5:   # skip Saturday (5) and Sunday (6)
+            next_open += datetime.timedelta(days=1)
+        return max(int((next_open - now).total_seconds()), 60)
 
     # ── Broker API calls ─────────────────────────────────────────────────────
 
@@ -200,6 +242,15 @@ class TradingBot:
             else:
                 df['date'] = df['date'].dt.tz_convert('America/New_York')
             df = df.set_index('date')
+
+            # Keep only today's RTH bars (IBKR durationStr='1 D' can include
+            # yesterday's bars; delayed data also backfills with NaN rows)
+            now = datetime.datetime.now(pytz.timezone('America/New_York'))
+            today_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+            df = df[df.index >= today_open]
+
+            # Drop rows where key price fields are NaN (delayed feed backfill artefacts)
+            df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
             # SPX MIDPOINT bars have no volume; set dummy volume=1 so VWAP math works
             if 'volume' not in df.columns or (df['volume'] == 0).all():
@@ -299,8 +350,11 @@ class TradingBot:
             logger.warning(f"Already in active trade for {symbol}. Skipping.")
             return
 
-        if (symbol, direction) in self.signals_used_today:
-            logger.info(f"Signal ({symbol}, {direction}) already used today. Skipping.")
+        now_est = datetime.datetime.now(pytz.timezone('America/New_York'))
+        cooldown_expires = self.signal_cooldowns.get((symbol, direction))
+        if cooldown_expires and now_est < cooldown_expires:
+            remaining = int((cooldown_expires - now_est).total_seconds() // 60)
+            logger.info(f"Signal ({symbol}, {direction}) in cooldown for {remaining}m more. Skipping.")
             return
 
         if self.circuit_breaker_tripped:
@@ -369,11 +423,36 @@ class TradingBot:
                 'reason': reason,
             }
             self.daily_trade_count += 1
-            self.signals_used_today.add((symbol, direction))
+            cooldown_until = now_est + datetime.timedelta(minutes=config.SIGNAL_COOLDOWN_MINUTES)
+            self.signal_cooldowns[(symbol, direction)] = cooldown_until
+            logger.info(f"Signal ({symbol}, {direction}) cooling down until {cooldown_until.strftime('%H:%M')} EST.")
             logger.info(
                 f"SUBMITTED {direction} SPREAD ORDER to IBKR: {qty_to_buy} contracts {symbol} "
                 f"at LIMIT ${spread_cost:.2f} (OrderId: {ibkr_trade.order.orderId})"
             )
+
+            # Fire Discord alert immediately on submission so you can monitor
+            # even if the order gets rejected before fill confirmation.
+            adx_v = indicators.get('adx', 0)
+            vwap_v = indicators.get('vwap', 0)
+            price_v = indicators.get('current_price', 0)
+            orb_h = indicators.get('orb_high', 0)
+            orb_l = indicators.get('orb_low', 0)
+            submit_desc = (
+                f"**📊 Ticker:** {symbol}\n"
+                f"**🎯 Direction:** {direction} Spread\n"
+                f"**⚙️ Strikes:** Long ${long_strike:.0f} / Short ${short_strike:.0f}\n"
+                f"**💰 Limit Price:** ${spread_cost:.2f} per contract\n"
+                f"**📈 Quantity:** {qty_to_buy} contracts\n"
+                f"**💸 Max Investment:** ${spread_cost * qty_to_buy * 100:.2f}\n\n"
+                f"**📉 Indicators at Signal:**\n"
+                f"• ADX: {adx_v:.2f}\n"
+                f"• Price vs VWAP: ${price_v:.2f} / ${vwap_v:.2f}\n"
+                f"• ORB: High ${orb_h:.2f} / Low ${orb_l:.2f}\n\n"
+                f"**📝 Signal:** {reason}\n"
+                f"**⏳ Status:** Pending fill (Order #{ibkr_trade.order.orderId})"
+            )
+            self.send_discord_alert("⏳ ORDER SUBMITTED — Awaiting Fill", submit_desc, 0xF39C12)
 
         except Exception as e:
             logger.error(f"Failed to place IBKR spread order for {symbol}: {e}")
@@ -563,8 +642,15 @@ class TradingBot:
                 self._ensure_connected()
 
                 if not self.is_market_open():
-                    logger.info("Market is closed. Sleeping for 5 minutes.")
-                    self.ib.sleep(300)
+                    secs = self._seconds_until_market_open()
+                    hrs, rem = divmod(secs, 3600)
+                    mins = rem // 60
+                    if hrs > 0:
+                        logger.info(f"Market closed. Next open in {hrs}h {mins}m. Sleeping 1 hour.")
+                        self.ib.sleep(3600)   # wake hourly to keep IBKR connection alive
+                    else:
+                        logger.info(f"Market opens in {mins}m {rem % 60}s. Sleeping until open.")
+                        self.ib.sleep(secs)
                     continue
 
                 self.check_and_reset_daily_trade_count()

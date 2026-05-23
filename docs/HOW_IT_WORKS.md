@@ -1,292 +1,308 @@
-# How the 0DTE Trading Bot Works in Real-Time
+# How the 0DTE Trading Bot Works
 
-This document explains the lifecycle of the `TradingBot` script — how it runs continuously, evaluates charts, places option spread orders via IBKR, and manages risk dynamically.
+This document explains the full lifecycle of the bot — from startup and market-hours management through entry scanning, order execution, position monitoring, and exit rules.
 
 ---
 
-## 1. The Continuous Loop (The Heartbeat)
+## 1. Startup
 
-When you run `python src/main.py`, the script:
-1. Creates an event loop (required for Python 3.10+ compatibility with `ib_insync`)
-2. Initializes the `TradingBot`, which connects to IBKR via IB Gateway or TWS
-3. Enters an infinite `while True:` loop
+```bash
+python src/main.py
+```
 
-The loop fires every **60 seconds** using `ib.sleep(60)` (not `time.sleep` — the ib_insync version keeps the IBKR event loop alive so order fills and market data updates are received continuously).
+`main.py` first creates an asyncio event loop (required for Python 3.10+ compatibility with `ib_insync`), then instantiates `TradingBot`, which:
 
-Each iteration either:
-- **Scans for entry signals** (if no active trade for that symbol), or
-- **Monitors the active position** (if a trade is open)
+1. Connects to IBKR via IB Gateway or TWS using the host/port from `.env`
+2. Requests **delayed market data (type 4)** — no live subscription needed for paper trading
+3. Silences `ib_insync`'s internal error logger and subscribes to `errorEvent` to route IBKR messages itself — suppressing expected info codes (162, 2104, 2106, 10091, 10167, etc.) and surfacing real problems as `WARNING`
+4. Enters the main `while True:` loop
+
+---
+
+## 2. The Heartbeat Loop
+
+The loop runs every **60 seconds** using `ib.sleep(60)` — not Python's `time.sleep`. The ib_insync version keeps the IBKR event loop alive during the wait, so order fills and market data callbacks are processed in real time.
+
+Each iteration:
+
+```
+ensure connected
+│
+├─ Market closed?
+│   └─ Calculate seconds to next 9:30 AM EST weekday open
+│       ├─ > 1 hour away → sleep 1 hour (wake hourly to keep IBKR alive)
+│       └─ ≤ 1 hour away → sleep exactly until open
+│
+├─ Reset daily counters if it's a new trading day
+├─ Evaluate exit conditions for all active trades
+│
+└─ Entry window open? (before 3:00 PM EST)
+    └─ For each symbol (SPY, QQQ, IWM):
+        └─ No active trade? → evaluate entry strategy → execute if signal found
+```
 
 ```mermaid
 graph TD
-    Start[Start main.py] --> Init[Connect to IBKR via IB Gateway]
-    Init --> Loop[60-second heartbeat]
-    Loop --> MarketCheck{Is market open?}
-    MarketCheck -- No --> Sleep[Sleep 5 min]
-    MarketCheck -- Yes --> ExitCheck[Evaluate exits for active trades]
-    ExitCheck --> TimeCheck{Before 3:00 PM EST?}
-    TimeCheck -- No --> Sleep2[Sleep 60s]
-    TimeCheck -- Yes --> ForEach[For each symbol in watchlist]
-    ForEach --> HasTrade{Active trade for symbol?}
-    HasTrade -- Yes --> Sleep2
-    HasTrade -- No --> DailyCheck{Daily limit reached?}
-    DailyCheck -- Yes --> Sleep2
-    DailyCheck -- No --> Scan[Fetch bars & evaluate signals]
-    Scan --> SignalFound{Entry signal?}
-    SignalFound -- No --> Sleep2
-    SignalFound -- Yes --> FetchSpread[Fetch spread cost from IBKR]
-    FetchSpread --> CostCheck{Cost >= MIN_SPREAD_COST?}
-    CostCheck -- No --> Skip[Skip]
-    CostCheck -- Yes --> Execute[Submit BAG combo order to IBKR]
-    Execute --> Sleep2
-    Skip --> Sleep2
-    Sleep2 --> Loop
+    Loop[60-second heartbeat] --> Conn[Ensure IBKR connected]
+    Conn --> MktCheck{Market open?}
+    MktCheck -- No --> SmartSleep[Sleep until next open\n1-hr cap for connection health]
+    SmartSleep --> Loop
+    MktCheck -- Yes --> Reset[Reset daily counters if new day]
+    Reset --> Exits[Evaluate exits for active trades]
+    Exits --> Window{Before 3 PM EST?}
+    Window -- No --> Sleep[Sleep 60s]
+    Window -- Yes --> ForEach[For each symbol]
+    ForEach --> HasTrade{Active trade?}
+    HasTrade -- Yes --> Sleep
+    HasTrade -- No --> Scan[Evaluate entry strategy]
+    Scan --> Signal{Signal found?}
+    Signal -- No --> Sleep
+    Signal -- Yes --> Execute[Submit BAG order to IBKR]
+    Execute --> Sleep
+    Sleep --> Loop
 ```
 
 ---
 
-## 2. IBKR Connection
+## 3. Smart Sleep (Market Closed)
 
-The bot uses `ib_insync` to communicate with IBKR. This requires IB Gateway (or TWS) to be running locally with API access enabled.
+When the market is closed, the bot calculates the exact number of seconds until the next 9:30 AM EST weekday open, skipping weekends. It then:
 
-**Connection settings (from `.env`):**
+- **If > 1 hour away:** sleeps 1 hour, logs the countdown, then recalculates. This keeps the IBKR socket alive overnight and over weekends without constant reconnections.
+- **If ≤ 1 hour away:** sleeps exactly until open, so the bot is ready to scan from the first minute.
 
-| Setting | Default | Description |
-|---|---|---|
-| `IBKR_HOST` | `127.0.0.1` | IB Gateway host |
-| `IBKR_PORT` | `4002` | IB Gateway paper port (TWS paper uses `7497`) |
-| `IBKR_CLIENT_ID` | `1` | Unique client ID for this connection |
-
-On startup, the bot also calls `ib.reqMarketDataType(4)` to request delayed data. This means no live data subscription is needed for paper trading — IBKR will serve the most recently available delayed quotes.
-
-If the connection drops during a session, `_ensure_connected()` is called at the start of each loop iteration to reconnect automatically.
+Example log output over a weekend:
+```
+Market closed. Next open in 63h 14m. Sleeping 1 hour.
+Market closed. Next open in 62h 14m. Sleeping 1 hour.
+...
+Market opens in 47m 12s. Sleeping until open.
+Daily trade count reset for 2026-05-26
+```
 
 ---
 
-## 3. Phase 1: Scanning for Entries
+## 4. Daily Reset
 
-If the bot has no active trade for a symbol, it enters the **Scanning Phase**.
+At the start of each new trading day, `check_and_reset_daily_trade_count()` resets:
+- `daily_trade_count → 0`
+- `signal_cooldowns → {}` (all cooldowns cleared)
+- `consecutive_losses → 0`
+- `circuit_breaker_tripped → False`
 
-### Step 1: Market Hours Check
-The bot checks if the current time is within regular trading hours (Mon–Fri, 9:30 AM – 4:00 PM EST). If not, it sleeps for 5 minutes.
+---
 
-### Step 2: Entry Window Check
-Before fetching any data, the bot checks if it is past **3:00 PM EST**. If so, it skips all entry logic for the rest of the day — 0DTE spreads entered late carry unmanageable theta risk.
+## 5. Phase 1: Entry Scanning
 
-### Step 3: Daily Trade Limit Check
-Checks if the day's trade count has reached `MAX_TRADES_PER_DAY` (default: 5). The counter resets at midnight after the trading day. If the limit is hit, no new entries for the day.
+For each symbol with no active trade, the bot runs through these checks in order. Any failure returns early with no trade placed.
 
-### Step 4: Fetch 1-Minute Bars from IBKR
+### Guard 1: Circuit Breaker
+If `circuit_breaker_tripped` is True (N consecutive losses today), skip all entries. No new trades until midnight.
 
-```
-ib.reqHistoricalData(contract, durationStr='1 D', barSizeSetting='1 min', ...)
-```
+### Guard 2: Daily Trade Cap
+If `daily_trade_count >= MAX_TRADES_PER_DAY` (default 12), skip. This is a hard safety ceiling; on normal trending days it's never hit.
 
-- For **SPY/QQQ**: uses `whatToShow='TRADES'` (ETFs with real volume)
-- For **SPX**: uses `whatToShow='MIDPOINT'` because SPX is a cash index with no tradeable volume; a dummy `volume=1` is injected so VWAP calculation doesn't break
+### Guard 3: Signal Cooldown
+After any trade (entry submitted), the `(symbol, direction)` pair is locked for `SIGNAL_COOLDOWN_MINUTES` (default 30). This prevents immediate whipsaw re-entry while still allowing continuation trades once the cooldown expires.
 
-### Step 5: Calculate Technical Indicators
+**Example:** SPY PUT fires at 10:05. Bot exits at 10:22. SPY PUT is locked until 10:35. If SPY is still bearish at 10:36, the bot can re-enter.
 
-#### VWAP (Volume-Weighted Average Price)
-Institutional average cost from market open. Used to determine whether price is trading above or below fair value.
+### Guard 4: One Trade Per Symbol
+If a trade is already `PENDING_ENTRY` or `ACTIVE` for this symbol, skip.
 
-#### 30-Minute Opening Range Breakout (ORB)
-The ORB window is anchored to **9:30 AM EST wall-clock time**, not the first bar in the returned dataset. This ensures the breakout range is always correctly identified even if the bot restarts mid-day.
-
-```
-ORB window: 9:30 AM – 10:00 AM EST
-ORB High = max high in that window
-ORB Low  = min low in that window
-```
-
-#### ADX (Average Directional Index)
-Trend strength over a 14-bar window. Must exceed 25 before any entry is considered.
-
-### Step 6: Evaluate Entry Signal
-
-**CALL signal (bullish):**
-- ADX > 25
-- Price > VWAP
-- Price > ORB High
-
-**PUT signal (bearish):**
-- ADX > 25
-- Price < VWAP
-- Price < ORB Low
-
-### Step 7: Price the Spread from IBKR
-
-The bot fetches real bid/ask data for each option leg via `ib.reqMktData()`. The mid-price of each leg is calculated as `(bid + ask) / 2`. Spread cost = `long_mid - short_mid`.
-
-**Symbol mapping:**
-- SPY/QQQ options: use the ETF ticker directly
-- SPX options: use `SPXW` (weekly expiry series) — the bot maps this automatically
-
-If the spread cost is below `MIN_SPREAD_COST` ($0.10 by default), the trade is skipped.
-
-### Step 8: Submit BAG Combo Order
-
-IBKR represents multi-leg options orders as `BAG` contracts with `ComboLeg` objects. The bot submits a limit order at the mid-price:
+### Guard 5: Fetch 1-Minute Bars
 
 ```python
-bag = Contract(symbol='SPY', secType='BAG', currency='USD', exchange='SMART')
-bag.comboLegs = [
-    ComboLeg(conId=long_call.conId, ratio=1, action='BUY', exchange='SMART'),
-    ComboLeg(conId=short_call.conId, ratio=1, action='SELL', exchange='SMART'),
-]
-order = LimitOrder('BUY', qty, limit_price)
-ib.placeOrder(bag, order)
+ib.reqHistoricalData(contract, durationStr='1 D', barSizeSetting='1 min',
+                     whatToShow='TRADES', useRTH=True)
 ```
 
-The trade object returned by `ib.placeOrder()` is stored in `active_trades` and updated in-place by ib_insync as the order status changes.
+After fetching, the bot:
+1. **Filters to today's session only** (bars from 9:30 AM EST onward) — IBKR's `1 D` duration can include yesterday's bars
+2. **Drops NaN rows** — delayed data sometimes backfills with empty rows before prices are available
+3. Requires **at least 20 clean bars** before proceeding (ensures enough data for ADX warmup)
+
+### Guard 6: Calculate Indicators
+
+**VWAP** — Volume-Weighted Average Price from 9:30 AM EST. Reflects the institutional average cost basis for the day.
+
+**ADX(14)** — Average Directional Index over 14 bars. A value > 25 indicates a strong directional trend. Below 25 = choppy, no trade.
+
+**30-Minute ORB** — Opening Range Breakout. The high and low of the 9:30–10:00 AM EST window, anchored to fixed wall-clock time (not `df.index[0]`). This means restarting the bot mid-day still produces the correct morning range.
+
+### Guard 7: Entry Signal
+
+| Signal | Conditions |
+|--------|-----------|
+| **CALL** | ADX > 25 AND price > VWAP AND price > ORB High |
+| **PUT** | ADX > 25 AND price < VWAP AND price < ORB Low |
+
+If neither condition is met, no trade.
+
+### Guard 8: Spread Pricing
+
+The bot fetches live bid/ask from IBKR for each option leg and computes:
+
+```
+spread_cost = mid(long_leg) − mid(short_leg)
+```
+
+If `spread_cost < MIN_SPREAD_COST` ($0.10 default), skip — the spread is too cheap to be liquid.
+
+### Execution: BAG Combo Order
+
+IBKR represents multi-leg options as `BAG` contracts with `ComboLeg` objects:
+
+```python
+bag = Contract(secType='BAG', symbol='SPY', exchange='SMART', currency='USD')
+bag.comboLegs = [
+    ComboLeg(conId=long_call.conId, ratio=1, action='BUY'),
+    ComboLeg(conId=short_call.conId, ratio=1, action='SELL'),
+]
+order = LimitOrder('BUY', qty, round(spread_cost, 2))
+ibkr_trade = ib.placeOrder(bag, order)
+```
+
+Position sizing:
+```
+qty = floor(MAX_POSITION_SIZE / (spread_cost × 100))
+```
+
+**Immediately on submission**, a Discord ⏳ orange alert fires with the full order details (strikes, limit price, qty, indicators). This fires even if the order is later rejected by IBKR — so you always know the bot attempted an entry.
 
 ---
 
-## 4. Phase 2: Monitoring and Exiting
+## 6. Phase 2: Monitoring Active Trades
 
-Once an order is placed, the bot tracks it as `PENDING_ENTRY`. Each subsequent loop iteration checks the `Trade` object's status via `ibkr_trade.orderStatus.status`.
+Every loop iteration, `evaluate_exit_conditions_for_symbol()` runs for each active trade.
 
-When status becomes `'Filled'`:
-- Entry price is set from `avgFillPrice`
-- Status transitions to `'ACTIVE'`
-- BUY row is written to `audit.csv`
-- Discord alert fires
+### Pending Entry Check
 
-### Exit Rules
+If status is `PENDING_ENTRY`, the bot checks the live IBKR trade object's `orderStatus.status`:
 
-Every loop iteration evaluates three exit rules in priority order:
+| IBKR Status | Action |
+|-------------|--------|
+| `Filled` | Record fill price, transition to `ACTIVE`, log BUY to `audit.csv`, send 🟢 Discord alert |
+| `Cancelled` / `ApiCancelled` / `Inactive` | Remove from tracking (order was rejected or expired) |
+| Anything else | Log and wait — check again next cycle |
 
-#### Rule 1: Hard Stop Loss (50%)
-Exit immediately if the spread has lost 50% or more of its entry value. Prevents catastrophic losses.
+### Active Trade: Exit Rules
 
+Once `ACTIVE`, the bot fetches the current spread value (live bid/ask from IBKR) every 60 seconds and evaluates three rules in priority order:
+
+#### Rule 1 — Hard Stop Loss (70%)
 ```
-if profit_pct <= -0.50: EXIT
+if profit_pct ≤ -0.70: EXIT
 ```
+Exit immediately if the spread has lost 70% of its entry value. Aggressive by standard 0DTE practice (50% is typical) — set `HARD_STOP_LOSS_PCT=0.50` in `.env` to tighten.
 
-#### Rule 2: Max Profit Trailing Exit (70% of peak)
-The bot tracks the highest profit percentage ever seen for this trade. If current profit drops to 70% of that peak, exit.
-
-Example:
-- Entry: $1.00 → spread reaches $1.50 (+50% max)
-- Exit threshold: 70% of +50% = +35%
-- If spread drops back to $1.35, SELL
-
+#### Rule 2 — Max Profit Trailing Exit (70% of peak)
 ```
-if max_profit > 0 and profit <= max_profit * 0.70: EXIT
+if max_profit_pct > 0 AND profit_pct ≤ max_profit_pct × 0.70: EXIT
 ```
+The bot tracks the highest profit percentage ever seen for the trade. If current profit drops to 70% of that peak, exit.
 
-#### Rule 3: 10% Trailing Stop (activated at 40% profit)
-Once profit reaches 40%, a trailing stop locks in gains: exit if profit ever drops 10% below the peak.
+**Example:** Entered at $1.00. Spread reaches $1.60 (+60% max). Exit threshold = +42%. If spread drops to $1.42, sell.
 
-Example:
-- Profit reaches +55% (max)
-- Trailing stop: +55% - 10% = +45%
-- If profit drops to +45% or below, SELL
-
+#### Rule 3 — Trailing Stop (10% from peak, after 40% profit)
 ```
-if max_profit >= 0.40 and profit <= max_profit - 0.10: EXIT
+if max_profit_pct ≥ 0.40 AND profit_pct ≤ max_profit_pct − 0.10: EXIT
 ```
+Once the trade has been up 40%+, a 10% trailing stop activates.
+
+**Example:** Spread peaks at +55%. Trailing stop = +45%. If profit drops below +45%, sell.
 
 ```mermaid
 graph TD
-    Evaluate[Check Current Spread Value via IBKR] --> Calc[Calculate Profit %]
-    Calc --> MaxProfit{Profit > Max Ever?}
-    MaxProfit -- Yes --> Update[Update Max Profit]
-    MaxProfit -- No --> Rules
-    Update --> Rules
+    Fetch[Fetch current spread value] --> Calc[Calculate profit %]
+    Calc --> UpdateMax{New high?}
+    UpdateMax -- Yes --> SetMax[Update max_profit_pct]
+    UpdateMax -- No --> R1
+    SetMax --> R1
 
-    Rules --> Rule1{Profit <= -50%?}
-    Rule1 -- Yes --> Sell[Exit Position]
-    Rule1 -- No --> Rule2{Max Profit > 0 AND<br/>Profit <= 70% of Max?}
-    Rule2 -- Yes --> Sell
-    Rule2 -- No --> Rule3{Max Profit >= 40% AND<br/>Profit <= Max - 10%?}
-    Rule3 -- Yes --> Sell
-    Rule3 -- No --> Hold[Hold — check next cycle]
+    R1{profit ≤ -70%?}
+    R1 -- Yes --> Exit[Exit position]
+    R1 -- No --> R2{max > 0 AND\nprofit ≤ max × 70%?}
+    R2 -- Yes --> Exit
+    R2 -- No --> R3{max ≥ 40% AND\nprofit ≤ max − 10%?}
+    R3 -- Yes --> Exit
+    R3 -- No --> Hold[Hold — check next cycle]
 ```
 
-### Closing the Position
+### Closing a Position
 
-The bot submits a `LimitOrder('SELL', qty, current_spread_value)` on the same BAG contract used for entry. IBKR interprets this as closing the spread.
+The bot submits a `LimitOrder('SELL', qty, current_spread_value)` on the same BAG contract used for entry. IBKR closes the spread.
 
-After submitting the closing order:
-- SELL row is written to `audit.csv` with exit-time indicators
-- Discord alert fires with P&L summary
-- Symbol is removed from `active_trades` and goes back to scanning mode
+After submitting:
+1. **Circuit breaker counter updated** — if `profit_pct < 0`, `consecutive_losses++`; if N losses in a row, `circuit_breaker_tripped = True` and a 🚨 Discord alert fires
+2. **Winning trade** resets `consecutive_losses = 0`
+3. **Discord 🔵 alert** fires with P&L, exit reason, and max profit reached
+4. **`audit.csv` SELL row** written with exit-time indicators
+5. Symbol removed from `active_trades` → back to scanning next cycle
 
 ---
 
-## 5. Data Flow
+## 7. Circuit Breaker
 
-```mermaid
-graph LR
-    IBKR["IBKR<br/>(IB Gateway / TWS)"] -->|1-min bars| Fetch["fetch_intraday_data()"]
-    Fetch --> VWAP["Calculate VWAP"]
-    Fetch --> ORB["Calculate ORB<br/>(9:30–10:00 AM fixed)"]
-    Fetch --> ADX["Calculate ADX"]
+| Condition | Action |
+|-----------|--------|
+| N consecutive **losing** trades (default 5) | `circuit_breaker_tripped = True`; 🚨 Discord alert; no new entries for the rest of the day |
+| Any **winning** trade between losses | `consecutive_losses` resets to 0 |
+| Midnight | Full reset — bot can trade again next day |
 
-    VWAP --> Eval["evaluate_entry_strategy()"]
-    ORB --> Eval
-    ADX --> Eval
-
-    Eval --> Signal{"Entry Signal?"}
-    Signal -->|CALL or PUT| Price["Price spread legs<br/>via ib.reqMktData()"]
-    Signal -->|None| Skip["Skip symbol"]
-
-    Price --> Execute["Submit BAG combo order<br/>via ib.placeOrder()"]
-    Execute --> Store["Store Trade object in<br/>active_trades[symbol]"]
-
-    IBKR -->|Option quotes| Monitor["get_spread_value()"]
-    Monitor --> Check["evaluate_exit_conditions_for_symbol()"]
-    Check --> Rules{"Exit Rule Triggered?"}
-    Rules -->|Yes| Close["Submit closing LimitOrder('SELL')"]
-    Close --> Remove["Remove from active_trades"]
-    Rules -->|No| Hold
-```
+The circuit breaker fires **at close**, not at submission — it only counts confirmed losing exits.
 
 ---
 
-## 6. Configuration Reference
+## 8. Configuration Reference
 
-All settings live in `.env` and are loaded by `src/config.py`.
+All values live in `.env` and are loaded by `src/config.py`.
 
 | Variable | Default | Description |
-|---|---|---|
+|----------|---------|-------------|
 | `IBKR_HOST` | `127.0.0.1` | IB Gateway / TWS host |
 | `IBKR_PORT` | `4002` | `4002` = IB Gateway paper, `7497` = TWS paper |
-| `IBKR_CLIENT_ID` | `1` | Unique socket client ID |
-| `SYMBOLS` | `SPY,SPX` | Comma-separated underlyings to trade |
-| `MAX_POSITION_SIZE` | `200.0` | Max dollars per spread (determines contract qty) |
-| `MAX_TRADES_PER_DAY` | `5` | Max new entries per day |
-| `MIN_SPREAD_COST` | `0.10` | Skip trade if spread costs less than this |
-| `TAKE_PROFIT_TRAIL_TRIGGER` | `0.40` | Profit level that activates the trailing stop |
-| `TRAILING_STOP_LOSS_PCT` | `0.10` | Trail amount once trigger is hit |
-| `MAX_PROFIT_EXIT_MULTIPLIER` | `0.70` | Exit when profit drops to this fraction of peak |
-| `HARD_STOP_LOSS_PCT` | `0.50` | Hard stop — exit if spread loses this much |
-| `DISCORD_WEBHOOK_URL` | _(empty)_ | Optional Discord webhook for trade alerts |
+| `IBKR_CLIENT_ID` | `1` | Unique socket client ID; change if running multiple bots |
+| `SYMBOLS` | `SPY,QQQ,IWM` | Comma-separated underlyings to scan |
+| `MAX_POSITION_SIZE` | `300.0` | Max dollars risked per spread |
+| `MAX_TRADES_PER_DAY` | `12` | Hard daily cap across all symbols |
+| `SIGNAL_COOLDOWN_MINUTES` | `30` | Minutes before a (symbol, direction) signal can re-trigger |
+| `MIN_SPREAD_COST` | `0.10` | Skip trade if spread mid-price is below this |
+| `TAKE_PROFIT_TRAIL_TRIGGER` | `0.40` | Profit % that activates the trailing stop |
+| `TRAILING_STOP_LOSS_PCT` | `0.10` | Exit if profit drops this much from peak (once trigger hit) |
+| `MAX_PROFIT_EXIT_MULTIPLIER` | `0.70` | Exit if profit drops to this fraction of all-time peak |
+| `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |
+| `MAX_CONSECUTIVE_LOSSES` | `5` | Circuit breaker threshold |
+| `DISCORD_WEBHOOK_URL` | _(empty)_ | Discord webhook for trade alerts |
 
 ---
 
-## 7. Audit Log Analysis
+## 9. Audit Log Analysis
 
-Every trade is logged to `audit.csv`. Use it to tune the strategy:
+Every fill is written to `audit.csv`. Some useful queries:
 
-**Which ADX levels produce winners?**
+**Win rate and average P&L by symbol:**
 ```python
 import pandas as pd
 df = pd.read_csv('audit.csv')
-buys = df[df['Action'] == 'BUY'].copy()
-buys['ADX'] = buys['ADX'].astype(float)
-print(buys.groupby(pd.cut(buys['ADX'], bins=[25,30,35,40,100]))['Symbol'].count())
-```
-
-**Win rate by direction:**
-```python
 sells = df[df['Action'] == 'SELL'].copy()
 sells['Profit_Pct'] = sells['Profit_Pct'].str.replace('%','').astype(float)
-print(sells.groupby('Direction')['Profit_Pct'].agg(['mean', 'count']))
+print(sells.groupby('Symbol')['Profit_Pct'].agg(['mean', 'count', lambda x: (x > 0).mean()]).rename(columns={'<lambda_0>': 'win_rate'}))
 ```
 
-**Most common exit reason:**
+**Which exit rule fires most often:**
 ```python
 print(sells['Reason'].value_counts())
+```
+
+**Performance by ADX level at entry:**
+```python
+buys = df[df['Action'] == 'BUY'].copy()
+buys['ADX'] = buys['ADX'].astype(float)
+print(buys.groupby(pd.cut(buys['ADX'], bins=[25, 30, 35, 40, 100]))['Symbol'].count())
+```
+
+**Check if circuit breaker is being hit too often** (signals overly choppy days):
+```python
+print(sells[sells['Reason'].str.contains('Hard stop')].shape[0], 'hard stops vs', sells.shape[0], 'total exits')
 ```

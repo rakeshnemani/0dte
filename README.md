@@ -20,50 +20,69 @@ A Python algorithmic trading bot that paper trades 0DTE options spreads on Inter
     └── main.py         # Entry point
 ```
 
+---
+
 ## Prerequisites
 
 ### 1. Install IB Gateway (or TWS)
 
-The bot connects to IBKR via a local socket — IB Gateway must be running before you start the bot.
+The bot communicates with IBKR over a local socket — IB Gateway must be running before you start the bot.
 
-1. Download **IB Gateway** (lighter than full TWS): https://www.interactivebrokers.com/en/trading/ibgateway-stable.php
-2. Log in with your **Paper Trading** account credentials (separate from your live account — find them in IBKR Account Management)
-3. Go to **Configure → Settings → API → Settings** and configure:
-   - Check **Enable ActiveX and Socket Clients**
-   - Uncheck **Read-Only API**
+1. Download **IB Gateway**: https://www.interactivebrokers.com/en/trading/ibgateway-stable.php
+2. Log in with your **Paper Trading** credentials (separate from live — find them in IBKR Account Management)
+3. Go to **Configure → Settings → API → Settings**:
+   - ✅ Enable ActiveX and Socket Clients
+   - ☐ Read-Only API (uncheck this)
    - Socket port: `4002`
    - Add `127.0.0.1` to Trusted IP Addresses
-4. Keep IB Gateway open whenever the bot runs
+4. Keep IB Gateway running whenever the bot is active
 
-> If you prefer full TWS over IB Gateway, use port `7497` and set `IBKR_PORT=7497` in `.env`.
+> Using full TWS instead? Set `IBKR_PORT=7497` in `.env`.
 
-### 2. Install Python dependencies
+### 2. Enable options trading permissions
+
+The paper account needs options permissions to submit spread orders.
+
+1. Log into [IBKR Client Portal](https://www.interactivebrokers.com/)
+2. Go to **Settings → Account Settings → Trading Permissions**
+3. Enable **US Securities Options — Level 2** (required for debit spreads)
+4. Once approved on your live account, the paper account inherits the same permissions automatically
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure `.env`
-
-The `.env` file is pre-configured for IB Gateway paper mode on localhost. Change values if needed:
+### 4. Configure `.env`
 
 ```env
+# IBKR Connection
 IBKR_HOST=127.0.0.1
-IBKR_PORT=4002          # 4002 = IB Gateway paper, 7497 = TWS paper
+IBKR_PORT=4002              # 4002 = IB Gateway paper, 7497 = TWS paper
 IBKR_CLIENT_ID=1
 
-SYMBOLS=SPY,SPX
-MAX_POSITION_SIZE=300.0
-MAX_TRADES_PER_DAY=5
-MIN_SPREAD_COST=0.10
+# Symbols
+SYMBOLS=SPY,QQQ,IWM
 
-TAKE_PROFIT_TRAIL_TRIGGER=0.40
-TRAILING_STOP_LOSS_PCT=0.10
-MAX_PROFIT_EXIT_MULTIPLIER=0.70
-HARD_STOP_LOSS_PCT=0.50
+# Position sizing
+MAX_POSITION_SIZE=300.0     # Max dollars risked per spread
+MAX_TRADES_PER_DAY=12       # Overall daily cap across all symbols
+SIGNAL_COOLDOWN_MINUTES=30  # Minutes before the same signal can re-trigger
+MIN_SPREAD_COST=0.10        # Skip spreads below this cost (liquidity filter)
 
-DISCORD_WEBHOOK_URL=     # optional
+# Risk management
+TAKE_PROFIT_TRAIL_TRIGGER=0.40   # Activate trailing stop once up this much
+TRAILING_STOP_LOSS_PCT=0.10      # Trail by this amount from the peak
+MAX_PROFIT_EXIT_MULTIPLIER=0.70  # Exit if profit drops to 70% of the all-time peak
+HARD_STOP_LOSS_PCT=0.70          # Exit immediately if spread loses this much
+MAX_CONSECUTIVE_LOSSES=5         # Circuit breaker threshold
+
+# Optional
+DISCORD_WEBHOOK_URL=
 ```
+
+---
 
 ## Running the Bot
 
@@ -73,60 +92,122 @@ With IB Gateway open and logged into your paper account:
 python src/main.py
 ```
 
-You should see `Connected to IBKR` in the logs. The bot then enters its 60-second heartbeat loop.
+Expected startup output:
+```
+Connecting to IBKR at 127.0.0.1:4002 (clientId=1)
+Connected to IBKR
+Starting 0DTE Options Spread Trading Bot (IBKR)...
+Daily trade count reset for 2026-05-22
+Market closed. Next open in 14h 22m. Sleeping 1 hour.
+```
+
+The bot sleeps intelligently when the market is closed — it calculates the exact time to the next 9:30 AM EST weekday open and wakes hourly overnight to keep the IBKR connection healthy.
+
+---
+
+## Discord Alerts
+
+Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notifications:
+
+| Alert | Colour | Trigger |
+|-------|--------|---------|
+| ⏳ ORDER SUBMITTED | 🟠 Orange | Immediately when the BAG order is sent to IBKR (fires even if later rejected) |
+| 🟢 NEW ENTRY FILLED | 🟢 Green | When IBKR confirms the order is filled — includes strikes, price, indicators |
+| 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When the closing order is submitted — includes P&L and exit reason |
+| 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
+
+---
+
+## Watchlist
+
+The bot trades **SPY, QQQ, and IWM** — three liquid ETFs with genuine daily 0DTE expirations and low correlation to each other:
+
+| Symbol | Index | Characteristic |
+|--------|-------|----------------|
+| SPY | S&P 500 | Broad market anchor; deepest options liquidity |
+| QQQ | Nasdaq 100 | Tech-heavy; diverges from SPY on sector rotations |
+| IWM | Russell 2000 | Small caps; most independent signal, rate-sensitive |
+
+All three are American-style ETF options with $1 strike steps and $1 spread width.
+
+---
+
+## Strategy
+
+### Indicators (calculated on 1-minute bars from IBKR)
+
+- **VWAP** — Volume-Weighted Average Price anchored to 9:30 AM EST each day
+- **30-Minute ORB** — Opening Range Breakout using the high/low of the 9:30–10:00 AM window, always anchored to wall-clock time (not the first bar), so mid-day restarts work correctly
+- **ADX(14)** — Trend strength; must exceed 25 to consider any entry
+
+### Entry Conditions
+
+**CALL (bullish):** ADX > 25 AND price > VWAP AND price > ORB High
+
+**PUT (bearish):** ADX > 25 AND price < VWAP AND price < ORB Low
+
+### Entry Filters (checked in order)
+
+1. **Market hours** — 9:30 AM–4:00 PM EST weekdays only
+2. **Entry window** — No new entries after 3:00 PM EST
+3. **Circuit breaker** — Halts all entries if N consecutive losses were hit
+4. **Daily trade cap** — Hard ceiling of `MAX_TRADES_PER_DAY` (default 12)
+5. **Signal cooldown** — After a trade, that symbol+direction is locked for `SIGNAL_COOLDOWN_MINUTES` (default 30). Once the cooldown expires the signal can re-trigger, enabling continuation trades on trending days
+6. **One active trade per symbol** — Cannot open a second SPY trade while one is already running
+7. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
+
+### Position Sizing
+
+```
+contracts = floor(MAX_POSITION_SIZE / (spread_cost × 100))
+```
+
+At `MAX_POSITION_SIZE=$300` and a $0.50 spread: 6 contracts = $300 max risk per trade.
+
+---
+
+## Risk Management
+
+Three layered exit rules, checked every 60 seconds:
+
+| Rule | Condition | Notes |
+|------|-----------|-------|
+| **Hard Stop Loss** | Spread loses ≥ 70% of entry value | Immediate exit; aggressive — standard is 50% |
+| **Max Profit Trail** | Profit drops to ≤ 70% of peak profit seen | Protects gains once a position has been profitable |
+| **Trailing Stop** | Profit drops 10% from peak, after reaching 40%+ | Locks in gains on strong moves |
+
+### Circuit Breaker
+
+After `MAX_CONSECUTIVE_LOSSES` (default 5) losing trades **in a row**, the bot stops placing new entries for the rest of the day. A Discord alert fires immediately. The counter resets at midnight. A single winning trade between losses resets the counter to zero.
+
+---
 
 ## Audit Log
 
-Every trade (entry and exit) is appended to `audit.csv`:
+Every fill (entry and exit) is appended to `audit.csv`:
 
 | Column | Description |
 |--------|-------------|
 | Timestamp | When the trade executed |
 | Action | BUY or SELL |
-| Symbol | Underlying (SPY, SPX, etc.) |
+| Symbol | SPY, QQQ, or IWM |
 | Direction | CALL or PUT |
-| Price | Entry/exit spread price |
+| Price | Entry/exit spread mid-price |
 | Underlying_Price | Spot price at trade time |
-| ADX | Trend strength at trade time |
-| VWAP | Volume-Weighted Average Price |
+| ADX | Trend strength reading |
+| VWAP | VWAP at trade time |
 | ORB_High | 30-min opening range high |
 | ORB_Low | 30-min opening range low |
-| Reason | Why the trade was entered or exited |
-| Profit_Pct | P&L percentage (SELL rows only) |
+| Reason | Entry signal or exit rule that fired |
+| Profit_Pct | P&L % (SELL rows only) |
 | Dollar_PnL | Dollar P&L (SELL rows only) |
 
-## Strategy
+---
 
-The bot uses 1-minute bars from IBKR to calculate:
-- **VWAP** — Volume-Weighted Average Price (institutional cost basis)
-- **30-Minute ORB** — Opening Range Breakout window (9:30–10:00 AM EST), anchored to fixed wall-clock time so bot restarts mid-day don't break the signal
-- **ADX** — Trend strength (must be > 25 to enter)
+## IBKR Notes
 
-ATM debit spreads are executed as IBKR BAG combo orders.
+- **Delayed data** — The bot requests market data type 4 (15-min delayed) on connect. No live data subscription is required for paper trading.
+- **Informational IBKR codes** — Codes like 162 (no data yet), 2104/2106 (farm connected), 10091/10167 (delayed data notice) are suppressed from logs and handled silently. Real errors (order rejections, etc.) still appear as `WARNING`.
+- **Auto-reconnect** — If the IBKR connection drops mid-session, the bot attempts to reconnect at the start of the next loop iteration.
 
-### Entry Filters
-
-- **Time-of-Day:** No new entries after 3:00 PM EST
-- **Daily Trade Limit:** Max 5 trades per day (configurable, resets at market open)
-- **Minimum Spread Cost:** Spread must cost ≥ $0.10 to ensure liquidity
-- **Trend Filter:** ADX > 25
-- **Price Action:** Price must break above ORB High (CALL) or below ORB Low (PUT), and be on the correct side of VWAP
-
-### Per-Symbol Concurrency
-
-One active trade per symbol at a time. Multiple symbols can have simultaneous open positions (e.g., one SPY trade and one SPX trade).
-
-### Risk Management
-
-1. **Hard Stop Loss:** Exit if spread loses 50% of entry value
-2. **Max Profit Trailing Exit:** Exit if profit drops to 70% of the peak profit ever seen
-3. **Trailing Stop:** Once profit reaches 40%, a 10% trailing stop activates
-
-## IBKR-Specific Notes
-
-- **SPX 0DTE options** are routed as `SPXW` (weekly series) — the bot handles this mapping automatically
-- **SPX historical data** is fetched as `MIDPOINT` (cash index, no trade volume); a dummy volume of 1 is used so VWAP math remains valid
-- **Market data type** is set to delayed (type 4) on connect, so the bot works without live data subscriptions on a paper account
-- The bot uses `ib_insync` for all IBKR communication — IB Gateway or TWS must remain open for the duration of the session
-
-For more details, see [How It Works](docs/HOW_IT_WORKS.md).
+For a full explanation of the bot's internal logic, see [How It Works](docs/HOW_IT_WORKS.md).
