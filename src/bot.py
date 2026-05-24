@@ -31,6 +31,11 @@ class TradingBot:
         self.signal_cooldowns: Dict[tuple, datetime.datetime] = {}
         self.consecutive_losses: int = 0
         self.circuit_breaker_tripped: bool = False
+        # Breadth data cache — TICK and VOLD are market-wide, shared across all
+        # symbols. Cache for 60 seconds to avoid 3 redundant IBKR requests per loop.
+        self._breadth_cache_time: Optional[datetime.datetime] = None
+        self._tick_df_cache: pd.DataFrame = pd.DataFrame()
+        self._vold_df_cache: pd.DataFrame = pd.DataFrame()
 
     def _connect(self):
         logger.info(f"Connecting to IBKR at {config.IBKR_HOST}:{config.IBKR_PORT} (clientId={config.IBKR_CLIENT_ID})")
@@ -139,7 +144,7 @@ class TradingBot:
                   adx: Optional[float] = None, vwap: Optional[float] = None,
                   orb_high: Optional[float] = None, orb_low: Optional[float] = None,
                   underlying_price: Optional[float] = None, profit_pct: Optional[float] = None,
-                  dollar_pnl: Optional[float] = None):
+                  dollar_pnl: Optional[float] = None, breadth: Optional[str] = None):
         file_exists = os.path.isfile("audit.csv")
         try:
             with open("audit.csv", mode='a', newline='') as file:
@@ -147,7 +152,7 @@ class TradingBot:
                 if not file_exists:
                     writer.writerow([
                         "Timestamp", "Action", "Symbol", "Direction", "Price", "Underlying_Price",
-                        "ADX", "VWAP", "ORB_High", "ORB_Low", "Reason", "Profit_Pct", "Dollar_PnL"
+                        "ADX", "VWAP", "ORB_High", "ORB_Low", "Breadth", "Reason", "Profit_Pct", "Dollar_PnL"
                     ])
                 writer.writerow([
                     datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -157,6 +162,7 @@ class TradingBot:
                     f"{vwap:.2f}" if vwap else "",
                     f"{orb_high:.2f}" if orb_high else "",
                     f"{orb_low:.2f}" if orb_low else "",
+                    breadth or "",
                     reason,
                     f"{profit_pct:.2f}%" if profit_pct is not None else "",
                     f"{dollar_pnl:.2f}" if dollar_pnl is not None else ""
@@ -261,6 +267,87 @@ class TradingBot:
             logger.error(f"Failed to fetch intraday data for {symbol}: {e}")
             return pd.DataFrame()
 
+    def fetch_breadth_data(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Fetch $TICK and $VOLD 1-min bars from IBKR, cached for 60 seconds.
+
+        These are NYSE market-breadth indices, shared across all symbols — no need
+        to re-fetch for each symbol inside the same loop iteration.
+
+        Returns (tick_df, vold_df). On any error returns two empty DataFrames so
+        the caller can fail-open and not block the trade.
+        """
+        now = datetime.datetime.now(pytz.timezone('America/New_York'))
+        if (self._breadth_cache_time is not None and
+                (now - self._breadth_cache_time).total_seconds() < 60):
+            return self._tick_df_cache, self._vold_df_cache
+
+        try:
+            today_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+
+            def _fetch_index(contract):
+                bars = self.ib.reqHistoricalData(
+                    contract, endDateTime='', durationStr='1 D',
+                    barSizeSetting='1 min', whatToShow='TRADES',
+                    useRTH=True, formatDate=1, timeout=30)
+                if not bars:
+                    return pd.DataFrame()
+                df = util.df(bars)
+                df['date'] = pd.to_datetime(df['date'])
+                if df['date'].dt.tz is None:
+                    df['date'] = df['date'].dt.tz_localize('America/New_York')
+                else:
+                    df['date'] = df['date'].dt.tz_convert('America/New_York')
+                df = df.set_index('date')
+                return df[df.index >= today_open].dropna(subset=['close'])
+
+            tick_df = _fetch_index(Index('TICK', 'NYSE', 'USD'))
+            vold_df = _fetch_index(Index('VOLD', 'NYSE', 'USD'))
+            self._breadth_cache_time = now
+            self._tick_df_cache = tick_df
+            self._vold_df_cache = vold_df
+            return tick_df, vold_df
+        except Exception as e:
+            logger.warning(f"Failed to fetch breadth data: {e}")
+            return pd.DataFrame(), pd.DataFrame()
+
+    def _breadth_confirms(self, direction: str, tick_df: pd.DataFrame, vold_df: pd.DataFrame) -> Tuple[bool, str]:
+        """
+        Check whether NYSE breadth (TICK + VOLD) confirms the trade direction.
+
+        Returns (confirmed, reason_string). Fails open: insufficient data → True.
+
+        CALL: VOLD slope > 0 (up-volume rising) AND TICK higher lows ≥ 60% of
+              recent bars AND avg TICK > -200 (not dominated by downticks)
+        PUT:  VOLD slope < 0 (up-volume falling) AND TICK NOT making higher lows
+              AND avg TICK < 200 (not dominated by upticks)
+        """
+        N = 10  # look back 10 bars (~10 minutes)
+        if tick_df.empty or vold_df.empty or len(tick_df) < N or len(vold_df) < N:
+            return True, "breadth data insufficient — filter bypassed"
+
+        tick_close = tick_df['close'].tail(N)
+        tick_lows  = tick_df['low'].tail(N) if 'low' in tick_df.columns else tick_close
+        vold_close = vold_df['close'].tail(N)
+
+        avg_tick   = float(tick_close.mean())
+        vold_slope = float(vold_close.iloc[-1] - vold_close.iloc[0])
+
+        lows = tick_lows.values
+        higher_lows = sum(1 for i in range(1, len(lows)) if lows[i] >= lows[i - 1])
+        tick_hl = higher_lows >= (len(lows) - 1) * 0.6   # ≥60% of consecutive pairs
+
+        if direction == 'CALL':
+            confirmed = (vold_slope > 0) and tick_hl and (avg_tick > -200)
+        else:
+            confirmed = (vold_slope < 0) and (not tick_hl) and (avg_tick < 200)
+
+        reason = (
+            f"VOLD slope {vold_slope:+.0f} | TICK avg {avg_tick:+.0f} | "
+            f"Higher lows {'✓' if tick_hl else '✗'} ({higher_lows}/{len(lows)-1})"
+        )
+        return confirmed, reason
+
     def _get_option_mid(self, contract: Option) -> float:
         """Fetch the mid-price (bid/ask midpoint) for a single option leg."""
         try:
@@ -330,12 +417,25 @@ class TradingBot:
             }
 
             if current_close > current_vwap and current_close > orb_high:
+                direction = "CALL"
                 reason = f"Bullish: Price ({current_close:.2f}) > VWAP ({current_vwap:.2f}) and ORB High ({orb_high:.2f}). ADX: {current_adx:.2f}"
-                return "CALL", reason, indicators
-
-            if current_close < current_vwap and current_close < orb_low:
+            elif current_close < current_vwap and current_close < orb_low:
+                direction = "PUT"
                 reason = f"Bearish: Price ({current_close:.2f}) < VWAP ({current_vwap:.2f}) and ORB Low ({orb_low:.2f}). ADX: {current_adx:.2f}"
-                return "PUT", reason, indicators
+            else:
+                return None, "", {}
+
+            # ── Breadth annotation (logged, not a gate) ───────────────────────
+            # Fetch $TICK and $VOLD — cached 60s so all 3 symbols share one pull.
+            # The reading is logged and written to audit.csv for post-trade analysis.
+            # It does NOT block the trade — collect data first, add a hard filter
+            # only once paper-trade results show a real correlation with losses.
+            tick_df, vold_df = self.fetch_breadth_data()
+            confirmed, breadth_reason = self._breadth_confirms(direction, tick_df, vold_df)
+            breadth_label = "✓ confirmed" if confirmed else "✗ diverging"
+            indicators['breadth'] = f"{breadth_label} | {breadth_reason}"
+            logger.info(f"[{symbol}] Breadth ({direction}): {breadth_label} — {breadth_reason}")
+            return direction, reason, indicators
 
         except Exception as e:
             logger.error(f"Error calculating indicators for {symbol}: {e}")
@@ -438,6 +538,7 @@ class TradingBot:
             price_v = indicators.get('current_price', 0)
             orb_h = indicators.get('orb_high', 0)
             orb_l = indicators.get('orb_low', 0)
+            breadth_line = indicators.get('breadth', '')
             submit_desc = (
                 f"**📊 Ticker:** {symbol}\n"
                 f"**🎯 Direction:** {direction} Spread\n"
@@ -448,8 +549,9 @@ class TradingBot:
                 f"**📉 Indicators at Signal:**\n"
                 f"• ADX: {adx_v:.2f}\n"
                 f"• Price vs VWAP: ${price_v:.2f} / ${vwap_v:.2f}\n"
-                f"• ORB: High ${orb_h:.2f} / Low ${orb_l:.2f}\n\n"
-                f"**📝 Signal:** {reason}\n"
+                f"• ORB: High ${orb_h:.2f} / Low ${orb_l:.2f}\n"
+                + (f"• Breadth: {breadth_line}\n" if breadth_line else "") +
+                f"\n**📝 Signal:** {reason}\n"
                 f"**⏳ Status:** Pending fill (Order #{ibkr_trade.order.orderId})"
             )
             self.send_discord_alert("⏳ ORDER SUBMITTED — Awaiting Fill", submit_desc, 0xF39C12)
@@ -493,9 +595,11 @@ class TradingBot:
                         vwap=trade['entry_indicators'].get('vwap'),
                         orb_high=trade['entry_indicators'].get('orb_high'),
                         orb_low=trade['entry_indicators'].get('orb_low'),
-                        underlying_price=trade['entry_indicators'].get('current_price')
+                        underlying_price=trade['entry_indicators'].get('current_price'),
+                        breadth=trade['entry_indicators'].get('breadth')
                     )
                     ind = trade['entry_indicators']
+                    breadth_entry = ind.get('breadth', '')
                     desc = (
                         f"**📊 Ticker:** {symbol}\n"
                         f"**🎯 Direction:** {trade['direction']} Spread\n"
@@ -506,8 +610,9 @@ class TradingBot:
                         f"**📉 Indicators at Entry:**\n"
                         f"• ADX: {ind.get('adx', 0):.2f}\n"
                         f"• Price vs VWAP: ${ind.get('current_price', 0):.2f} / ${ind.get('vwap', 0):.2f}\n"
-                        f"• ORB: High ${ind.get('orb_high', 0):.2f} / Low ${ind.get('orb_low', 0):.2f}\n\n"
-                        f"**📝 Reason:** {trade.get('reason', 'N/A')}"
+                        f"• ORB: High ${ind.get('orb_high', 0):.2f} / Low ${ind.get('orb_low', 0):.2f}\n"
+                        + (f"• Breadth: {breadth_entry}\n" if breadth_entry else "") +
+                        f"\n**📝 Reason:** {trade.get('reason', 'N/A')}"
                     )
                     self.send_discord_alert("🟢 NEW 0DTE SPREAD ENTRY", desc, 0x2ECC71)
 
