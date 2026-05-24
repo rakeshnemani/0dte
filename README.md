@@ -139,6 +139,7 @@ All three are American-style ETF options with $1 strike steps and $1 spread widt
 - **VWAP** — Volume-Weighted Average Price anchored to 9:30 AM EST each day
 - **30-Minute ORB** — Opening Range Breakout using the high/low of the 9:30–10:00 AM window, always anchored to wall-clock time (not the first bar), so mid-day restarts work correctly
 - **ADX(14)** — Trend strength; must exceed 25 to consider any entry
+- **$TICK / $VOLD** — NYSE market breadth indices fetched from IBKR every loop (cached 60s across all symbols). The reading is logged to `audit.csv` alongside every trade so you can analyse whether diverging breadth correlates with losses — but it does **not** block entries. Once paper-trade data shows a real correlation, it can be promoted to a hard filter.
 
 ### Entry Conditions
 

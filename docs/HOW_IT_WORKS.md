@@ -94,7 +94,7 @@ At the start of each new trading day, `check_and_reset_daily_trade_count()` rese
 
 ## 5. Phase 1: Entry Scanning
 
-For each symbol with no active trade, the bot runs through these checks in order. Any failure returns early with no trade placed.
+For each symbol with no active trade, the bot runs through these checks in order. Any failure returns early with no trade placed. Guards 1–8 can block the trade; Step 9 (breadth) is a logged annotation only.
 
 ### Guard 1: Circuit Breaker
 If `circuit_breaker_tripped` is True (N consecutive losses today), skip all entries. No new trades until midnight.
@@ -137,7 +137,7 @@ After fetching, the bot:
 | **CALL** | ADX > 25 AND price > VWAP AND price > ORB High |
 | **PUT** | ADX > 25 AND price < VWAP AND price < ORB Low |
 
-If neither condition is met, no trade.
+If neither condition is met, no trade. If a signal is found, the bot proceeds to Guard 8 (spread pricing), then fetches the breadth annotation before submitting.
 
 ### Guard 8: Spread Pricing
 
@@ -148,6 +148,33 @@ spread_cost = mid(long_leg) − mid(short_leg)
 ```
 
 If `spread_cost < MIN_SPREAD_COST` ($0.10 default), skip — the spread is too cheap to be liquid.
+
+### Step 9: Breadth Annotation ($TICK / $VOLD)
+
+After the primary signal passes all prior guards, the bot fetches NYSE market breadth data from IBKR and evaluates it against the trade direction. The result is **logged for analysis — it does not block the trade.**
+
+| Breadth index | What it measures |
+|---------------|-----------------|
+| **$TICK** | NYSE upticks minus downticks across all stocks, updated each minute |
+| **$VOLD** | NYSE up-volume minus down-volume — the "weight" behind the tick reading |
+
+The bot looks at the **last 10 bars (~10 minutes)** of each index and evaluates:
+
+**Confirms a CALL when:**
+- VOLD slope > 0 — up-volume is expanding
+- TICK printing higher lows in ≥ 60% of recent bar pairs — breadth is strengthening
+- Average TICK > −200 — not predominantly negative
+
+**Confirms a PUT when:**
+- VOLD slope < 0 — up-volume is contracting
+- TICK not making higher lows (< 60%) — breadth is weakening
+- Average TICK < 200 — not predominantly positive
+
+**Why it's a log, not a gate:** `$TICK` and `$VOLD` are NYSE indices and may not be available on IBKR's delayed data feed. They also reflect NYSE stocks only — not the full Nasdaq universe behind QQQ. Rather than risk false negatives on valid trades, the verdict is written to `audit.csv` as the `Breadth` column on every BUY row. After 30–50 paper trades, look at whether losing trades consistently had diverging breadth at entry — if so, promote it to a hard filter.
+
+**Caching:** TICK and VOLD are market-wide, not per-symbol. A single 60-second cache is shared across all three symbols (at most two IBKR requests per loop). If data is unavailable, the annotation is left blank.
+
+The breadth label (`✓ confirmed` or `✗ diverging`) also appears in the Discord ⏳ submission and 🟢 fill alerts.
 
 ### Execution: BAG Combo Order
 
