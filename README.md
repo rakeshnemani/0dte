@@ -76,6 +76,7 @@ TAKE_PROFIT_TRAIL_TRIGGER=0.50   # Trailing stop arms only after the trade peaks
 TRAILING_STOP_LOSS_PCT=0.10      # Once armed, exit if profit falls to (1 - this) of the peak (90%)
 HARD_STOP_LOSS_PCT=0.70          # Exit immediately if spread loses this much
 MAX_CONSECUTIVE_LOSSES=5         # Circuit breaker threshold
+EOD_FLATTEN_TIME=15:55           # Force-close all positions at this ET time (before the 4 PM close)
 
 # Optional
 DISCORD_WEBHOOK_URL=
@@ -111,9 +112,12 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 | Alert | Colour | Trigger |
 |-------|--------|---------|
 | ⏳ ORDER SUBMITTED | 🟠 Orange | Immediately when the BAG order is sent to IBKR (fires even if later rejected) |
+| 📋 TODAY | 🟢/🔴 by net | After every new trade — snapshot of all open positions (live P&L), closed trades (realized P&L), and the running net |
 | 🟢 NEW ENTRY FILLED | 🟢 Green | When IBKR confirms the order is filled — includes strikes, price, indicators |
 | 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When the closing order is submitted — includes P&L and exit reason |
+| ⚠️ POSITION CLOSED EXTERNALLY | 🟠 Orange | When the bot detects a tracked position is no longer in your IBKR account (closed manually via Client Portal, mobile, or TWS) — drops it from tracking |
 | 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
+| 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — total realized P&L, win/loss count, win rate, per-trade breakdown |
 
 ---
 
@@ -177,6 +181,10 @@ Two exit rules, checked every 60 seconds:
 
 > **By design, there is no protection between 0% and +50%.** A trade that peaks at, say, +48% and reverses will ride all the way back to the −70% hard stop without the trailing stop ever arming. This is intentional (high risk appetite, let trends develop) — tighten `TAKE_PROFIT_TRAIL_TRIGGER` if you want earlier protection.
 
+### End-of-Day Flatten
+
+These are 0DTE options — they expire worthless or get assigned at the close. At `EOD_FLATTEN_TIME` (default **3:55 PM ET**), the bot force-closes every open position regardless of P&L, so nothing is ever held into expiry. Unfilled entry orders lingering near the close are cancelled. New entries already stop at 3:00 PM, so nothing reopens.
+
 ### Circuit Breaker
 
 After `MAX_CONSECUTIVE_LOSSES` (default 5) losing trades **in a row**, the bot stops placing new entries for the rest of the day. A Discord alert fires immediately. The counter resets at midnight. A single winning trade between losses resets the counter to zero.
@@ -210,5 +218,6 @@ Every fill (entry and exit) is appended to `audit.csv`:
 - **Delayed data** — The bot requests market data type 4 (15-min delayed) on connect. No live data subscription is required for paper trading.
 - **Informational IBKR codes** — Codes like 162 (no data yet), 2104/2106 (farm connected), 10091/10167 (delayed data notice) are suppressed from logs and handled silently. Real errors (order rejections, etc.) still appear as `WARNING`.
 - **Auto-reconnect** — If the IBKR connection drops mid-session, the bot attempts to reconnect at the start of the next loop iteration.
+- **Position reconciliation** — Each loop the bot checks every tracked position against your actual IBKR account (`ib.positions()`). If you close a spread manually (Client Portal, mobile app, or TWS), the bot detects the missing position (after two consecutive checks, with a 90-second grace period after entry) and drops it from tracking — so it never tries to manage or re-sell a position you no longer hold. A ⚠️ alert fires. P&L for an externally-closed trade is **not** recorded, since the bot doesn't know the price you exited at.
 
 For a full explanation of the bot's internal logic, see [How It Works](docs/HOW_IT_WORKS.md).

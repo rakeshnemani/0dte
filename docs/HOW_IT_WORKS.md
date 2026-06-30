@@ -29,35 +29,41 @@ Each iteration:
 ensure connected
 │
 ├─ Market closed?
+│   ├─ Day had trades & summary not sent yet? → send 📅 DAY SUMMARY (once)
 │   └─ Calculate seconds to next 9:30 AM EST weekday open
 │       ├─ > 1 hour away → sleep 1 hour (wake hourly to keep IBKR alive)
 │       └─ ≤ 1 hour away → sleep exactly until open
 │
 ├─ Reset daily counters if it's a new trading day
 ├─ Evaluate exit conditions for all active trades
+├─ EOD flatten time (3:55 PM ET)? → force-close all open positions
 │
 └─ Entry window open? (before 3:00 PM EST)
     └─ For each symbol (SPY, QQQ, IWM):
-        └─ No active trade? → evaluate entry strategy → execute if signal found
+        └─ No active trade? → evaluate entry strategy → execute (+ send 📋 TODAY) if signal found
 ```
 
 ```mermaid
 graph TD
     Loop[60-second heartbeat] --> Conn[Ensure IBKR connected]
     Conn --> MktCheck{Market open?}
-    MktCheck -- No --> SmartSleep[Sleep until next open\n1-hr cap for connection health]
+    MktCheck -- No --> DaySum[Send DAY SUMMARY once if day had trades]
+    DaySum --> SmartSleep[Sleep until next open\n1-hr cap for connection health]
     SmartSleep --> Loop
     MktCheck -- Yes --> Reset[Reset daily counters if new day]
     Reset --> Exits[Evaluate exits for active trades]
-    Exits --> Window{Before 3 PM EST?}
-    Window -- No --> Sleep[Sleep 60s]
+    Exits --> EOD{EOD flatten time?\n3:55 PM ET}
+    EOD -- Yes --> Flatten[Force-close all positions]
+    Flatten --> Sleep[Sleep 60s]
+    EOD -- No --> Window{Before 3 PM EST?}
+    Window -- No --> Sleep
     Window -- Yes --> ForEach[For each symbol]
     ForEach --> HasTrade{Active trade?}
     HasTrade -- Yes --> Sleep
     HasTrade -- No --> Scan[Evaluate entry strategy]
     Scan --> Signal{Signal found?}
     Signal -- No --> Sleep
-    Signal -- Yes --> Execute[Submit BAG order to IBKR]
+    Signal -- Yes --> Execute[Submit BAG order + send TODAY summary]
     Execute --> Sleep
     Sleep --> Loop
 ```
@@ -197,11 +203,26 @@ qty = floor(MAX_POSITION_SIZE / (spread_cost × 100))
 
 **Immediately on submission**, a Discord ⏳ orange alert fires with the full order details (strikes, limit price, qty, indicators). This fires even if the order is later rejected by IBKR — so you always know the bot attempted an entry.
 
+Right after that, a **📋 TODAY** snapshot is sent: every open position with live unrealized P&L (`IWM PUT  $0.41 → $0.45  +9.8%  (peak +24%)`), every trade already closed today with its realized P&L, and the running net. The open-position values are read from a per-trade cache refreshed each loop by `evaluate_exit_conditions_for_symbol()`, so the summary makes **no extra IBKR calls**.
+
 ---
 
 ## 6. Phase 2: Monitoring Active Trades
 
 Every loop iteration, `evaluate_exit_conditions_for_symbol()` runs for each active trade.
+
+### Position Reconciliation (runs first, for ACTIVE trades)
+
+Before any exit logic, the bot reconciles each `ACTIVE` trade against your **real IBKR account** via `ib.positions()` (subscribed at connect with `reqPositions()`). It matches the spread's long-leg `conId`:
+
+- **Leg still held** → reset the miss counter, proceed to exit rules as normal.
+- **Leg missing** → increment a miss counter. After **two consecutive** missing reads, the position is treated as **closed externally** (you closed it manually via the Client Portal, mobile app, or TWS; or it was assigned): the bot drops it from `active_trades`, fires a ⚠️ alert, and records **no P&L** (it doesn't know your exit price).
+
+Two safeguards prevent false drops:
+- **90-second grace period** after a fill — gives the account feed time to reflect a just-opened position before it could be flagged missing.
+- **Fail-open** — if `ib.positions()` errors or the leg `conId` is unknown, the bot assumes the position is still open. A data hiccup never abandons a real trade.
+
+This is what stops the bot from trying to re-sell (or mis-manage) a position you've already closed yourself.
 
 ### Pending Entry Check
 
@@ -253,15 +274,28 @@ graph TD
 The bot submits a `LimitOrder('SELL', qty, current_spread_value)` on the same BAG contract used for entry. IBKR closes the spread.
 
 After submitting:
-1. **Circuit breaker counter updated** — if `profit_pct < 0`, `consecutive_losses++`; if N losses in a row, `circuit_breaker_tripped = True` and a 🚨 Discord alert fires
-2. **Winning trade** resets `consecutive_losses = 0`
-3. **Discord 🔵 alert** fires with P&L, exit reason, and max profit reached
-4. **`audit.csv` SELL row** written with exit-time indicators
-5. Symbol removed from `active_trades` → back to scanning next cycle
+1. **Recorded for the day summary** — appended to `closed_trades_today` (symbol, direction, entry/exit, P&L)
+2. **Circuit breaker counter updated** — if `profit_pct < 0`, `consecutive_losses++`; if N losses in a row, `circuit_breaker_tripped = True` and a 🚨 Discord alert fires
+3. **Winning trade** resets `consecutive_losses = 0`
+4. **Discord 🔵 alert** fires with P&L, exit reason, and max profit reached
+5. **`audit.csv` SELL row** written with exit-time indicators
+6. Symbol removed from `active_trades` → back to scanning next cycle
 
 ---
 
-## 7. Circuit Breaker
+## 7. End-of-Day Flatten & Day Summary
+
+**Flatten (3:55 PM ET, configurable via `EOD_FLATTEN_TIME`).** 0DTE options must never be held into the 4:00 PM close. Once the flatten time is reached, `close_all_positions()` runs:
+- **Active** positions → priced and closed via the normal `close_position()` path (so they still hit the audit log, the 🔵 alert, and `closed_trades_today`).
+- **Pending** unfilled entry orders → cancelled outright.
+
+New entries already stop at 3:00 PM, so nothing reopens after the flatten.
+
+**Day summary (after the close).** On the first loop after `is_market_open()` flips false, if the day had any trades and the summary hasn't been sent yet, a single **📅 DAY SUMMARY** fires: total realized P&L, trade count, wins/losses, win rate, a per-trade breakdown, and circuit-breaker status. A `daily_summary_sent` flag prevents re-sending during the hourly overnight/weekend wake-ups; it clears on the next trading day's reset. No-trade days send nothing.
+
+---
+
+## 8. Circuit Breaker
 
 | Condition | Action |
 |-----------|--------|
@@ -273,7 +307,7 @@ The circuit breaker fires **at close**, not at submission — it only counts con
 
 ---
 
-## 8. Configuration Reference
+## 9. Configuration Reference
 
 All values live in `.env` and are loaded by `src/config.py`.
 
@@ -291,11 +325,12 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |
 | `MAX_CONSECUTIVE_LOSSES` | `5` | Circuit breaker threshold |
+| `EOD_FLATTEN_TIME` | `15:55` | ET time to force-close all positions before the 4 PM close |
 | `DISCORD_WEBHOOK_URL` | _(empty)_ | Discord webhook for trade alerts |
 
 ---
 
-## 9. Audit Log Analysis
+## 10. Audit Log Analysis
 
 Every fill is written to `audit.csv`. Some useful queries:
 

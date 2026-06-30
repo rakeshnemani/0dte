@@ -31,6 +31,10 @@ class TradingBot:
         self.signal_cooldowns: Dict[tuple, datetime.datetime] = {}
         self.consecutive_losses: int = 0
         self.circuit_breaker_tripped: bool = False
+        # Day-level P&L tracking — populated as trades close, used for the
+        # post-close day summary. Reset each new trading day.
+        self.closed_trades_today: list = []
+        self.daily_summary_sent: bool = False
         # Breadth data cache — TICK and VOLD are market-wide, shared across all
         # symbols. Cache for 60 seconds to avoid 3 redundant IBKR requests per loop.
         self._breadth_cache_time: Optional[datetime.datetime] = None
@@ -48,6 +52,12 @@ class TradingBot:
         import logging as _logging
         _logging.getLogger('ib_insync.wrapper').setLevel(_logging.CRITICAL)
         self.ib.errorEvent += self._on_ibkr_error
+        # Subscribe to account positions so ib.positions() stays live — used to
+        # reconcile tracked trades against the real account (detect manual closes).
+        try:
+            self.ib.reqPositions()
+        except Exception as e:
+            logger.warning(f"Could not subscribe to positions: {e}")
         logger.info("Connected to IBKR")
 
     # Error codes that are routine/informational and should not be logged as errors
@@ -180,6 +190,8 @@ class TradingBot:
             self.signal_cooldowns.clear()
             self.consecutive_losses = 0
             self.circuit_breaker_tripped = False
+            self.closed_trades_today = []
+            self.daily_summary_sent = False
             logger.info(f"Daily trade count reset for {today}")
 
     # ── Market hours ─────────────────────────────────────────────────────────
@@ -195,6 +207,14 @@ class TradingBot:
     def _is_entry_window(self) -> bool:
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
         return now.hour < 15
+
+    def _is_eod_flatten_time(self) -> bool:
+        """True once we've reached the end-of-day flatten time (ET) on a trading day."""
+        now = datetime.datetime.now(pytz.timezone('America/New_York'))
+        flatten_at = now.replace(hour=config.EOD_FLATTEN_HOUR,
+                                 minute=config.EOD_FLATTEN_MINUTE,
+                                 second=0, microsecond=0)
+        return now >= flatten_at
 
     def _seconds_until_market_open(self) -> int:
         """Return seconds until the next 9:30 AM EST weekday open."""
@@ -519,6 +539,8 @@ class TradingBot:
                 'max_profit_pct': 0.0,
                 'long_strike': long_strike,
                 'short_strike': short_strike,
+                'long_conid': long_c.conId,    # for position reconciliation
+                'short_conid': short_c.conId,
                 'entry_indicators': indicators,
                 'reason': reason,
             }
@@ -556,6 +578,9 @@ class TradingBot:
             )
             self.send_discord_alert("⏳ ORDER SUBMITTED — Awaiting Fill", submit_desc, 0xF39C12)
 
+            # Send the consolidated "today" snapshot after every new trade
+            self.send_today_summary()
+
         except Exception as e:
             logger.error(f"Failed to place IBKR spread order for {symbol}: {e}")
 
@@ -565,11 +590,63 @@ class TradingBot:
         for symbol in list(self.active_trades.keys()):
             self.evaluate_exit_conditions_for_symbol(symbol)
 
+    def _position_still_open(self, trade) -> bool:
+        """Return True if the spread's long leg is still held in the IBKR account.
+
+        Fails open (returns True) whenever the answer can't be determined, so a
+        data hiccup never causes the bot to abandon a real open position.
+        """
+        long_conid = trade.get('long_conid')
+        if long_conid is None:
+            return True  # nothing to match against — assume open
+
+        # Grace period: give the account feed time to reflect a just-filled entry
+        # before this leg could be (wrongly) reported as missing.
+        activated_at = trade.get('activated_at')
+        if activated_at is not None:
+            age = (datetime.datetime.now(pytz.timezone('America/New_York')) - activated_at).total_seconds()
+            if age < 90:
+                return True
+
+        try:
+            positions = self.ib.positions()
+        except Exception as e:
+            logger.warning(f"Position reconciliation fetch failed: {e}")
+            return True  # fail-open
+        for p in positions:
+            if p.contract.conId == long_conid and p.position != 0:
+                return True
+        return False
+
     def evaluate_exit_conditions_for_symbol(self, symbol: str):
         if symbol not in self.active_trades:
             return
 
         trade = self.active_trades[symbol]
+
+        # Reconcile against the real IBKR account. If an ACTIVE position is no
+        # longer held (closed manually via Client Portal / mobile / TWS, assigned, etc.), stop
+        # tracking it instead of trying to manage or sell a position we don't own.
+        # Require two consecutive "missing" reads so a transient empty snapshot
+        # can't drop a live trade.
+        if trade.get('status') == 'ACTIVE':
+            if self._position_still_open(trade):
+                trade['reconcile_misses'] = 0
+            else:
+                trade['reconcile_misses'] = trade.get('reconcile_misses', 0) + 1
+                if trade['reconcile_misses'] >= 2:
+                    logger.warning(f"[{symbol}] Position no longer in IBKR account — closed externally. Dropping from tracking.")
+                    self.send_discord_alert(
+                        "⚠️ POSITION CLOSED EXTERNALLY",
+                        f"**{symbol} {trade['direction']} Spread** is no longer held in your IBKR "
+                        f"account — it was closed outside the bot (Client Portal, mobile app, or TWS).\n"
+                        f"Removed from tracking; the bot will not manage it or record a P&L for it.",
+                        0xE67E22
+                    )
+                    self.active_trades.pop(symbol, None)
+                else:
+                    logger.info(f"[{symbol}] Position not found in account (miss {trade['reconcile_misses']}/2); re-checking next loop.")
+                return  # skip exit eval while the position's status is uncertain/closed
 
         current_spread_value = self.get_spread_value(
             symbol, trade['direction'], trade['long_strike'], trade['short_strike']
@@ -589,6 +666,9 @@ class TradingBot:
                     logger.info(f"[{symbol}] IBKR ORDER FILLED at ${filled_price:.2f}")
                     trade['status'] = 'ACTIVE'
                     trade['entry_price'] = filled_price
+                    # Mark fill time — reconciliation gives the account a grace
+                    # period to reflect the new position before it can be flagged closed.
+                    trade['activated_at'] = datetime.datetime.now(pytz.timezone('America/New_York'))
                     self.log_audit(
                         "BUY", symbol, trade['direction'], filled_price, trade.get('reason', ''),
                         adx=trade['entry_indicators'].get('adx'),
@@ -626,6 +706,10 @@ class TradingBot:
             return
 
         profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
+
+        # Cache live P&L so the "today" summary can read it without extra IBKR calls
+        trade['current_value'] = current_spread_value
+        trade['current_profit_pct'] = profit_pct
 
         if profit_pct > trade['max_profit_pct']:
             trade['max_profit_pct'] = profit_pct
@@ -682,6 +766,13 @@ class TradingBot:
 
             profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
             dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
+
+            # Record for the post-close day summary
+            self.closed_trades_today.append({
+                'symbol': symbol, 'direction': trade['direction'],
+                'entry_price': trade['entry_price'], 'exit_price': current_spread_value,
+                'profit_pct': profit_pct, 'dollar_pnl': dollar_pnl, 'reason': reason,
+            })
 
             # Update circuit breaker counter
             if profit_pct < 0:
@@ -747,6 +838,92 @@ class TradingBot:
         finally:
             self.active_trades.pop(symbol, None)
 
+    # ── Summaries & end-of-day ───────────────────────────────────────────────
+
+    def send_today_summary(self):
+        """Send a Discord snapshot of all of today's trades — open (live P&L),
+        closed (realized P&L), and the running net. Reads cached values; no IBKR calls."""
+        open_lines = []
+        for sym, trade in self.active_trades.items():
+            direction = trade.get('direction', '')
+            if trade.get('status') == 'PENDING_ENTRY' or 'current_value' not in trade:
+                open_lines.append(f"• {sym} {direction} — pending fill")
+                continue
+            entry = trade['entry_price']
+            cur = trade['current_value']
+            pct = trade.get('current_profit_pct', 0) * 100
+            peak = trade.get('max_profit_pct', 0) * 100
+            open_lines.append(
+                f"• {sym} {direction}  ${entry:.2f} → ${cur:.2f}  {pct:+.1f}%  (peak {peak:+.1f}%)"
+            )
+
+        closed_lines = []
+        net = 0.0
+        for c in self.closed_trades_today:
+            net += c['dollar_pnl']
+            closed_lines.append(
+                f"• {c['symbol']} {c['direction']}  {c['profit_pct']*100:+.1f}%  ${c['dollar_pnl']:+.2f}"
+            )
+
+        desc = f"**▶ OPEN ({len(self.active_trades)})**\n"
+        desc += ("\n".join(open_lines) if open_lines else "_none_") + "\n\n"
+        desc += f"**✅ CLOSED ({len(self.closed_trades_today)})**\n"
+        desc += ("\n".join(closed_lines) if closed_lines else "_none_") + "\n\n"
+        desc += f"**💵 Net so far (realized):** ${net:+.2f}"
+
+        color = 0x2ECC71 if net >= 0 else 0xE74C3C
+        self.send_discord_alert("📋 TODAY", desc, color)
+
+    def close_all_positions(self, reason: str):
+        """Force-close every open position (end-of-day flatten)."""
+        for symbol in list(self.active_trades.keys()):
+            trade = self.active_trades[symbol]
+            try:
+                if trade.get('status') == 'PENDING_ENTRY':
+                    # Unfilled order lingering near the close — cancel instead of selling
+                    self.ib.cancelOrder(trade['ibkr_trade'].order)
+                    logger.info(f"[{symbol}] EOD: cancelled unfilled entry order.")
+                    self.active_trades.pop(symbol, None)
+                    continue
+                current_spread_value = self.get_spread_value(
+                    symbol, trade['direction'], trade['long_strike'], trade['short_strike']
+                )
+                if current_spread_value <= 0:
+                    current_spread_value = 0.01  # still flatten — submit at minimum tick
+                self.close_position(symbol, current_spread_value, reason)
+            except Exception as e:
+                logger.error(f"[{symbol}] EOD flatten failed: {e}")
+                self.active_trades.pop(symbol, None)
+
+    def send_day_summary(self):
+        """Send the end-of-day realized P&L summary to Discord."""
+        trades = self.closed_trades_today
+        today = datetime.datetime.now(pytz.timezone('America/New_York')).date()
+        if not trades:
+            return
+
+        net = sum(c['dollar_pnl'] for c in trades)
+        wins = sum(1 for c in trades if c['profit_pct'] > 0)
+        losses = sum(1 for c in trades if c['profit_pct'] <= 0)
+        win_rate = (wins / len(trades) * 100) if trades else 0.0
+
+        lines = [
+            f"• {c['symbol']} {c['direction']}  {c['profit_pct']*100:+.1f}%  ${c['dollar_pnl']:+.2f}"
+            for c in trades
+        ]
+        desc = (
+            f"**📅 {today}**\n\n"
+            f"**💵 Net P&L:** ${net:+.2f}\n"
+            f"**📊 Trades:** {len(trades)}  |  Wins: {wins}  Losses: {losses}  "
+            f"(Win rate: {win_rate:.0f}%)\n"
+        )
+        if self.circuit_breaker_tripped:
+            desc += "**🚨 Circuit breaker tripped today**\n"
+        desc += "\n**Trades:**\n" + "\n".join(lines)
+
+        color = 0x2ECC71 if net >= 0 else 0xE74C3C
+        self.send_discord_alert("📅 DAY SUMMARY", desc, color)
+
     # ── Main loop ────────────────────────────────────────────────────────────
 
     def run(self):
@@ -756,6 +933,10 @@ class TradingBot:
                 self._ensure_connected()
 
                 if not self.is_market_open():
+                    # Market just closed for the day — send the day summary once
+                    if self.daily_trade_count > 0 and not self.daily_summary_sent:
+                        self.send_day_summary()
+                        self.daily_summary_sent = True
                     secs = self._seconds_until_market_open()
                     hrs, rem = divmod(secs, 3600)
                     mins = rem // 60
@@ -769,6 +950,11 @@ class TradingBot:
 
                 self.check_and_reset_daily_trade_count()
                 self.evaluate_exit_conditions()
+
+                # End-of-day flatten — never hold 0DTE positions into the close
+                if self._is_eod_flatten_time() and self.active_trades:
+                    logger.info("EOD flatten time reached — closing all open positions.")
+                    self.close_all_positions("End of day — flattening 0DTE positions")
 
                 if not self._is_entry_window():
                     logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
