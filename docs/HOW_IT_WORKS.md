@@ -215,7 +215,7 @@ If status is `PENDING_ENTRY`, the bot checks the live IBKR trade object's `order
 
 ### Active Trade: Exit Rules
 
-Once `ACTIVE`, the bot fetches the current spread value (live bid/ask from IBKR) every 60 seconds and evaluates three rules in priority order:
+Once `ACTIVE`, the bot fetches the current spread value (live bid/ask from IBKR) every 60 seconds and evaluates two rules in priority order:
 
 #### Rule 1 — Hard Stop Loss (70%)
 ```
@@ -223,21 +223,15 @@ if profit_pct ≤ -0.70: EXIT
 ```
 Exit immediately if the spread has lost 70% of its entry value. Aggressive by standard 0DTE practice (50% is typical) — set `HARD_STOP_LOSS_PCT=0.50` in `.env` to tighten.
 
-#### Rule 2 — Max Profit Trailing Exit (70% of peak)
+#### Rule 2 — Trailing Stop (arms only after +50% peak)
 ```
-if max_profit_pct > 0 AND profit_pct ≤ max_profit_pct × 0.70: EXIT
+if max_profit_pct ≥ 0.50 AND profit_pct ≤ max_profit_pct × 0.90: EXIT
 ```
-The bot tracks the highest profit percentage ever seen for the trade. If current profit drops to 70% of that peak, exit.
+The trade is left completely alone until it has been up **at least 50%**. There is no profit-taking or giveback protection below that level — only the hard stop. Once the peak crosses +50%, the trailing stop activates and exits if profit falls to **90% of the peak** (i.e. gives back 10% *of* the peak). Because it only arms at +50%, the exit threshold is always ≥ +45%, so it can never close at a loss.
 
-**Example:** Entered at $1.00. Spread reaches $1.60 (+60% max). Exit threshold = +42%. If spread drops to $1.42, sell.
+**Example:** Spread peaks at +60%. Trailing threshold = +54% (60 × 0.90). If profit drops below +54%, sell. If it never reaches +50%, this rule never fires and the trade can only exit via the hard stop.
 
-#### Rule 3 — Trailing Stop (10% from peak, after 40% profit)
-```
-if max_profit_pct ≥ 0.40 AND profit_pct ≤ max_profit_pct − 0.10: EXIT
-```
-Once the trade has been up 40%+, a 10% trailing stop activates.
-
-**Example:** Spread peaks at +55%. Trailing stop = +45%. If profit drops below +45%, sell.
+> **Deliberate gap:** a trade that peaks at +48% and reverses rides all the way back to the −70% hard stop. This is intentional — it lets trends fully develop. It was a direct design choice; lower `TAKE_PROFIT_TRAIL_TRIGGER` if you want earlier protection.
 
 ```mermaid
 graph TD
@@ -249,11 +243,9 @@ graph TD
 
     R1{profit ≤ -70%?}
     R1 -- Yes --> Exit[Exit position]
-    R1 -- No --> R2{max > 0 AND\nprofit ≤ max × 70%?}
+    R1 -- No --> R2{max ≥ 50% AND\nprofit ≤ max × 90%?}
     R2 -- Yes --> Exit
-    R2 -- No --> R3{max ≥ 40% AND\nprofit ≤ max − 10%?}
-    R3 -- Yes --> Exit
-    R3 -- No --> Hold[Hold — check next cycle]
+    R2 -- No --> Hold[Hold — check next cycle]
 ```
 
 ### Closing a Position
@@ -295,9 +287,8 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `MAX_TRADES_PER_DAY` | `12` | Hard daily cap across all symbols |
 | `SIGNAL_COOLDOWN_MINUTES` | `30` | Minutes before a (symbol, direction) signal can re-trigger |
 | `MIN_SPREAD_COST` | `0.10` | Skip trade if spread mid-price is below this |
-| `TAKE_PROFIT_TRAIL_TRIGGER` | `0.40` | Profit % that activates the trailing stop |
-| `TRAILING_STOP_LOSS_PCT` | `0.10` | Exit if profit drops this much from peak (once trigger hit) |
-| `MAX_PROFIT_EXIT_MULTIPLIER` | `0.70` | Exit if profit drops to this fraction of all-time peak |
+| `TAKE_PROFIT_TRAIL_TRIGGER` | `0.50` | Peak profit % that arms the trailing stop (no protection below this) |
+| `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |
 | `MAX_CONSECUTIVE_LOSSES` | `5` | Circuit breaker threshold |
 | `DISCORD_WEBHOOK_URL` | _(empty)_ | Discord webhook for trade alerts |

@@ -635,22 +635,31 @@ class TradingBot:
         exit_triggered = False
         exit_reason = ""
 
+        # Two-rule exit model:
+        #   1. Hard stop — cap the downside at HARD_STOP_LOSS_PCT (70%).
+        #   2. Trailing stop — does NOTHING until the trade has peaked at
+        #      TAKE_PROFIT_TRAIL_TRIGGER (50%). Below that the position is left
+        #      to breathe (only the hard stop applies). Once it has been up 50%+,
+        #      exit if profit falls to (1 - TRAILING_STOP_LOSS_PCT) of the peak —
+        #      i.e. gives back 10% OF the peak (peak +50% -> exit +45%). Because
+        #      this only arms at +50%, the threshold is always >= +45%, so it
+        #      can never exit at a loss.
+
         # Rule 1: Hard stop loss
         if profit_pct <= -config.HARD_STOP_LOSS_PCT:
             exit_triggered = True
             exit_reason = f"Hard stop loss: spread lost {abs(profit_pct)*100:.1f}% of entry value"
 
-        # Rule 2: Max profit trailing exit (dropped to 70% of peak)
-        elif trade['max_profit_pct'] > 0 and profit_pct <= (trade['max_profit_pct'] * config.MAX_PROFIT_EXIT_MULTIPLIER):
-            exit_triggered = True
-            exit_reason = f"Dropped to 70% of Max Profit. (Max: {trade['max_profit_pct']*100:.2f}%, Current: {profit_pct*100:.2f}%)"
-
-        # Rule 3: 10% trailing stop (activated after 40% profit)
+        # Rule 2: Trailing stop, armed only after reaching +50% peak
         elif trade['max_profit_pct'] >= config.TAKE_PROFIT_TRAIL_TRIGGER:
-            trailing_threshold = trade['max_profit_pct'] - config.TRAILING_STOP_LOSS_PCT
+            trailing_threshold = trade['max_profit_pct'] * (1 - config.TRAILING_STOP_LOSS_PCT)
             if profit_pct <= trailing_threshold:
                 exit_triggered = True
-                exit_reason = f"10% Trailing Stop. (Max: {trade['max_profit_pct']*100:.2f}%, Threshold: {trailing_threshold*100:.2f}%, Current: {profit_pct*100:.2f}%)"
+                exit_reason = (
+                    f"Trailing stop after +{config.TAKE_PROFIT_TRAIL_TRIGGER*100:.0f}% peak: "
+                    f"gave back to {profit_pct*100:.2f}% "
+                    f"(Peak: {trade['max_profit_pct']*100:.2f}%, Threshold: {trailing_threshold*100:.2f}%)"
+                )
 
         if exit_triggered:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")

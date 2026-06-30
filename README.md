@@ -72,9 +72,8 @@ SIGNAL_COOLDOWN_MINUTES=30  # Minutes before the same signal can re-trigger
 MIN_SPREAD_COST=0.10        # Skip spreads below this cost (liquidity filter)
 
 # Risk management
-TAKE_PROFIT_TRAIL_TRIGGER=0.40   # Activate trailing stop once up this much
-TRAILING_STOP_LOSS_PCT=0.10      # Trail by this amount from the peak
-MAX_PROFIT_EXIT_MULTIPLIER=0.70  # Exit if profit drops to 70% of the all-time peak
+TAKE_PROFIT_TRAIL_TRIGGER=0.50   # Trailing stop arms only after the trade peaks here (+50%)
+TRAILING_STOP_LOSS_PCT=0.10      # Once armed, exit if profit falls to (1 - this) of the peak (90%)
 HARD_STOP_LOSS_PCT=0.70          # Exit immediately if spread loses this much
 MAX_CONSECUTIVE_LOSSES=5         # Circuit breaker threshold
 
@@ -169,13 +168,14 @@ At `MAX_POSITION_SIZE=$300` and a $0.50 spread: 6 contracts = $300 max risk per 
 
 ## Risk Management
 
-Three layered exit rules, checked every 60 seconds:
+Two exit rules, checked every 60 seconds:
 
 | Rule | Condition | Notes |
 |------|-----------|-------|
 | **Hard Stop Loss** | Spread loses ≥ 70% of entry value | Immediate exit; aggressive — standard is 50% |
-| **Max Profit Trail** | Profit drops to ≤ 70% of peak profit seen | Protects gains once a position has been profitable |
-| **Trailing Stop** | Profit drops 10% from peak, after reaching 40%+ | Locks in gains on strong moves |
+| **Trailing Stop** | Arms only after the trade peaks at +50%; then exits if profit falls to 90% of the peak (gives back 10% of the peak — e.g. peak +50% → exit +45%) | Below +50% peak the position rides untouched — only the hard stop applies. Lets winners run, then locks them in |
+
+> **By design, there is no protection between 0% and +50%.** A trade that peaks at, say, +48% and reverses will ride all the way back to the −70% hard stop without the trailing stop ever arming. This is intentional (high risk appetite, let trends develop) — tighten `TAKE_PROFIT_TRAIL_TRIGGER` if you want earlier protection.
 
 ### Circuit Breaker
 

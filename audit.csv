@@ -2,3 +2,16 @@ Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_L
 2026-05-05 12:08:22,SELL,SPY,CALL,0.19,723.38,16.57,723.52,722.76,721.58,Hard Stop Loss 50% Hit. (Current: -50.00%),-0.50%,-133.00
 2026-05-15 12:42:16,BUY,SPY,CALL,0.3999999999999999,742.25,26.31,741.71,741.90,737.96,Bullish: Price (742.25) > VWAP (741.71) and ORB High (741.90). ADX: 26.31,,
 2026-05-15 12:47:17,SELL,SPY,CALL,0.4500000000000002,742.45,23.06,742.52,741.90,737.96,"Dropped to 70% of Max Profit. (Max: 25.00%, Current: 12.50%)",0.13%,35.00
+2026-06-29 10:22:34,BUY,IWM,PUT,0.41,295.62,25.29,296.06,299.16,296.91,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (295.62) < VWAP (296.06) and ORB Low (296.91). ADX: 25.29,,
+2026-06-29 10:27:56,SELL,IWM,PUT,0.44999999999999996,295.57,29.44,295.67,299.16,296.91,,"Dropped to 70% of Max Profit. (Max: 24.39%, Current: 9.76%)",0.10%,28.00
+2026-06-29 11:03:22,BUY,QQQ,CALL,0.57,719.25,25.89,718.56,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (719.25) > VWAP (718.56) and ORB High (718.66). ADX: 25.89,,
+2026-06-29 11:06:36,SELL,QQQ,CALL,0.565,719.36,28.73,719.12,718.66,711.88,,"Dropped to 70% of Max Profit. (Max: 3.51%, Current: -0.88%)",-0.01%,-2.50
+2026-06-29 11:18:52,BUY,IWM,PUT,0.38,296.80,27.75,297.07,299.16,296.91,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (296.80) < VWAP (297.07) and ORB Low (296.91). ADX: 27.75,,
+2026-06-29 11:23:10,SELL,IWM,PUT,0.33,296.94,19.10,296.97,299.16,296.91,,"Dropped to 70% of Max Profit. (Max: 5.26%, Current: -13.16%)",-0.13%,-35.00
+2026-06-29 11:55:35,BUY,QQQ,CALL,0.52,721.10,25.21,720.49,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (721.10) > VWAP (720.49) and ORB High (718.66). ADX: 25.21,,
+2026-06-29 12:05:16,SELL,QQQ,CALL,0.5049999999999999,721.26,31.13,721.05,718.66,711.88,,"Dropped to 70% of Max Profit. (Max: 8.65%, Current: -2.88%)",-0.03%,-7.50
+2026-06-29 12:15:33,BUY,SPY,CALL,0.45,740.09,39.74,739.47,739.90,735.30,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (740.09) > VWAP (739.47) and ORB High (739.90). ADX: 39.74,,
+2026-06-29 12:19:52,SELL,SPY,CALL,0.44999999999999996,740.03,47.20,739.79,739.90,735.30,,"Dropped to 70% of Max Profit. (Max: 2.22%, Current: -0.00%)",-0.00%,-0.00
+2026-06-29 12:47:38,BUY,SPY,CALL,0.49,740.33,28.48,740.27,739.90,735.30,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (740.33) > VWAP (740.27) and ORB High (739.90). ADX: 28.48,,
+2026-06-29 12:55:37,SELL,SPY,CALL,0.5399999999999998,740.60,25.34,740.45,739.90,735.30,,"Dropped to 70% of Max Profit. (Max: 16.33%, Current: 10.20%)",0.10%,30.00
+2026-06-29 14:52:23,BUY,QQQ,CALL,0.52,722.29,32.22,722.23,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (722.29) > VWAP (722.23) and ORB High (718.66). ADX: 32.22,,

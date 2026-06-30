@@ -19,9 +19,12 @@ MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.10"))
 STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 25}
 SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}
 
-TAKE_PROFIT_TRAIL_TRIGGER = float(os.getenv("TAKE_PROFIT_TRAIL_TRIGGER", "0.40"))
+# Trailing stop activates only once a trade has peaked at TAKE_PROFIT_TRAIL_TRIGGER.
+# Below that the position rides untouched (only the hard stop applies). Once armed,
+# it exits if profit falls to (1 - TRAILING_STOP_LOSS_PCT) of the peak — i.e. gives
+# back 10% OF the peak (peak +50% -> exit +45%).
+TAKE_PROFIT_TRAIL_TRIGGER = float(os.getenv("TAKE_PROFIT_TRAIL_TRIGGER", "0.50"))
 TRAILING_STOP_LOSS_PCT = float(os.getenv("TRAILING_STOP_LOSS_PCT", "0.10"))
-MAX_PROFIT_EXIT_MULTIPLIER = float(os.getenv("MAX_PROFIT_EXIT_MULTIPLIER", "0.70"))
 HARD_STOP_LOSS_PCT = float(os.getenv("HARD_STOP_LOSS_PCT", "0.70"))
 MAX_CONSECUTIVE_LOSSES = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "5"))
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
