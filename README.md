@@ -71,6 +71,11 @@ MAX_TRADES_PER_DAY=12       # Overall daily cap across all symbols
 SIGNAL_COOLDOWN_MINUTES=30  # Minutes before the same signal can re-trigger
 MIN_SPREAD_COST=0.10        # Skip spreads below this cost (liquidity filter)
 
+# Chop guards
+ADX_SLOPE_BARS=10                # Entry requires ADX rising over last N bars (0=off)
+ORB_BREAKOUT_BUFFER_PCT=0.001    # Breakout must clear ORB level by this fraction (0=off)
+VWAP_INVALIDATION_BARS=3         # Exit if price closes past VWAP N bars in a row (0=off)
+
 # Risk management
 TAKE_PROFIT_TRAIL_TRIGGER=0.50   # Trailing stop arms only after the trade peaks here (+50%)
 TRAILING_STOP_LOSS_PCT=0.10      # Once armed, exit if profit falls to (1 - this) of the peak (90%)
@@ -116,6 +121,7 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 | 🟢 NEW ENTRY FILLED | 🟢 Green | When IBKR confirms the order is filled — includes strikes, price, indicators |
 | 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When the closing order is submitted — includes P&L and exit reason |
 | ⚠️ POSITION CLOSED EXTERNALLY | 🟠 Orange | When the bot detects a tracked position is no longer in your IBKR account (closed manually via Client Portal, mobile, or TWS) — drops it from tracking |
+| 🔁 ADOPTED ORPHANED POSITIONS | 🟠 Orange | At startup, when the account holds open 0DTE spreads the bot wasn't tracking (e.g. after a restart) — they're adopted and managed by the normal exit rules |
 | 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
 | 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — total realized P&L, win/loss count, win rate, per-trade breakdown |
 
@@ -146,9 +152,9 @@ All three are American-style ETF options with $1 strike steps and $1 spread widt
 
 ### Entry Conditions
 
-**CALL (bullish):** ADX > 25 AND price > VWAP AND price > ORB High
+**CALL (bullish):** ADX > 25 **and rising** AND price > VWAP AND price > ORB High × (1 + buffer)
 
-**PUT (bearish):** ADX > 25 AND price < VWAP AND price < ORB Low
+**PUT (bearish):** ADX > 25 **and rising** AND price < VWAP AND price < ORB Low × (1 − buffer)
 
 ### Entry Filters (checked in order)
 
@@ -158,7 +164,9 @@ All three are American-style ETF options with $1 strike steps and $1 spread widt
 4. **Daily trade cap** — Hard ceiling of `MAX_TRADES_PER_DAY` (default 12)
 5. **Signal cooldown** — After a trade, that symbol+direction is locked for `SIGNAL_COOLDOWN_MINUTES` (default 30). Once the cooldown expires the signal can re-trigger, enabling continuation trades on trending days
 6. **One active trade per symbol** — Cannot open a second SPY trade while one is already running
-7. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
+7. **ADX rising (chop guard)** — ADX must have increased over the last `ADX_SLOPE_BARS` (default 10) bars. A level check passes on residual momentum; the slope confirms the trend is still alive. Fails open early in the session when the lookback is not yet computable
+8. **Breakout buffer (chop guard)** — Price must clear the ORB level by `ORB_BREAKOUT_BUFFER_PCT` (default 0.1%), filtering micro-poke false breakouts
+9. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
 
 ### Position Sizing
 
@@ -172,14 +180,15 @@ At `MAX_POSITION_SIZE=$300` and a $0.50 spread: 6 contracts = $300 max risk per 
 
 ## Risk Management
 
-Two exit rules, checked every 60 seconds:
+Three exit rules, checked every 60 seconds:
 
 | Rule | Condition | Notes |
 |------|-----------|-------|
-| **Hard Stop Loss** | Spread loses ≥ 70% of entry value | Immediate exit; aggressive — standard is 50% |
-| **Trailing Stop** | Arms only after the trade peaks at +50%; then exits if profit falls to 90% of the peak (gives back 10% of the peak — e.g. peak +50% → exit +45%) | Below +50% peak the position rides untouched — only the hard stop applies. Lets winners run, then locks them in |
+| **Hard Stop Loss** | Spread loses ≥ 70% of entry value | Immediate exit; the catastrophic backstop |
+| **Thesis Invalidation** | Price closes on the wrong side of VWAP for `VWAP_INVALIDATION_BARS` (default 3) consecutive 1-min bars | The entry reason was "price beyond VWAP + ORB" — when that's gone, exit instead of riding to −70%. On 2026-07-01 this would have cut three −71/−74% losers near −20/−30% |
+| **Trailing Stop** | Arms only after the trade peaks at +50%; then exits if profit falls to 90% of the peak (e.g. peak +50% → exit +45%) | Lets winners run, then locks them in |
 
-> **By design, there is no protection between 0% and +50%.** A trade that peaks at, say, +48% and reverses will ride all the way back to the −70% hard stop without the trailing stop ever arming. This is intentional (high risk appetite, let trends develop) — tighten `TAKE_PROFIT_TRAIL_TRIGGER` if you want earlier protection.
+> The thesis-invalidation rule replaced the old "no protection between 0% and +50%" gap: a losing trade now exits when its entry conditions die, not only at −70%. Set `VWAP_INVALIDATION_BARS=0` to disable and restore the old behaviour.
 
 ### End-of-Day Flatten
 
@@ -207,9 +216,32 @@ Every fill (entry and exit) is appended to `audit.csv`:
 | VWAP | VWAP at trade time |
 | ORB_High | 30-min opening range high |
 | ORB_Low | 30-min opening range low |
+| Breadth | $TICK/$VOLD annotation at entry (BUY rows) |
 | Reason | Entry signal or exit rule that fired |
 | Profit_Pct | P&L % (SELL rows only) |
 | Dollar_PnL | Dollar P&L (SELL rows only) |
+| ADX_Slope | ADX change over the slope-lookback window at entry (BUY rows) |
+| Peak_Pct | Highest profit % the trade reached before exit (SELL rows only) |
+
+> Timestamps are logged in **ET** (rows before 2026-07-05 are in the machine's local time, CDT).
+
+---
+
+## Dashboard
+
+`dashboard.xlsx` is regenerated automatically **after each trading day** — right after the 📅 day summary is sent to Discord. It can also be rebuilt manually anytime:
+
+```bash
+python scripts/build_dashboard.py
+```
+
+Three sheets, built from `audit.csv` with live Excel formulas:
+
+| Sheet | Contents |
+|-------|----------|
+| **Summary** | KPIs (total P&L, win rate, avg win/loss, profit factor, best/worst day) + daily P&L bars + equity curve |
+| **Analysis** | P&L by symbol, by exit rule (what each rule costs/saves), and by entry hour (ET) — each with a chart |
+| **Trades** | Full paired ledger: entry/exit, hold time, ADX + slope at entry, peak %, P&L, exit rule, orphan flags |
 
 ---
 
@@ -219,5 +251,7 @@ Every fill (entry and exit) is appended to `audit.csv`:
 - **Informational IBKR codes** — Codes like 162 (no data yet), 2104/2106 (farm connected), 10091/10167 (delayed data notice) are suppressed from logs and handled silently. Real errors (order rejections, etc.) still appear as `WARNING`.
 - **Auto-reconnect** — If the IBKR connection drops mid-session, the bot attempts to reconnect at the start of the next loop iteration.
 - **Position reconciliation** — Each loop the bot checks every tracked position against your actual IBKR account (`ib.positions()`). If you close a spread manually (Client Portal, mobile app, or TWS), the bot detects the missing position (after two consecutive checks, with a 90-second grace period after entry) and drops it from tracking — so it never tries to manage or re-sell a position you no longer hold. A ⚠️ alert fires. P&L for an externally-closed trade is **not** recorded, since the bot doesn't know the price you exited at.
+- **Startup adoption** — On start, the bot scans `ib.positions()` for open 0DTE option spreads it isn't tracking (orphaned by a restart), reconstructs them (entry price estimated from account `avgCost`), and manages them with the normal exit rules and EOD flatten. Unpairable or non-0DTE positions trigger a ⚠️ alert for manual review instead.
+- **Stale-feed detector** — If the latest intraday bar is more than 10 minutes old during market hours, a WARNING is logged (indicators may be unreliable).
 
 For a full explanation of the bot's internal logic, see [How It Works](docs/HOW_IT_WORKS.md).

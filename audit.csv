@@ -1,29 +1,47 @@
-Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Reason,Profit_Pct,Dollar_PnL
-2026-05-05 12:08:22,SELL,SPY,CALL,0.19,723.38,16.57,723.52,722.76,721.58,Hard Stop Loss 50% Hit. (Current: -50.00%),-0.50%,-133.00
-2026-05-15 12:42:16,BUY,SPY,CALL,0.3999999999999999,742.25,26.31,741.71,741.90,737.96,Bullish: Price (742.25) > VWAP (741.71) and ORB High (741.90). ADX: 26.31,,
-2026-05-15 12:47:17,SELL,SPY,CALL,0.4500000000000002,742.45,23.06,742.52,741.90,737.96,"Dropped to 70% of Max Profit. (Max: 25.00%, Current: 12.50%)",0.13%,35.00
-2026-06-29 10:22:34,BUY,IWM,PUT,0.41,295.62,25.29,296.06,299.16,296.91,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (295.62) < VWAP (296.06) and ORB Low (296.91). ADX: 25.29,,
-2026-06-29 10:27:56,SELL,IWM,PUT,0.44999999999999996,295.57,29.44,295.67,299.16,296.91,,"Dropped to 70% of Max Profit. (Max: 24.39%, Current: 9.76%)",0.10%,28.00
-2026-06-29 11:03:22,BUY,QQQ,CALL,0.57,719.25,25.89,718.56,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (719.25) > VWAP (718.56) and ORB High (718.66). ADX: 25.89,,
-2026-06-29 11:06:36,SELL,QQQ,CALL,0.565,719.36,28.73,719.12,718.66,711.88,,"Dropped to 70% of Max Profit. (Max: 3.51%, Current: -0.88%)",-0.01%,-2.50
-2026-06-29 11:18:52,BUY,IWM,PUT,0.38,296.80,27.75,297.07,299.16,296.91,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (296.80) < VWAP (297.07) and ORB Low (296.91). ADX: 27.75,,
-2026-06-29 11:23:10,SELL,IWM,PUT,0.33,296.94,19.10,296.97,299.16,296.91,,"Dropped to 70% of Max Profit. (Max: 5.26%, Current: -13.16%)",-0.13%,-35.00
-2026-06-29 11:55:35,BUY,QQQ,CALL,0.52,721.10,25.21,720.49,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (721.10) > VWAP (720.49) and ORB High (718.66). ADX: 25.21,,
-2026-06-29 12:05:16,SELL,QQQ,CALL,0.5049999999999999,721.26,31.13,721.05,718.66,711.88,,"Dropped to 70% of Max Profit. (Max: 8.65%, Current: -2.88%)",-0.03%,-7.50
-2026-06-29 12:15:33,BUY,SPY,CALL,0.45,740.09,39.74,739.47,739.90,735.30,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (740.09) > VWAP (739.47) and ORB High (739.90). ADX: 39.74,,
-2026-06-29 12:19:52,SELL,SPY,CALL,0.44999999999999996,740.03,47.20,739.79,739.90,735.30,,"Dropped to 70% of Max Profit. (Max: 2.22%, Current: -0.00%)",-0.00%,-0.00
-2026-06-29 12:47:38,BUY,SPY,CALL,0.49,740.33,28.48,740.27,739.90,735.30,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (740.33) > VWAP (740.27) and ORB High (739.90). ADX: 28.48,,
-2026-06-29 12:55:37,SELL,SPY,CALL,0.5399999999999998,740.60,25.34,740.45,739.90,735.30,,"Dropped to 70% of Max Profit. (Max: 16.33%, Current: 10.20%)",0.10%,30.00
-2026-06-29 14:52:23,BUY,QQQ,CALL,0.52,722.29,32.22,722.23,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (722.29) > VWAP (722.23) and ORB High (718.66). ADX: 32.22,,
-2026-06-30 09:06:01,BUY,QQQ,CALL,0.52,732.14,50.77,730.50,731.94,723.91,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (732.14) > VWAP (730.50) and ORB High (731.94). ADX: 50.77,,
-2026-06-30 09:07:05,BUY,SPY,CALL,0.52,744.19,32.16,743.28,743.96,740.89,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (744.19) > VWAP (743.28) and ORB High (743.96). ADX: 32.16,,
-2026-06-30 09:33:49,BUY,IWM,CALL,0.417143,299.96,25.02,299.74,299.15,297.44,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (299.96) > VWAP (299.74) and ORB High (299.15). ADX: 25.02,,
-2026-06-30 10:58:15,SELL,QQQ,CALL,0.73,734.65,32.26,733.95,731.94,723.91,,"Trailing stop after +50% peak: gave back to 40.38% (Peak: 53.85%, Threshold: 48.46%)",0.40%,105.00
-2026-06-30 10:59:38,BUY,QQQ,CALL,0.44,734.56,32.26,733.95,731.94,723.91,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (734.56) > VWAP (733.95) and ORB High (731.94). ADX: 32.26,,
-2026-06-30 11:09:10,SELL,SPY,CALL,0.7549999999999999,746.04,39.46,746.03,743.96,740.89,,"Trailing stop after +50% peak: gave back to 45.19% (Peak: 51.92%, Threshold: 46.73%)",0.45%,117.50
-2026-06-30 11:10:38,BUY,SPY,CALL,0.48,746.07,39.31,746.03,743.96,740.89,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (746.07) > VWAP (746.03) and ORB High (743.96). ADX: 39.31,,
-2026-06-30 12:13:20,SELL,QQQ,CALL,0.6599999999999995,736.42,31.08,736.36,731.94,723.91,,"Trailing stop after +50% peak: gave back to 50.00% (Peak: 56.82%, Threshold: 51.14%)",0.50%,132.00
-2026-06-30 12:14:43,BUY,QQQ,CALL,0.54,736.43,31.08,736.36,731.94,723.91,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (736.43) > VWAP (736.36) and ORB High (731.94). ADX: 31.08,,
-2026-06-30 12:32:42,SELL,IWM,CALL,0.6100000000000001,300.66,26.76,300.56,299.15,297.44,,"Trailing stop after +50% peak: gave back to 46.23% (Peak: 52.23%, Threshold: 47.00%)",0.46%,135.00
-2026-06-30 12:36:35,BUY,IWM,CALL,0.24,300.67,26.58,300.57,299.15,297.44,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (300.67) > VWAP (300.57) and ORB High (299.15). ADX: 26.58,,
-2026-06-30 14:19:02,SELL,SPY,CALL,0.74,747.81,25.68,747.60,743.96,740.89,,"Trailing stop after +50% peak: gave back to 54.17% (Peak: 64.58%, Threshold: 58.13%)",0.54%,156.00
+Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Breadth,Reason,Profit_Pct,Dollar_PnL,ADX_Slope,Peak_Pct
+2026-05-05 12:08:22,SELL,SPY,CALL,0.19,723.38,16.57,723.52,722.76,721.58,,Hard Stop Loss 50% Hit. (Current: -50.00%),-50.00%,-133.00,,
+2026-05-15 12:42:16,BUY,SPY,CALL,0.3999999999999999,742.25,26.31,741.71,741.90,737.96,,Bullish: Price (742.25) > VWAP (741.71) and ORB High (741.90). ADX: 26.31,,,,
+2026-05-15 12:47:17,SELL,SPY,CALL,0.4500000000000002,742.45,23.06,742.52,741.90,737.96,,"Dropped to 70% of Max Profit. (Max: 25.00%, Current: 12.50%)",12.50%,35.00,,
+2026-06-29 10:22:34,BUY,IWM,PUT,0.41,295.62,25.29,296.06,299.16,296.91,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (295.62) < VWAP (296.06) and ORB Low (296.91). ADX: 25.29,,,,
+2026-06-29 10:27:56,SELL,IWM,PUT,0.44999999999999996,295.57,29.44,295.67,299.16,296.91,,"Dropped to 70% of Max Profit. (Max: 24.39%, Current: 9.76%)",9.76%,28.00,,
+2026-06-29 11:03:22,BUY,QQQ,CALL,0.57,719.25,25.89,718.56,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (719.25) > VWAP (718.56) and ORB High (718.66). ADX: 25.89,,,,
+2026-06-29 11:06:36,SELL,QQQ,CALL,0.565,719.36,28.73,719.12,718.66,711.88,,"Dropped to 70% of Max Profit. (Max: 3.51%, Current: -0.88%)",-0.88%,-2.50,,
+2026-06-29 11:18:52,BUY,IWM,PUT,0.38,296.80,27.75,297.07,299.16,296.91,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (296.80) < VWAP (297.07) and ORB Low (296.91). ADX: 27.75,,,,
+2026-06-29 11:23:10,SELL,IWM,PUT,0.33,296.94,19.10,296.97,299.16,296.91,,"Dropped to 70% of Max Profit. (Max: 5.26%, Current: -13.16%)",-13.16%,-35.00,,
+2026-06-29 11:55:35,BUY,QQQ,CALL,0.52,721.10,25.21,720.49,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (721.10) > VWAP (720.49) and ORB High (718.66). ADX: 25.21,,,,
+2026-06-29 12:05:16,SELL,QQQ,CALL,0.5049999999999999,721.26,31.13,721.05,718.66,711.88,,"Dropped to 70% of Max Profit. (Max: 8.65%, Current: -2.88%)",-2.88%,-7.50,,
+2026-06-29 12:15:33,BUY,SPY,CALL,0.45,740.09,39.74,739.47,739.90,735.30,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (740.09) > VWAP (739.47) and ORB High (739.90). ADX: 39.74,,,,
+2026-06-29 12:19:52,SELL,SPY,CALL,0.44999999999999996,740.03,47.20,739.79,739.90,735.30,,"Dropped to 70% of Max Profit. (Max: 2.22%, Current: -0.00%)",-0.00%,-0.00,,
+2026-06-29 12:47:38,BUY,SPY,CALL,0.49,740.33,28.48,740.27,739.90,735.30,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (740.33) > VWAP (740.27) and ORB High (739.90). ADX: 28.48,,,,
+2026-06-29 12:55:37,SELL,SPY,CALL,0.5399999999999998,740.60,25.34,740.45,739.90,735.30,,"Dropped to 70% of Max Profit. (Max: 16.33%, Current: 10.20%)",10.20%,30.00,,
+2026-06-29 14:52:23,BUY,QQQ,CALL,0.52,722.29,32.22,722.23,718.66,711.88,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (722.29) > VWAP (722.23) and ORB High (718.66). ADX: 32.22,,,,
+2026-06-30 09:06:01,BUY,QQQ,CALL,0.52,732.14,50.77,730.50,731.94,723.91,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (732.14) > VWAP (730.50) and ORB High (731.94). ADX: 50.77,,,,
+2026-06-30 09:07:05,BUY,SPY,CALL,0.52,744.19,32.16,743.28,743.96,740.89,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (744.19) > VWAP (743.28) and ORB High (743.96). ADX: 32.16,,,,
+2026-06-30 09:33:49,BUY,IWM,CALL,0.417143,299.96,25.02,299.74,299.15,297.44,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (299.96) > VWAP (299.74) and ORB High (299.15). ADX: 25.02,,,,
+2026-06-30 10:58:15,SELL,QQQ,CALL,0.73,734.65,32.26,733.95,731.94,723.91,,"Trailing stop after +50% peak: gave back to 40.38% (Peak: 53.85%, Threshold: 48.46%)",40.38%,105.00,,53.85%
+2026-06-30 10:59:38,BUY,QQQ,CALL,0.44,734.56,32.26,733.95,731.94,723.91,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (734.56) > VWAP (733.95) and ORB High (731.94). ADX: 32.26,,,,
+2026-06-30 11:09:10,SELL,SPY,CALL,0.7549999999999999,746.04,39.46,746.03,743.96,740.89,,"Trailing stop after +50% peak: gave back to 45.19% (Peak: 51.92%, Threshold: 46.73%)",45.19%,117.50,,51.92%
+2026-06-30 11:10:38,BUY,SPY,CALL,0.48,746.07,39.31,746.03,743.96,740.89,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (746.07) > VWAP (746.03) and ORB High (743.96). ADX: 39.31,,,,
+2026-06-30 12:13:20,SELL,QQQ,CALL,0.6599999999999995,736.42,31.08,736.36,731.94,723.91,,"Trailing stop after +50% peak: gave back to 50.00% (Peak: 56.82%, Threshold: 51.14%)",50.00%,132.00,,56.82%
+2026-06-30 12:14:43,BUY,QQQ,CALL,0.54,736.43,31.08,736.36,731.94,723.91,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (736.43) > VWAP (736.36) and ORB High (731.94). ADX: 31.08,,,,
+2026-06-30 12:32:42,SELL,IWM,CALL,0.6100000000000001,300.66,26.76,300.56,299.15,297.44,,"Trailing stop after +50% peak: gave back to 46.23% (Peak: 52.23%, Threshold: 47.00%)",46.23%,135.00,,52.23%
+2026-06-30 12:36:35,BUY,IWM,CALL,0.24,300.67,26.58,300.57,299.15,297.44,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (300.67) > VWAP (300.57) and ORB High (299.15). ADX: 26.58,,,,
+2026-06-30 14:19:02,SELL,SPY,CALL,0.74,747.81,25.68,747.60,743.96,740.89,,"Trailing stop after +50% peak: gave back to 54.17% (Peak: 64.58%, Threshold: 58.13%)",54.17%,156.00,,64.58%
+2026-07-01 09:02:51,BUY,IWM,CALL,0.46,301.21,26.56,300.48,300.95,298.92,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (301.21) > VWAP (300.48) and ORB High (300.95). ADX: 26.56,,,,
+2026-07-01 09:08:24,BUY,SPY,CALL,0.49,746.06,25.34,745.06,745.34,742.37,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (746.06) > VWAP (745.06) and ORB High (745.34). ADX: 25.34,,,,
+2026-07-01 09:14:03,SELL,IWM,CALL,0.6799999999999999,302.17,44.33,301.68,300.95,298.92,,"Trailing stop after +50% peak: gave back to 47.83% (Peak: 54.35%, Threshold: 48.91%)",47.83%,132.00,,54.35%
+2026-07-01 10:08:55,SELL,SPY,CALL,0.7050000000000005,747.63,29.73,747.43,745.34,742.37,,"Trailing stop after +50% peak: gave back to 43.88% (Peak: 51.02%, Threshold: 45.92%)",43.88%,129.00,,51.02%
+2026-07-01 10:24:37,BUY,QQQ,CALL,0.52,731.31,25.48,730.28,730.24,725.52,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (731.31) > VWAP (730.28) and ORB High (730.24). ADX: 25.48,,,,
+2026-07-01 10:39:00,BUY,IWM,CALL,0.43,302.16,25.72,301.74,300.95,298.92,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (302.16) > VWAP (301.74) and ORB High (300.95). ADX: 25.72,,,,
+2026-07-01 11:57:27,SELL,QQQ,CALL,0.14999999999999997,728.02,20.29,728.48,730.24,725.52,,Hard stop loss: spread lost 71.2% of entry value,-71.15%,-185.00,,
+2026-07-01 12:00:48,BUY,SPY,CALL,0.38,747.63,29.73,747.43,745.34,742.37,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (747.63) > VWAP (747.43) and ORB High (745.34). ADX: 29.73,,,,
+2026-07-01 12:34:00,SELL,IWM,CALL,0.11000000000000001,301.29,15.59,301.51,300.95,298.92,,Hard stop loss: spread lost 74.4% of entry value,-74.42%,-192.00,,
+2026-07-01 13:55:44,SELL,SPY,CALL,0.10999999999999999,746.55,20.97,746.87,745.34,742.37,,Hard stop loss: spread lost 71.1% of entry value,-71.05%,-189.00,,
+2026-07-06 11:32:51,BUY,SPY,CALL,0.4,750.96,25.60,750.30,749.54,747.41,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (750.96) > VWAP (750.30) and ORB High+buffer (750.29). ADX: 25.60 rising +8.68,,,+8.68,
+2026-07-06 11:54:39,SELL,SPY,CALL,0.33,750.68,21.14,750.78,749.54,747.41,,Thesis invalidated: price closed below VWAP for 3 consecutive bars (Current P&L: -17.50%),-17.50%,-49.00,,0.00%
+2026-07-06 13:48:47,BUY,SPY,CALL,0.51,750.38,40.16,750.13,749.54,747.41,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (750.38) > VWAP (750.13) and ORB High+buffer (750.29). ADX: 40.16 rising +5.13,,,+5.13,
+2026-07-06 13:56:22,SELL,SPY,CALL,0.42999999999999994,750.13,30.01,750.15,749.54,747.41,,Thesis invalidated: price closed below VWAP for 3 consecutive bars (Current P&L: -15.69%),-15.69%,-40.00,,5.88%
+2026-07-06 14:19:47,BUY,SPY,CALL,0.45,751.24,30.67,751.05,749.54,747.41,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (751.24) > VWAP (751.05) and ORB High+buffer (750.29). ADX: 30.67 rising +2.76,,,+2.76,
+2026-07-06 14:30:34,SELL,SPY,CALL,0.47,751.37,30.59,751.40,749.54,747.41,,Thesis invalidated: price closed below VWAP for 3 consecutive bars (Current P&L: +4.44%),4.44%,12.00,,17.78%
+2026-07-06 15:00:01,BUY,SPY,CALL,0.31,751.98,25.99,751.72,749.54,747.41,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (751.98) > VWAP (751.72) and ORB High+buffer (750.29). ADX: 25.99 rising +10.01,,,+10.01,
+2026-07-06 15:09:41,SELL,SPY,CALL,0.24999999999999997,751.75,25.31,751.88,749.54,747.41,,Thesis invalidated: price closed below VWAP for 3 consecutive bars (Current P&L: -19.35%),-19.35%,-54.00,,6.45%

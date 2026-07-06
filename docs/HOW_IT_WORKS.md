@@ -15,7 +15,8 @@ python src/main.py
 1. Connects to IBKR via IB Gateway or TWS using the host/port from `.env`
 2. Requests **delayed market data (type 4)** — no live subscription needed for paper trading
 3. Silences `ib_insync`'s internal error logger and subscribes to `errorEvent` to route IBKR messages itself — suppressing expected info codes (162, 2104, 2106, 10091, 10167, etc.) and surfacing real problems as `WARNING`
-4. Enters the main `while True:` loop
+4. Subscribes to account positions (`reqPositions`) and **adopts orphaned positions**: any open 0DTE spread found in the account but not in bot state (a restart wipes `active_trades`) is reconstructed — entry price estimated from account `avgCost` — and managed by the normal exit rules and EOD flatten. A 🔁 Discord alert lists what was adopted; unpairable positions get a ⚠️ alert for manual review instead
+5. Enters the main `while True:` loop
 
 ---
 
@@ -136,12 +137,17 @@ After fetching, the bot:
 
 **30-Minute ORB** — Opening Range Breakout. The high and low of the 9:30–10:00 AM EST window, anchored to fixed wall-clock time (not `df.index[0]`). This means restarting the bot mid-day still produces the correct morning range.
 
-### Guard 7: Entry Signal
+### Guard 7: Entry Signal (with chop guards)
 
 | Signal | Conditions |
 |--------|-----------|
-| **CALL** | ADX > 25 AND price > VWAP AND price > ORB High |
-| **PUT** | ADX > 25 AND price < VWAP AND price < ORB Low |
+| **CALL** | ADX > 25 **and rising** AND price > VWAP AND price > ORB High × (1 + buffer) |
+| **PUT** | ADX > 25 **and rising** AND price < VWAP AND price < ORB Low × (1 − buffer) |
+
+Two chop guards were added after the 2026-07-01 reversal day (see [RETROSPECTIVE.md](RETROSPECTIVE.md)):
+
+- **ADX slope** — ADX must have *risen* over the last `ADX_SLOPE_BARS` (default 10) bars. On 07-01, ADX direction predicted all five outcomes: every hard-stop loser entered on flat/fading ADX. The level check alone passes on residual momentum. Fails open early in the session while the lookback bar is still NaN.
+- **Breakout buffer** — the close must clear the ORB level by `ORB_BREAKOUT_BUFFER_PCT` (default 0.1%), not poke a cent above it. Filters the midday micro-poke false breakouts.
 
 If neither condition is met, no trade. If a signal is found, the bot proceeds to Guard 8 (spread pricing), then fetches the breadth annotation before submitting.
 
@@ -236,23 +242,29 @@ If status is `PENDING_ENTRY`, the bot checks the live IBKR trade object's `order
 
 ### Active Trade: Exit Rules
 
-Once `ACTIVE`, the bot fetches the current spread value (live bid/ask from IBKR) every 60 seconds and evaluates two rules in priority order:
+Once `ACTIVE`, the bot fetches the current spread value (live bid/ask from IBKR) every 60 seconds and evaluates three rules in priority order:
 
 #### Rule 1 — Hard Stop Loss (70%)
 ```
 if profit_pct ≤ -0.70: EXIT
 ```
-Exit immediately if the spread has lost 70% of its entry value. Aggressive by standard 0DTE practice (50% is typical) — set `HARD_STOP_LOSS_PCT=0.50` in `.env` to tighten.
+Exit immediately if the spread has lost 70% of its entry value. The catastrophic backstop.
 
-#### Rule 2 — Trailing Stop (arms only after +50% peak)
+#### Rule 2 — Thesis Invalidation (VWAP recross)
+```
+if price closed on the wrong side of VWAP for N consecutive bars: EXIT
+```
+The entry reason is "price beyond VWAP and the ORB level". If price closes back on the **wrong side of VWAP** for `VWAP_INVALIDATION_BARS` (default 3) consecutive 1-min bars — below VWAP for calls, above for puts — the reason for being in the trade is gone. Exit at the market instead of riding to −70%.
+
+**Why:** on 2026-07-01 all three hard-stop losers were below VWAP *long* before −70% hit; this rule would have cut them near −20/−30% (~$350 saved). The N-bar requirement stops a single whipsaw bar from ejecting a good trade. Set `VWAP_INVALIDATION_BARS=0` to disable.
+
+#### Rule 3 — Trailing Stop (arms only after +50% peak)
 ```
 if max_profit_pct ≥ 0.50 AND profit_pct ≤ max_profit_pct × 0.90: EXIT
 ```
-The trade is left completely alone until it has been up **at least 50%**. There is no profit-taking or giveback protection below that level — only the hard stop. Once the peak crosses +50%, the trailing stop activates and exits if profit falls to **90% of the peak** (i.e. gives back 10% *of* the peak). Because it only arms at +50%, the exit threshold is always ≥ +45%, so it can never close at a loss.
+The winner-management rule. Below a +50% peak the position rides (protected by Rules 1–2). Once the peak crosses +50%, exit if profit falls to **90% of the peak** (gives back 10% *of* the peak). Because it only arms at +50%, its threshold is always ≥ +45% — it never closes at a loss.
 
-**Example:** Spread peaks at +60%. Trailing threshold = +54% (60 × 0.90). If profit drops below +54%, sell. If it never reaches +50%, this rule never fires and the trade can only exit via the hard stop.
-
-> **Deliberate gap:** a trade that peaks at +48% and reverses rides all the way back to the −70% hard stop. This is intentional — it lets trends fully develop. It was a direct design choice; lower `TAKE_PROFIT_TRAIL_TRIGGER` if you want earlier protection.
+**Example:** Spread peaks at +60%. Trailing threshold = +54% (60 × 0.90). If profit drops below +54%, sell.
 
 ```mermaid
 graph TD
@@ -264,9 +276,11 @@ graph TD
 
     R1{profit ≤ -70%?}
     R1 -- Yes --> Exit[Exit position]
-    R1 -- No --> R2{max ≥ 50% AND\nprofit ≤ max × 90%?}
+    R1 -- No --> R2{price past VWAP\nN bars in a row?}
     R2 -- Yes --> Exit
-    R2 -- No --> Hold[Hold — check next cycle]
+    R2 -- No --> R3{max ≥ 50% AND\nprofit ≤ max × 90%?}
+    R3 -- Yes --> Exit
+    R3 -- No --> Hold[Hold — check next cycle]
 ```
 
 ### Closing a Position
@@ -292,6 +306,8 @@ After submitting:
 New entries already stop at 3:00 PM, so nothing reopens after the flatten.
 
 **Day summary (after the close).** On the first loop after `is_market_open()` flips false, if the day had any trades and the summary hasn't been sent yet, a single **📅 DAY SUMMARY** fires: total realized P&L, trade count, wins/losses, win rate, a per-trade breakdown, and circuit-breaker status. A `daily_summary_sent` flag prevents re-sending during the hourly overnight/weekend wake-ups; it clears on the next trading day's reset. No-trade days send nothing.
+
+**Dashboard refresh (right after the summary).** The bot then runs `scripts/build_dashboard.py` as a subprocess (so a dashboard failure can never break the trading loop), regenerating `dashboard.xlsx` from `audit.csv` with the day's trades included.
 
 ---
 
@@ -321,7 +337,10 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `MAX_TRADES_PER_DAY` | `12` | Hard daily cap across all symbols |
 | `SIGNAL_COOLDOWN_MINUTES` | `30` | Minutes before a (symbol, direction) signal can re-trigger |
 | `MIN_SPREAD_COST` | `0.10` | Skip trade if spread mid-price is below this |
-| `TAKE_PROFIT_TRAIL_TRIGGER` | `0.50` | Peak profit % that arms the trailing stop (no protection below this) |
+| `ADX_SLOPE_BARS` | `10` | Entry chop guard: ADX must be rising over this many bars (0 = off) |
+| `ORB_BREAKOUT_BUFFER_PCT` | `0.001` | Entry chop guard: breakout must clear the ORB level by this fraction (0 = off) |
+| `VWAP_INVALIDATION_BARS` | `3` | Exit: leave the trade if price closes past VWAP this many bars in a row (0 = off) |
+| `TAKE_PROFIT_TRAIL_TRIGGER` | `0.50` | Peak profit % that arms the trailing stop |
 | `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |
 | `MAX_CONSECUTIVE_LOSSES` | `5` | Circuit breaker threshold |

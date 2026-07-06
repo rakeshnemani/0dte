@@ -19,6 +19,19 @@ MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.10"))
 STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 25}
 SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}
 
+# ── Chop guards (added after 2026-07-01 reversal-day retro) ──────────────────
+# Entry gate: require ADX to be RISING over the last N bars, not just > 25.
+# A level check passes on residual momentum; the slope says the trend is alive.
+# 0 disables. Fail-open when slope can't be computed yet (early session NaNs).
+ADX_SLOPE_BARS = int(os.getenv("ADX_SLOPE_BARS", "10"))
+# Entry gate: price must clear the ORB level by this fraction (0.001 = 0.1%),
+# not just poke a cent above it. Filters micro-poke false breakouts.
+ORB_BREAKOUT_BUFFER_PCT = float(os.getenv("ORB_BREAKOUT_BUFFER_PCT", "0.001"))
+# Exit: if price closes on the wrong side of VWAP for N consecutive 1-min bars,
+# the entry thesis is invalidated — exit instead of riding to the hard stop.
+# 0 disables.
+VWAP_INVALIDATION_BARS = int(os.getenv("VWAP_INVALIDATION_BARS", "3"))
+
 # Trailing stop activates only once a trade has peaked at TAKE_PROFIT_TRAIL_TRIGGER.
 # Below that the position rides untouched (only the hard stop applies). Once armed,
 # it exits if profit falls to (1 - TRAILING_STOP_LOSS_PCT) of the peak — i.e. gives

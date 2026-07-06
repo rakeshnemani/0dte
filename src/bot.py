@@ -8,6 +8,8 @@ import datetime
 import pytz
 import os
 import csv
+import subprocess
+import sys
 import requests
 
 import config
@@ -40,6 +42,11 @@ class TradingBot:
         self._breadth_cache_time: Optional[datetime.datetime] = None
         self._tick_df_cache: pd.DataFrame = pd.DataFrame()
         self._vold_df_cache: pd.DataFrame = pd.DataFrame()
+
+        # A restart wipes active_trades — adopt any open option positions the
+        # account still holds so they are managed instead of orphaned (this bit
+        # us on 2026-06-29 and 2026-06-30; see docs/RETROSPECTIVE.md).
+        self.adopt_orphan_positions()
 
     def _connect(self):
         logger.info(f"Connecting to IBKR at {config.IBKR_HOST}:{config.IBKR_PORT} (clientId={config.IBKR_CLIENT_ID})")
@@ -154,7 +161,8 @@ class TradingBot:
                   adx: Optional[float] = None, vwap: Optional[float] = None,
                   orb_high: Optional[float] = None, orb_low: Optional[float] = None,
                   underlying_price: Optional[float] = None, profit_pct: Optional[float] = None,
-                  dollar_pnl: Optional[float] = None, breadth: Optional[str] = None):
+                  dollar_pnl: Optional[float] = None, breadth: Optional[str] = None,
+                  adx_slope: Optional[float] = None, peak_pct: Optional[float] = None):
         file_exists = os.path.isfile("audit.csv")
         try:
             with open("audit.csv", mode='a', newline='') as file:
@@ -162,10 +170,12 @@ class TradingBot:
                 if not file_exists:
                     writer.writerow([
                         "Timestamp", "Action", "Symbol", "Direction", "Price", "Underlying_Price",
-                        "ADX", "VWAP", "ORB_High", "ORB_Low", "Breadth", "Reason", "Profit_Pct", "Dollar_PnL"
+                        "ADX", "VWAP", "ORB_High", "ORB_Low", "Breadth", "Reason",
+                        "Profit_Pct", "Dollar_PnL", "ADX_Slope", "Peak_Pct"
                     ])
                 writer.writerow([
-                    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    # Log in ET — the timezone the strategy runs in
+                    datetime.datetime.now(pytz.timezone('America/New_York')).strftime("%Y-%m-%d %H:%M:%S"),
                     action, symbol, direction, price,
                     f"{underlying_price:.2f}" if underlying_price else "",
                     f"{adx:.2f}" if adx else "",
@@ -174,8 +184,10 @@ class TradingBot:
                     f"{orb_low:.2f}" if orb_low else "",
                     breadth or "",
                     reason,
-                    f"{profit_pct:.2f}%" if profit_pct is not None else "",
-                    f"{dollar_pnl:.2f}" if dollar_pnl is not None else ""
+                    f"{profit_pct*100:.2f}%" if profit_pct is not None else "",
+                    f"{dollar_pnl:.2f}" if dollar_pnl is not None else "",
+                    f"{adx_slope:+.2f}" if adx_slope is not None else "",
+                    f"{peak_pct*100:.2f}%" if peak_pct is not None else ""
                 ])
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
@@ -281,6 +293,16 @@ class TradingBot:
             # SPX MIDPOINT bars have no volume; set dummy volume=1 so VWAP math works
             if 'volume' not in df.columns or (df['volume'] == 0).all():
                 df['volume'] = 1
+
+            # Stale-feed detector: on 2026-07-01 an entry was evaluated on
+            # indicator values identical to ~2h-old data. Flag it if it recurs.
+            if not df.empty and self.is_market_open():
+                bar_age = (now - df.index[-1]).total_seconds()
+                if bar_age > 600:
+                    logger.warning(
+                        f"[{symbol}] Intraday bars may be STALE: last bar is "
+                        f"{bar_age/60:.0f} min old. Indicators may be unreliable."
+                    )
 
             return df[['open', 'high', 'low', 'close', 'volume']]
         except Exception as e:
@@ -401,7 +423,9 @@ class TradingBot:
         """
         now = datetime.datetime.now(pytz.timezone('America/New_York'))
         df = self.fetch_intraday_data(symbol)
-        if df.empty or len(df) < 20:
+        # ADX(14) in the ta library needs ~2×window+1 bars — with fewer it raises
+        # "index 14 is out of bounds" (seen every morning ~09:50–09:58 ET at 20–28 bars).
+        if df.empty or len(df) < 30:
             return None, "", {}
 
         try:
@@ -431,17 +455,50 @@ class TradingBot:
             if pd.isna(current_adx) or current_adx < 25:
                 return None, "", {}
 
+            # ── Chop guard 1: ADX must be RISING, not just above 25 ───────────
+            # 2026-07-01: ADX direction predicted all 5 outcomes — every hard-stop
+            # loser entered on flat/fading ADX that then collapsed. A level check
+            # passes on residual momentum; the slope says the trend is still alive.
+            # Fails open early in the session when the lookback bar is still NaN.
+            adx_slope = None
+            if config.ADX_SLOPE_BARS > 0 and len(df) > config.ADX_SLOPE_BARS:
+                adx_prev = df['ADX'].iloc[-1 - config.ADX_SLOPE_BARS]
+                if not pd.isna(adx_prev):
+                    adx_slope = float(current_adx - adx_prev)
+                    if adx_slope <= 0:
+                        logger.info(
+                            f"[{symbol}] Chop guard: ADX {current_adx:.1f} but flat/falling "
+                            f"({adx_slope:+.2f} over {config.ADX_SLOPE_BARS} bars). Entry blocked."
+                        )
+                        return None, "", {}
+
             indicators = {
                 'adx': current_adx, 'vwap': current_vwap,
-                'orb_high': orb_high, 'orb_low': orb_low, 'current_price': current_close
+                'orb_high': orb_high, 'orb_low': orb_low, 'current_price': current_close,
+                'adx_slope': adx_slope,
             }
 
-            if current_close > current_vwap and current_close > orb_high:
+            # ── Chop guard 2: breakout must CLEAR the ORB level, not poke it ──
+            # 2026-07-01's QQQ loser entered 0.15% above ORB high — noise, not a
+            # breakout. Require the close to exceed the level by a small buffer.
+            buf = config.ORB_BREAKOUT_BUFFER_PCT
+            call_level = orb_high * (1 + buf)
+            put_level = orb_low * (1 - buf)
+
+            if current_close > current_vwap and current_close > call_level:
                 direction = "CALL"
-                reason = f"Bullish: Price ({current_close:.2f}) > VWAP ({current_vwap:.2f}) and ORB High ({orb_high:.2f}). ADX: {current_adx:.2f}"
-            elif current_close < current_vwap and current_close < orb_low:
+                reason = (
+                    f"Bullish: Price ({current_close:.2f}) > VWAP ({current_vwap:.2f}) and "
+                    f"ORB High+buffer ({call_level:.2f}). ADX: {current_adx:.2f}"
+                    + (f" rising {adx_slope:+.2f}" if adx_slope is not None else "")
+                )
+            elif current_close < current_vwap and current_close < put_level:
                 direction = "PUT"
-                reason = f"Bearish: Price ({current_close:.2f}) < VWAP ({current_vwap:.2f}) and ORB Low ({orb_low:.2f}). ADX: {current_adx:.2f}"
+                reason = (
+                    f"Bearish: Price ({current_close:.2f}) < VWAP ({current_vwap:.2f}) and "
+                    f"ORB Low−buffer ({put_level:.2f}). ADX: {current_adx:.2f}"
+                    + (f" rising {adx_slope:+.2f}" if adx_slope is not None else "")
+                )
             else:
                 return None, "", {}
 
@@ -618,6 +675,98 @@ class TradingBot:
                 return True
         return False
 
+    def adopt_orphan_positions(self):
+        """At startup, adopt open option spreads the account holds but the bot
+        isn't tracking (orphaned by a restart). Adopted trades become ACTIVE and
+        are managed by the normal exit rules and EOD flatten. Positions that
+        can't be paired into a spread (or aren't 0DTE) are alerted, not adopted."""
+        try:
+            positions = self.ib.positions()
+        except Exception as e:
+            logger.warning(f"Startup position scan failed: {e}")
+            return
+
+        today_str = datetime.datetime.now(pytz.timezone('America/New_York')).strftime('%Y%m%d')
+        opts = [p for p in positions if p.contract.secType == 'OPT' and p.position != 0]
+        if not opts:
+            return
+
+        # Group today's option legs by (underlying, right)
+        groups: Dict[tuple, list] = {}
+        leftovers = []
+        for p in opts:
+            c = p.contract
+            underlying = 'SPX' if c.symbol == 'SPXW' else c.symbol
+            if c.lastTradeDateOrContractMonth != today_str:
+                leftovers.append(p)
+                continue
+            groups.setdefault((underlying, c.right), []).append(p)
+
+        adopted = []
+        for (underlying, right), legs in groups.items():
+            longs = [p for p in legs if p.position > 0]
+            shorts = [p for p in legs if p.position < 0]
+            if len(longs) != 1 or len(shorts) != 1 or underlying in self.active_trades:
+                leftovers.extend(legs)
+                continue
+            long_p, short_p = longs[0], shorts[0]
+            qty = int(min(long_p.position, -short_p.position))
+            # avgCost for options is premium per contract (price × 100)
+            entry_price = max((long_p.avgCost - short_p.avgCost) / 100.0, 0.01)
+            direction = 'CALL' if right == 'C' else 'PUT'
+
+            bag = Contract()
+            bag.symbol = long_p.contract.symbol
+            bag.secType = 'BAG'
+            bag.currency = 'USD'
+            bag.exchange = 'SMART'
+            bag.comboLegs = [
+                ComboLeg(conId=long_p.contract.conId, ratio=1, action='BUY', exchange='SMART'),
+                ComboLeg(conId=short_p.contract.conId, ratio=1, action='SELL', exchange='SMART'),
+            ]
+
+            self.active_trades[underlying] = {
+                'direction': direction,
+                'target_entry_price': entry_price,
+                'entry_price': entry_price,
+                'status': 'ACTIVE',
+                'activated_at': datetime.datetime.now(pytz.timezone('America/New_York')),
+                'bag_contract': bag,
+                'qty': qty,
+                'max_profit_pct': 0.0,
+                'long_strike': float(long_p.contract.strike),
+                'short_strike': float(short_p.contract.strike),
+                'long_conid': long_p.contract.conId,
+                'short_conid': short_p.contract.conId,
+                'entry_indicators': {},
+                'reason': 'Adopted at startup (position found in account, not in bot state)',
+            }
+            adopted.append(f"• {underlying} {direction}  {qty}x  "
+                           f"${long_p.contract.strike:.0f}/${short_p.contract.strike:.0f}  "
+                           f"entry ≈ ${entry_price:.2f}")
+            logger.warning(f"[{underlying}] Adopted orphaned {direction} spread "
+                           f"({qty}x {long_p.contract.strike}/{short_p.contract.strike}, "
+                           f"entry ≈ ${entry_price:.2f}) — now managed by exit rules.")
+
+        if adopted:
+            self.send_discord_alert(
+                "🔁 ADOPTED ORPHANED POSITIONS",
+                "Found open spreads in the account that the bot wasn't tracking "
+                "(likely a restart). Now managed by the normal exit rules:\n\n"
+                + "\n".join(adopted)
+                + "\n\n_Entry prices estimated from account avgCost; P&L % is relative to that._",
+                0xE67E22
+            )
+        if leftovers:
+            lines = [f"• {p.contract.localSymbol or p.contract.symbol}  pos {p.position:+.0f}" for p in leftovers]
+            logger.warning(f"Unadoptable positions found at startup: {len(leftovers)}")
+            self.send_discord_alert(
+                "⚠️ UNTRACKED POSITIONS NEED ATTENTION",
+                "These account positions could not be adopted (not a clean 0DTE spread "
+                "pair). The bot will NOT manage them — review manually:\n\n" + "\n".join(lines),
+                0xE74C3C
+            )
+
     def evaluate_exit_conditions_for_symbol(self, symbol: str):
         if symbol not in self.active_trades:
             return
@@ -676,7 +825,8 @@ class TradingBot:
                         orb_high=trade['entry_indicators'].get('orb_high'),
                         orb_low=trade['entry_indicators'].get('orb_low'),
                         underlying_price=trade['entry_indicators'].get('current_price'),
-                        breadth=trade['entry_indicators'].get('breadth')
+                        breadth=trade['entry_indicators'].get('breadth'),
+                        adx_slope=trade['entry_indicators'].get('adx_slope')
                     )
                     ind = trade['entry_indicators']
                     breadth_entry = ind.get('breadth', '')
@@ -719,22 +869,52 @@ class TradingBot:
         exit_triggered = False
         exit_reason = ""
 
-        # Two-rule exit model:
+        # Three-rule exit model:
         #   1. Hard stop — cap the downside at HARD_STOP_LOSS_PCT (70%).
-        #   2. Trailing stop — does NOTHING until the trade has peaked at
-        #      TAKE_PROFIT_TRAIL_TRIGGER (50%). Below that the position is left
-        #      to breathe (only the hard stop applies). Once it has been up 50%+,
-        #      exit if profit falls to (1 - TRAILING_STOP_LOSS_PCT) of the peak —
-        #      i.e. gives back 10% OF the peak (peak +50% -> exit +45%). Because
-        #      this only arms at +50%, the threshold is always >= +45%, so it
-        #      can never exit at a loss.
+        #   2. Thesis invalidation — the entry reason is "price beyond VWAP and
+        #      the ORB level". If price closes back on the WRONG side of VWAP for
+        #      VWAP_INVALIDATION_BARS consecutive 1-min bars, the reason for being
+        #      in the trade is gone — exit instead of riding to the hard stop.
+        #      (2026-07-01: all three −70% losers were below VWAP long before the
+        #      stop hit; this rule would have cut them near −20/−30%.)
+        #   3. Trailing stop — does NOTHING until the trade has peaked at
+        #      TAKE_PROFIT_TRAIL_TRIGGER (50%). Once armed, exit if profit falls
+        #      to (1 - TRAILING_STOP_LOSS_PCT) of the peak (peak +50% -> exit +45%).
+
+        # Rule 2 precompute: check for a sustained VWAP recross
+        thesis_invalidated = False
+        if config.VWAP_INVALIDATION_BARS > 0:
+            try:
+                df = self.fetch_intraday_data(symbol)
+                n = config.VWAP_INVALIDATION_BARS
+                if not df.empty and len(df) >= max(20, n):
+                    vwap_series = ta.volume.VolumeWeightedAveragePrice(
+                        high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
+                    ).volume_weighted_average_price()
+                    closes = df['close'].tail(n)
+                    vwaps = vwap_series.tail(n)
+                    if trade['direction'] == 'CALL':
+                        thesis_invalidated = bool((closes < vwaps).all())
+                    else:
+                        thesis_invalidated = bool((closes > vwaps).all())
+            except Exception as e:
+                logger.warning(f"[{symbol}] VWAP invalidation check failed: {e}")
 
         # Rule 1: Hard stop loss
         if profit_pct <= -config.HARD_STOP_LOSS_PCT:
             exit_triggered = True
             exit_reason = f"Hard stop loss: spread lost {abs(profit_pct)*100:.1f}% of entry value"
 
-        # Rule 2: Trailing stop, armed only after reaching +50% peak
+        # Rule 2: Thesis invalidation — sustained VWAP recross against the trade
+        elif thesis_invalidated:
+            side = "below" if trade['direction'] == 'CALL' else "above"
+            exit_triggered = True
+            exit_reason = (
+                f"Thesis invalidated: price closed {side} VWAP for "
+                f"{config.VWAP_INVALIDATION_BARS} consecutive bars (Current P&L: {profit_pct*100:+.2f}%)"
+            )
+
+        # Rule 3: Trailing stop, armed only after reaching +50% peak
         elif trade['max_profit_pct'] >= config.TAKE_PROFIT_TRAIL_TRIGGER:
             trailing_threshold = trade['max_profit_pct'] * (1 - config.TRAILING_STOP_LOSS_PCT)
             if profit_pct <= trailing_threshold:
@@ -807,7 +987,9 @@ class TradingBot:
             # Capture exit-time indicators for the audit log
             df = self.fetch_intraday_data(symbol)
             exit_indicators = trade.get('entry_indicators', {}).copy()
-            if not df.empty and len(df) >= 20:
+            # >= 30 bars: ADX(14) raises "index out of bounds" below ~29 bars, and an
+            # exception here would abort the rest of close_position (incl. the audit row)
+            if not df.empty and len(df) >= 30:
                 vwap_ind = ta.volume.VolumeWeightedAveragePrice(
                     high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
                 )
@@ -831,7 +1013,8 @@ class TradingBot:
                 adx=exit_indicators.get('adx'), vwap=exit_indicators.get('vwap'),
                 orb_high=exit_indicators.get('orb_high'), orb_low=exit_indicators.get('orb_low'),
                 underlying_price=exit_indicators.get('current_price'),
-                profit_pct=profit_pct, dollar_pnl=dollar_pnl
+                profit_pct=profit_pct, dollar_pnl=dollar_pnl,
+                peak_pct=trade.get('max_profit_pct')
             )
         except Exception as e:
             logger.error(f"[{symbol}] Failed to submit IBKR closing order: {e}")
@@ -924,6 +1107,25 @@ class TradingBot:
         color = 0x2ECC71 if net >= 0 else 0xE74C3C
         self.send_discord_alert("📅 DAY SUMMARY", desc, color)
 
+    def rebuild_dashboard(self):
+        """Regenerate dashboard.xlsx from audit.csv (runs after the day summary).
+        Runs as a subprocess so a dashboard failure can never break the bot loop."""
+        script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'scripts', 'build_dashboard.py'
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, script],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                logger.info(f"Dashboard rebuilt: {result.stdout.strip()}")
+            else:
+                logger.warning(f"Dashboard rebuild failed: {result.stderr.strip()[-300:]}")
+        except Exception as e:
+            logger.warning(f"Dashboard rebuild failed: {e}")
+
     # ── Main loop ────────────────────────────────────────────────────────────
 
     def run(self):
@@ -933,10 +1135,12 @@ class TradingBot:
                 self._ensure_connected()
 
                 if not self.is_market_open():
-                    # Market just closed for the day — send the day summary once
+                    # Market just closed for the day — send the day summary once,
+                    # then refresh dashboard.xlsx with the day's trades
                     if self.daily_trade_count > 0 and not self.daily_summary_sent:
                         self.send_day_summary()
                         self.daily_summary_sent = True
+                        self.rebuild_dashboard()
                     secs = self._seconds_until_market_open()
                     hrs, rem = divmod(secs, 3600)
                     mins = rem // 60
