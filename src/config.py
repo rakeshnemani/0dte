@@ -31,6 +31,17 @@ ORB_BREAKOUT_BUFFER_PCT = float(os.getenv("ORB_BREAKOUT_BUFFER_PCT", "0.001"))
 # the entry thesis is invalidated — exit instead of riding to the hard stop.
 # 0 disables.
 VWAP_INVALIDATION_BARS = int(os.getenv("VWAP_INVALIDATION_BARS", "3"))
+# Entry throttle: after this many thesis-invalidation exits on the same
+# (symbol, direction) in one day, stand down on that signal until tomorrow.
+# 0 disables.
+MAX_INVALIDATIONS_PER_SIGNAL = int(os.getenv("MAX_INVALIDATIONS_PER_SIGNAL", "2"))
+
+# Conviction-based position sizing: each entry is scored 0-5 (ADX strength,
+# ADX slope, cross-symbol agreement, open-drive timing, calm tape; minus one
+# per invalidation exit already today). Budget = MAX_POSITION_SIZE × multiplier.
+CONVICTION_SIZING_ENABLED = os.getenv("CONVICTION_SIZING_ENABLED", "true").lower() == "true"
+CONVICTION_LOW_MULT = float(os.getenv("CONVICTION_LOW_MULT", "0.5"))    # score <= 1
+CONVICTION_HIGH_MULT = float(os.getenv("CONVICTION_HIGH_MULT", "1.5"))  # score >= 4
 
 # Trailing stop activates only once a trade has peaked at TAKE_PROFIT_TRAIL_TRIGGER.
 # Below that the position rides untouched (only the hard stop applies). Once armed,

@@ -1,0 +1,206 @@
+"""Discord notifications — the send transport plus every message template.
+
+All message content lives here so bot.py stays orchestration-only. Each
+notify_* function formats and sends one alert type.
+"""
+import logging
+
+import requests
+
+import config
+
+logger = logging.getLogger(__name__)
+
+# Embed colors
+GREEN = 0x2ECC71
+BLUE = 0x3498DB
+RED = 0xE74C3C
+BRIGHT_RED = 0xFF0000
+ORANGE = 0xE67E22
+AMBER = 0xF39C12
+GREY = 0x95A5A6
+
+
+def send(title: str, description: str, color: int):
+    if not config.DISCORD_WEBHOOK_URL:
+        return
+    payload = {"embeds": [{"title": title, "description": description, "color": color}]}
+    try:
+        response = requests.post(config.DISCORD_WEBHOOK_URL, json=payload, timeout=5)
+        if response.status_code not in (200, 204):
+            logger.error(f"Discord alert failed: HTTP {response.status_code}")
+    except Exception as e:
+        logger.error(f"Discord alert failed: {e}")
+
+
+# ── Trade lifecycle alerts ───────────────────────────────────────────────────
+
+def notify_submit(symbol: str, direction: str, long_strike: float, short_strike: float,
+                  spread_cost: float, qty: int, budget: float, indicators: dict,
+                  reason: str, order_id):
+    breadth_line = indicators.get('breadth', '')
+    conviction_line = indicators.get('conviction_str', '')
+    desc = (
+        f"**📊 Ticker:** {symbol}\n"
+        f"**🎯 Direction:** {direction} Spread\n"
+        f"**⚙️ Strikes:** Long ${long_strike:.0f} / Short ${short_strike:.0f}\n"
+        f"**💰 Limit Price:** ${spread_cost:.2f} per contract\n"
+        f"**📈 Quantity:** {qty} contracts\n"
+        f"**💸 Max Investment:** ${spread_cost * qty * 100:.2f} (budget ${budget:.0f})\n"
+        + (f"**🎚️ Conviction:** {conviction_line}\n" if conviction_line else "") +
+        f"\n**📉 Indicators at Signal:**\n"
+        f"• ADX: {indicators.get('adx', 0):.2f}\n"
+        f"• Price vs VWAP: ${indicators.get('current_price', 0):.2f} / ${indicators.get('vwap', 0):.2f}\n"
+        f"• ORB: High ${indicators.get('orb_high', 0):.2f} / Low ${indicators.get('orb_low', 0):.2f}\n"
+        + (f"• Breadth: {breadth_line}\n" if breadth_line else "") +
+        f"\n**📝 Signal:** {reason}\n"
+        f"**⏳ Status:** Pending fill (Order #{order_id})"
+    )
+    send("⏳ ORDER SUBMITTED — Awaiting Fill", desc, AMBER)
+
+
+def notify_filled(symbol: str, trade: dict, filled_price: float):
+    ind = trade['entry_indicators']
+    breadth_entry = ind.get('breadth', '')
+    conviction_entry = ind.get('conviction_str', '')
+    desc = (
+        f"**📊 Ticker:** {symbol}\n"
+        f"**🎯 Direction:** {trade['direction']} Spread\n"
+        f"**⚙️ Strikes:** Long ${trade['long_strike']:.2f} / Short ${trade['short_strike']:.2f}\n"
+        f"**💰 Entry Price:** ${filled_price:.2f} per contract\n"
+        f"**📈 Quantity:** {trade['qty']} Contracts\n"
+        f"**💸 Total Investment:** ${filled_price * trade['qty'] * 100:.2f}\n"
+        + (f"**🎚️ Conviction:** {conviction_entry}\n" if conviction_entry else "") +
+        f"\n**📉 Indicators at Entry:**\n"
+        f"• ADX: {ind.get('adx', 0):.2f}\n"
+        f"• Price vs VWAP: ${ind.get('current_price', 0):.2f} / ${ind.get('vwap', 0):.2f}\n"
+        f"• ORB: High ${ind.get('orb_high', 0):.2f} / Low ${ind.get('orb_low', 0):.2f}\n"
+        + (f"• Breadth: {breadth_entry}\n" if breadth_entry else "") +
+        f"\n**📝 Reason:** {trade.get('reason', 'N/A')}"
+    )
+    send("🟢 NEW 0DTE SPREAD ENTRY", desc, GREEN)
+
+
+def notify_closed(symbol: str, trade: dict, exit_price: float,
+                  profit_pct: float, dollar_pnl: float, reason: str):
+    desc = (
+        f"**📊 Ticker:** {symbol}\n"
+        f"**🎯 Direction:** {trade['direction']} Spread\n"
+        f"**🚪 Exit Price:** ${exit_price:.2f} per contract\n\n"
+        f"**📈 Performance:**\n"
+        f"• Net Profit: {profit_pct*100:+.2f}%\n"
+        f"• Dollar PnL: ${dollar_pnl:+.2f}\n"
+        f"• Max Profit Reached: {trade.get('max_profit_pct', 0)*100:.2f}%\n\n"
+        f"**📝 Exit Reason:** {reason}"
+    )
+    send("🔵 CLOSED 0DTE SPREAD POSITION", desc, BLUE if profit_pct > 0 else RED)
+
+
+# ── Risk / lifecycle events ──────────────────────────────────────────────────
+
+def notify_circuit_breaker(consecutive_losses: int):
+    send(
+        "🚨 CIRCUIT BREAKER TRIPPED",
+        f"**{consecutive_losses} consecutive losing trades.**\n"
+        f"No new entries will be placed for the rest of today.",
+        BRIGHT_RED
+    )
+
+
+def notify_throttled(symbol: str, direction: str, count: int):
+    send(
+        "⛔ SIGNAL THROTTLED",
+        f"**{symbol} {direction}** hit {count} thesis-invalidation exits today — "
+        f"the market has proven this signal chop.\nNo re-entries on it until tomorrow.",
+        GREY
+    )
+
+
+def notify_closed_externally(symbol: str, direction: str):
+    send(
+        "⚠️ POSITION CLOSED EXTERNALLY",
+        f"**{symbol} {direction} Spread** is no longer held in your IBKR "
+        f"account — it was closed outside the bot (Client Portal, mobile app, or TWS).\n"
+        f"Removed from tracking; the bot will not manage it or record a P&L for it.",
+        ORANGE
+    )
+
+
+def notify_adopted(lines: list):
+    send(
+        "🔁 ADOPTED ORPHANED POSITIONS",
+        "Found open spreads in the account that the bot wasn't tracking "
+        "(likely a restart). Now managed by the normal exit rules:\n\n"
+        + "\n".join(lines)
+        + "\n\n_Entry prices estimated from account avgCost; P&L % is relative to that._",
+        ORANGE
+    )
+
+
+def notify_unadoptable(lines: list):
+    send(
+        "⚠️ UNTRACKED POSITIONS NEED ATTENTION",
+        "These account positions could not be adopted (not a clean 0DTE spread "
+        "pair). The bot will NOT manage them — review manually:\n\n" + "\n".join(lines),
+        RED
+    )
+
+
+# ── Summaries ────────────────────────────────────────────────────────────────
+
+def notify_today_summary(active_trades: dict, closed_trades: list):
+    """Snapshot after every new trade: open positions (live P&L), closed trades,
+    running net. Reads cached values only — no market data calls."""
+    open_lines = []
+    for sym, trade in active_trades.items():
+        direction = trade.get('direction', '')
+        if trade.get('status') == 'PENDING_ENTRY' or 'current_value' not in trade:
+            open_lines.append(f"• {sym} {direction} — pending fill")
+            continue
+        entry = trade['entry_price']
+        cur = trade['current_value']
+        pct = trade.get('current_profit_pct', 0) * 100
+        peak = trade.get('max_profit_pct', 0) * 100
+        open_lines.append(
+            f"• {sym} {direction}  ${entry:.2f} → ${cur:.2f}  {pct:+.1f}%  (peak {peak:+.1f}%)"
+        )
+
+    closed_lines = []
+    net = 0.0
+    for c in closed_trades:
+        net += c['dollar_pnl']
+        closed_lines.append(
+            f"• {c['symbol']} {c['direction']}  {c['profit_pct']*100:+.1f}%  ${c['dollar_pnl']:+.2f}"
+        )
+
+    desc = f"**▶ OPEN ({len(active_trades)})**\n"
+    desc += ("\n".join(open_lines) if open_lines else "_none_") + "\n\n"
+    desc += f"**✅ CLOSED ({len(closed_trades)})**\n"
+    desc += ("\n".join(closed_lines) if closed_lines else "_none_") + "\n\n"
+    desc += f"**💵 Net so far (realized):** ${net:+.2f}"
+    send("📋 TODAY", desc, GREEN if net >= 0 else RED)
+
+
+def notify_day_summary(date, closed_trades: list, circuit_breaker_tripped: bool):
+    """End-of-day realized P&L summary. No-op when the day had no closed trades."""
+    if not closed_trades:
+        return
+    net = sum(c['dollar_pnl'] for c in closed_trades)
+    wins = sum(1 for c in closed_trades if c['profit_pct'] > 0)
+    losses = sum(1 for c in closed_trades if c['profit_pct'] <= 0)
+    win_rate = wins / len(closed_trades) * 100
+
+    lines = [
+        f"• {c['symbol']} {c['direction']}  {c['profit_pct']*100:+.1f}%  ${c['dollar_pnl']:+.2f}"
+        for c in closed_trades
+    ]
+    desc = (
+        f"**📅 {date}**\n\n"
+        f"**💵 Net P&L:** ${net:+.2f}\n"
+        f"**📊 Trades:** {len(closed_trades)}  |  Wins: {wins}  Losses: {losses}  "
+        f"(Win rate: {win_rate:.0f}%)\n"
+    )
+    if circuit_breaker_tripped:
+        desc += "**🚨 Circuit breaker tripped today**\n"
+    desc += "\n**Trades:**\n" + "\n".join(lines)
+    send("📅 DAY SUMMARY", desc, GREEN if net >= 0 else RED)

@@ -10,6 +10,8 @@ This document explains the full lifecycle of the bot — from startup and market
 python src/main.py
 ```
 
+The code is split by concern: `bot.py` holds state and orchestration only; `broker.py` owns all IBKR communication; `strategy.py` is pure signal math (dataframes in → decisions out, no I/O); `notifier.py` holds the Discord transport and every message template; `audit.py` writes the CSV; `market_time.py` answers all ET clock questions.
+
 `main.py` first creates an asyncio event loop (required for Python 3.10+ compatibility with `ib_insync`), then instantiates `TradingBot`, which:
 
 1. Connects to IBKR via IB Gateway or TWS using the host/port from `.env`
@@ -114,6 +116,8 @@ After any trade (entry submitted), the `(symbol, direction)` pair is locked for 
 
 **Example:** SPY PUT fires at 10:05. Bot exits at 10:22. SPY PUT is locked until 10:35. If SPY is still bearish at 10:36, the bot can re-enter.
 
+**Invalidation throttle (stronger than the cooldown):** if the same (symbol, direction) suffers `MAX_INVALIDATIONS_PER_SIGNAL` (default 2) thesis-invalidation exits in one day, the market has proven that signal chop — it stands down **until tomorrow**, regardless of cooldown. A ⛔ Discord alert fires when the throttle trips. (Motivated by 2026-07-06: four SPY CALL re-entries into the same failing grind, all invalidated.)
+
 ### Guard 4: One Trade Per Symbol
 If a trade is already `PENDING_ENTRY` or `ACTIVE` for this symbol, skip.
 
@@ -202,10 +206,14 @@ order = LimitOrder('BUY', qty, round(spread_cost, 2))
 ibkr_trade = ib.placeOrder(bag, order)
 ```
 
-Position sizing:
+Position sizing is **conviction-based**. Each entry is scored 0–5 (+1 each: ADX ≥ 30, ADX slope ≥ +3, another symbol leaning the same direction within 5 min, entry before 11:00 ET, ≤ 4 VWAP crosses today; −1 per invalidation exit already today). The score picks the budget tier — LOW (score ≤ 1) = 0.5× `MAX_POSITION_SIZE`, MEDIUM (2–3) = 1×, HIGH (≥ 4) = 1.5×:
+
 ```
-qty = floor(MAX_POSITION_SIZE / (spread_cost × 100))
+budget = MAX_POSITION_SIZE × tier_multiplier
+qty    = floor(budget / (spread_cost × 100))
 ```
+
+The full score breakdown (e.g. `HIGH 4/5 | ADX✓ slope✓ agree✓(QQQ) early✓ tape✗(6x)`) is logged, written to the `Conviction` column of `audit.csv`, and shown in the ⏳/🟢 Discord alerts — so every retro can check whether the score separates winners from losers.
 
 **Immediately on submission**, a Discord ⏳ orange alert fires with the full order details (strikes, limit price, qty, indicators). This fires even if the order is later rejected by IBKR — so you always know the bot attempted an entry.
 
@@ -340,6 +348,10 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `ADX_SLOPE_BARS` | `10` | Entry chop guard: ADX must be rising over this many bars (0 = off) |
 | `ORB_BREAKOUT_BUFFER_PCT` | `0.001` | Entry chop guard: breakout must clear the ORB level by this fraction (0 = off) |
 | `VWAP_INVALIDATION_BARS` | `3` | Exit: leave the trade if price closes past VWAP this many bars in a row (0 = off) |
+| `MAX_INVALIDATIONS_PER_SIGNAL` | `2` | Stand down a (symbol, direction) after this many invalidation exits in a day (0 = off) |
+| `CONVICTION_SIZING_ENABLED` | `true` | Score entries 0–5 and size the position budget by tier |
+| `CONVICTION_LOW_MULT` | `0.5` | Budget multiplier for LOW conviction (score ≤ 1) |
+| `CONVICTION_HIGH_MULT` | `1.5` | Budget multiplier for HIGH conviction (score ≥ 4) |
 | `TAKE_PROFIT_TRAIL_TRIGGER` | `0.50` | Peak profit % that arms the trailing stop |
 | `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |

@@ -6,18 +6,28 @@ A Python algorithmic trading bot that paper trades 0DTE options spreads on Inter
 
 ```text
 0dte/
-├── .env                # Environment variables and configuration
+├── .env                 # Environment variables and configuration
 ├── .gitignore
 ├── README.md
-├── requirements.txt    # Python dependencies
-├── audit.csv           # Trade log (auto-created on first run)
+├── requirements.txt     # Python dependencies
+├── audit.csv            # Trade log (auto-created on first run)
+├── dashboard.xlsx       # Excel dashboard (regenerated after each trading day)
 ├── docs/
-│   └── HOW_IT_WORKS.md # Deep-dive on bot logic and design decisions
+│   ├── HOW_IT_WORKS.md  # Deep-dive on bot logic and design decisions
+│   └── RETROSPECTIVE.md # Daily trade journal + hypotheses under test
+├── scripts/
+│   ├── build_dashboard.py  # audit.csv → dashboard.xlsx
+│   └── counterfactual.py   # "what did SYMBOL do after HH:MM?" retro helper
 └── src/
     ├── __init__.py
-    ├── config.py       # Configuration loader
-    ├── bot.py          # TradingBot class — strategy + IBKR broker calls
-    └── main.py         # Entry point
+    ├── main.py          # Entry point (asyncio loop setup + run)
+    ├── config.py        # Env/config loader
+    ├── bot.py           # TradingBot — state + orchestration + main loop
+    ├── broker.py        # IBKRBroker — connection, market data, orders, positions
+    ├── strategy.py      # Pure signal logic — indicators, entries, conviction, exits
+    ├── notifier.py      # Discord transport + every message template
+    ├── audit.py         # audit.csv writer
+    └── market_time.py   # ET market-hours helpers
 ```
 
 ---
@@ -75,6 +85,12 @@ MIN_SPREAD_COST=0.10        # Skip spreads below this cost (liquidity filter)
 ADX_SLOPE_BARS=10                # Entry requires ADX rising over last N bars (0=off)
 ORB_BREAKOUT_BUFFER_PCT=0.001    # Breakout must clear ORB level by this fraction (0=off)
 VWAP_INVALIDATION_BARS=3         # Exit if price closes past VWAP N bars in a row (0=off)
+MAX_INVALIDATIONS_PER_SIGNAL=2   # Stand down a signal after N invalidation exits/day (0=off)
+
+# Conviction sizing
+CONVICTION_SIZING_ENABLED=true   # Score entries 0-5 and size the budget by tier
+CONVICTION_LOW_MULT=0.5          # Budget multiplier when score <= 1
+CONVICTION_HIGH_MULT=1.5         # Budget multiplier when score >= 4
 
 # Risk management
 TAKE_PROFIT_TRAIL_TRIGGER=0.50   # Trailing stop arms only after the trade peaks here (+50%)
@@ -116,12 +132,13 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 
 | Alert | Colour | Trigger |
 |-------|--------|---------|
-| ⏳ ORDER SUBMITTED | 🟠 Orange | Immediately when the BAG order is sent to IBKR (fires even if later rejected) |
+| ⏳ ORDER SUBMITTED | 🟠 Orange | Immediately when the BAG order is sent to IBKR (fires even if later rejected) — includes the conviction score and sized budget |
 | 📋 TODAY | 🟢/🔴 by net | After every new trade — snapshot of all open positions (live P&L), closed trades (realized P&L), and the running net |
 | 🟢 NEW ENTRY FILLED | 🟢 Green | When IBKR confirms the order is filled — includes strikes, price, indicators |
 | 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When the closing order is submitted — includes P&L and exit reason |
 | ⚠️ POSITION CLOSED EXTERNALLY | 🟠 Orange | When the bot detects a tracked position is no longer in your IBKR account (closed manually via Client Portal, mobile, or TWS) — drops it from tracking |
 | 🔁 ADOPTED ORPHANED POSITIONS | 🟠 Orange | At startup, when the account holds open 0DTE spreads the bot wasn't tracking (e.g. after a restart) — they're adopted and managed by the normal exit rules |
+| ⛔ SIGNAL THROTTLED | ⚪ Grey | When a symbol+direction hits N thesis-invalidation exits in a day — no re-entries on that signal until tomorrow |
 | 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
 | 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — total realized P&L, win/loss count, win rate, per-trade breakdown |
 
@@ -166,15 +183,34 @@ All three are American-style ETF options with $1 strike steps and $1 spread widt
 6. **One active trade per symbol** — Cannot open a second SPY trade while one is already running
 7. **ADX rising (chop guard)** — ADX must have increased over the last `ADX_SLOPE_BARS` (default 10) bars. A level check passes on residual momentum; the slope confirms the trend is still alive. Fails open early in the session when the lookback is not yet computable
 8. **Breakout buffer (chop guard)** — Price must clear the ORB level by `ORB_BREAKOUT_BUFFER_PCT` (default 0.1%), filtering micro-poke false breakouts
-9. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
+9. **Invalidation throttle (chop guard)** — After `MAX_INVALIDATIONS_PER_SIGNAL` (default 2) thesis-invalidation exits on the same symbol+direction in one day, that signal stands down until tomorrow — the market has proven it chop. A ⛔ Discord alert fires when the throttle trips
+10. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
 
-### Position Sizing
+### Position Sizing (conviction-based)
+
+Every entry is scored **0–5** from signals already computed:
+
+| +1 point each | −1 point each |
+|---|---|
+| ADX ≥ 30 (strong trend, not marginal) | Per thesis-invalidation exit already taken today (any signal) |
+| ADX slope ≥ +3 (steeply rising) | |
+| ≥1 other symbol leaning the same direction (cross-symbol agreement) | |
+| Entry before 11:00 ET (open drive, not midday) | |
+| Calm tape: ≤ 4 VWAP crosses so far today | |
+
+The score sets the position budget:
+
+| Score | Tier | Budget (at `MAX_POSITION_SIZE=300`) |
+|-------|------|--------------------------------------|
+| ≤ 1 | LOW | $150 (0.5×) |
+| 2–3 | MEDIUM | $300 (1.0×) |
+| ≥ 4 | HIGH | $450 (1.5×) |
 
 ```
-contracts = floor(MAX_POSITION_SIZE / (spread_cost × 100))
+contracts = floor(budget / (spread_cost × 100))
 ```
 
-At `MAX_POSITION_SIZE=$300` and a $0.50 spread: 6 contracts = $300 max risk per trade.
+The score and its component breakdown are logged, written to `audit.csv` (`Conviction` column), and included in every Discord entry alert. Set `CONVICTION_SIZING_ENABLED=false` to revert to flat sizing.
 
 ---
 
@@ -222,6 +258,7 @@ Every fill (entry and exit) is appended to `audit.csv`:
 | Dollar_PnL | Dollar P&L (SELL rows only) |
 | ADX_Slope | ADX change over the slope-lookback window at entry (BUY rows) |
 | Peak_Pct | Highest profit % the trade reached before exit (SELL rows only) |
+| Conviction | Sizing score at entry, e.g. `HIGH 4/5 \| ADX✓ slope✓ agree✓(QQQ) early✓ tape✗(6x)` (BUY rows) |
 
 > Timestamps are logged in **ET** (rows before 2026-07-05 are in the machine's local time, CDT).
 

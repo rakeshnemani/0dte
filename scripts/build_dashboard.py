@@ -53,6 +53,7 @@ def orphan_row(ts, entry):
         'adx': float(entry['ADX']) if entry.get('ADX', '').strip() else None,
         'adx_slope': None, 'pct': None, 'peak': None, 'pnl': None,
         'exit_cat': '', 'status': 'Orphaned/manual',
+        'conviction': entry.get('Conviction', '') or '',
     }
 
 
@@ -85,6 +86,7 @@ def parse_trades():
                     'adx': float(entry['ADX']) if entry.get('ADX', '').strip() else None,
                     'adx_slope': slope, 'pct': pct, 'peak': peak, 'pnl': pnl,
                     'exit_cat': exit_category(row['Reason']), 'status': 'Closed',
+                    'conviction': entry.get('Conviction', '') or '',
                 })
     for sym, (ts, entry) in open_pos.items():
         trades.append(orphan_row(ts, entry))
@@ -107,7 +109,7 @@ def build():
     tr = wb.create_sheet('Trades')
     cols = ['Date', 'Symbol', 'Direction', 'Entry (ET)', 'Exit (ET)', 'Hold (min)',
             'Entry Hr', 'Entry $', 'Exit $', 'ADX', 'ADX Slope', 'Peak %', 'P&L %',
-            'P&L $', 'Exit Rule', 'Status']
+            'P&L $', 'Exit Rule', 'Status', 'Conviction']
     tr.append(cols)
     style_header(tr, 1, len(cols))
     for t in trades:
@@ -117,7 +119,7 @@ def build():
             t['exit_ts'].strftime('%m-%d %H:%M') if t['exit_ts'] else '',
             t['hold_min'], t['entry_hour'], t['entry_px'], t['exit_px'],
             t['adx'], t['adx_slope'], t['peak'], t['pct'], t['pnl'],
-            t['exit_cat'], t['status'],
+            t['exit_cat'], t['status'], t['conviction'],
         ])
     n = len(trades) + 1
     for r in range(2, n + 1):
@@ -126,7 +128,7 @@ def build():
         tr.cell(row=r, column=14).number_format = MONEY
         for c in range(1, len(cols) + 1):
             tr.cell(row=r, column=c).font = BODY_FONT
-    for i, w in enumerate([11, 8, 9, 12, 12, 9, 8, 8, 8, 7, 9, 8, 8, 11, 18, 16], 1):
+    for i, w in enumerate([11, 8, 9, 12, 12, 9, 8, 8, 8, 7, 9, 8, 8, 11, 18, 16, 30], 1):
         tr.column_dimensions[get_column_letter(i)].width = w
 
     # ── Daily aggregates (data block feeds Summary charts) ─────────────────
@@ -192,6 +194,22 @@ def build():
         an.cell(row=i, column=3, value=f'=COUNTIFS(Trades!$G$2:$G${n},{hh},Trades!$P$2:$P${n},"Closed")')
         an.cell(row=i, column=2).number_format = MONEY
     hr_hdr, hr_end = hhdr, hhdr + len(hours)
+
+    r2 = hr_end + 3
+    an.cell(row=r2, column=1, value='By Conviction Tier').font = TITLE_FONT
+    chdr = r2 + 1
+    for j, h in enumerate(['Tier', 'P&L $', 'Trades', 'Win rate'], 1):
+        an.cell(row=chdr, column=j, value=h)
+    style_header(an, chdr, 4)
+    for i, tier in enumerate(['LOW', 'MEDIUM', 'HIGH'], start=chdr + 1):
+        an.cell(row=i, column=1, value=tier)
+        an.cell(row=i, column=2, value=f'=SUMIFS(Trades!$N$2:$N${n},Trades!$Q$2:$Q${n},A{i}&" *")')
+        an.cell(row=i, column=3, value=f'=COUNTIFS(Trades!$Q$2:$Q${n},A{i}&" *",Trades!$P$2:$P${n},"Closed")')
+        an.cell(row=i, column=4, value=f'=IF(C{i}=0,0,COUNTIFS(Trades!$Q$2:$Q${n},A{i}&" *",Trades!$N$2:$N${n},">0")/C{i})')
+        an.cell(row=i, column=2).number_format = MONEY
+        an.cell(row=i, column=4).number_format = PCT
+    conv_hdr, conv_end = chdr, chdr + 3
+
     for i, w in enumerate([20, 12, 8, 10], 1):
         an.column_dimensions[get_column_letter(i)].width = w
 
@@ -209,6 +227,8 @@ def build():
         Reference(an, min_col=2, min_row=cat_hdr, max_row=cat_end), 'F18')
     bar(an, 'P&L by Entry Hour (ET)', Reference(an, min_col=1, min_row=hr_hdr + 1, max_row=hr_end),
         Reference(an, min_col=2, min_row=hr_hdr, max_row=hr_end), 'F34')
+    bar(an, 'P&L by Conviction Tier', Reference(an, min_col=1, min_row=conv_hdr + 1, max_row=conv_end),
+        Reference(an, min_col=2, min_row=conv_hdr, max_row=conv_end), 'F50')
 
     # ── Summary sheet ───────────────────────────────────────────────────────
     sm = wb.active

@@ -21,10 +21,17 @@ what would confirm or kill it.
 - **#5** thesis-invalidation exit (`VWAP_INVALIDATION_BARS=3`, active — Rule 2)
 - **#6** entry chop guards (`ADX_SLOPE_BARS=10` rising-ADX gate + `ORB_BREAKOUT_BUFFER_PCT=0.1%`)
 
+**Status update 2026-07-06 (evening) — implemented after the 07-06 chop day:**
+- **#7** invalidation-aware entry throttle (`MAX_INVALIDATIONS_PER_SIGNAL=2`)
+- **Conviction-based sizing** (score 0–5 → 0.5×/1×/1.5× budget; logged to audit
+  `Conviction` column, shown in Discord, charted in the dashboard)
+
 Still open: **#2** (needs regime-flip data) and **#3** (win-side tuning — re-evaluate
 after the new loss-side rules have data). The new guards themselves are now
 hypotheses under test: watch for **entries the slope gate blocks that would have won**,
-and **invalidation exits that would have recovered**.
+**invalidation exits that would have recovered**, and — new — **whether the conviction
+score separates winners from losers** (calibration pass after ~2 weeks of the
+`Conviction` audit column).
 
 | # | Idea | Evidence so far | What would confirm / kill it |
 |---|------|-----------------|------------------------------|
