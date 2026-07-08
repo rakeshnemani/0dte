@@ -24,7 +24,9 @@ The code is split by concern: `bot.py` holds state and orchestration only; `brok
 
 ## 2. The Heartbeat Loop
 
-The loop runs every **60 seconds** using `ib.sleep(60)` — not Python's `time.sleep`. The ib_insync version keeps the IBKR event loop alive during the wait, so order fills and market data callbacks are processed in real time.
+The loop runs every **60 seconds** using `ib.sleep()` — not Python's `time.sleep`. The ib_insync version keeps the IBKR event loop alive during the wait, so order fills and market data callbacks are processed in real time.
+
+**Fast exit watch:** the cadence drops to **15 seconds** (`FAST_POLL_SECONDS`) whenever an exit needs tight monitoring — a closing order is awaiting its fill, or an ACTIVE trade's profit has reached `FAST_POLL_ARM_PCT` (35%, approaching the +50% trail trigger). This fixes the sampling slippage where fast moves blew 10–16 points past exit thresholds between 60-second checks (2026-07-07 QQQ). Entry scanning and the VWAP-invalidation bar fetch stay on a ~60s/50s cadence regardless — only the spread-price checks speed up.
 
 Each iteration:
 
@@ -291,17 +293,27 @@ graph TD
     R3 -- No --> Hold[Hold — check next cycle]
 ```
 
-### Closing a Position
+### Closing a Position (fill-confirmed)
 
-The bot submits a `LimitOrder('SELL', qty, current_spread_value)` on the same BAG contract used for entry. IBKR closes the spread.
+The bot submits a `LimitOrder('SELL', qty, current_spread_value)` on the same BAG contract used for entry and marks the trade **`PENDING_EXIT`**. Nothing is booked yet — P&L used to be recorded at the submission price, which the IBKR account statement showed drifting from reality.
 
-After submitting:
-1. **Recorded for the day summary** — appended to `closed_trades_today` (symbol, direction, entry/exit, P&L)
-2. **Circuit breaker counter updated** — if `profit_pct < 0`, `consecutive_losses++`; if N losses in a row, `circuit_breaker_tripped = True` and a 🚨 Discord alert fires
-3. **Winning trade** resets `consecutive_losses = 0`
-4. **Discord 🔵 alert** fires with P&L, exit reason, and max profit reached
-5. **`audit.csv` SELL row** written with exit-time indicators
+Each loop, the pending exit is polled:
+
+| Closing order status | Action |
+|----------------------|--------|
+| `Filled` | Book the trade from the **actual `avgFillPrice`** and the **IBKR-reported commissions** (entry + exit legs, via each fill's `commissionReport`) |
+| `Cancelled` / `Inactive` | Revert the trade to `ACTIVE` — the exit rules will fire again next loop |
+| Still pending after **3 minutes** | Reprice: amend the limit to the current spread value (same order, no cancel race) and keep waiting |
+
+On the confirmed fill:
+1. **Recorded for the day summary** — `closed_trades_today` (with commission)
+2. **Invalidation throttle counter** updated (⛔ alert if the signal hits the limit)
+3. **Circuit breaker counter** updated (🚨 alert at N consecutive losses); a winner resets it
+4. **Discord 🔵 alert** — actual fill price, P&L, round-trip commissions, net after fees
+5. **`audit.csv` SELL row** — fill price + `Commission` column
 6. Symbol removed from `active_trades` → back to scanning next cycle
+
+The end-of-day 📅 summary reports **gross P&L, total commissions, and net after fees** — the number that actually matters for the go-live gates.
 
 ---
 
@@ -329,6 +341,8 @@ New entries already stop at 3:00 PM, so nothing reopens after the flatten.
 
 The circuit breaker fires **at close**, not at submission — it only counts confirmed losing exits.
 
+**Daily loss limit (the backstop beneath it):** once the day's realized P&L **net of commissions** breaches −`MAX_DAILY_LOSS` (default $400), all new entries stop until tomorrow and a 🛑 alert fires. It's checked on every confirmed exit fill. The circuit breaker needs *consecutive* losses; the loss limit catches interleaved-win bleed days too. Open positions remain managed by the exit rules and EOD flatten either way.
+
 ---
 
 ## 9. Configuration Reference
@@ -349,6 +363,8 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `ORB_BREAKOUT_BUFFER_PCT` | `0.001` | Entry chop guard: breakout must clear the ORB level by this fraction (0 = off) |
 | `VWAP_INVALIDATION_BARS` | `3` | Exit: leave the trade if price closes past VWAP this many bars in a row (0 = off) |
 | `MAX_INVALIDATIONS_PER_SIGNAL` | `2` | Stand down a (symbol, direction) after this many invalidation exits in a day (0 = off) |
+| `FAST_POLL_SECONDS` | `15` | Loop cadence while an exit needs tight watching (0 = always 60s) |
+| `FAST_POLL_ARM_PCT` | `0.35` | Profit level that switches the loop to fast polling |
 | `CONVICTION_SIZING_ENABLED` | `true` | Score entries 0–5 and size the position budget by tier |
 | `CONVICTION_LOW_MULT` | `0.5` | Budget multiplier for LOW conviction (score ≤ 1) |
 | `CONVICTION_HIGH_MULT` | `1.5` | Budget multiplier for HIGH conviction (score ≥ 4) |
@@ -356,6 +372,7 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |
 | `MAX_CONSECUTIVE_LOSSES` | `5` | Circuit breaker threshold |
+| `MAX_DAILY_LOSS` | `400` | Stop new entries once the day's realized net P&L ≤ −this (0 = off) |
 | `EOD_FLATTEN_TIME` | `15:55` | ET time to force-close all positions before the 4 PM close |
 | `DISCORD_WEBHOOK_URL` | _(empty)_ | Discord webhook for trade alerts |
 

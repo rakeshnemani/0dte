@@ -28,7 +28,7 @@ bars = ib.reqHistoricalData(c, endDateTime='', durationStr='1 D',
                             useRTH=True, formatDate=1, timeout=30)
 ib.disconnect()
 
-df = util.df(bars)
+df = util.df(bars).copy()  # .copy() silences pandas chained-assignment FutureWarnings
 df['date'] = pd.to_datetime(df['date'])
 if df['date'].dt.tz is None:
     df['date'] = df['date'].dt.tz_localize('America/New_York')

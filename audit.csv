@@ -1,4 +1,4 @@
-Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Breadth,Reason,Profit_Pct,Dollar_PnL,ADX_Slope,Peak_Pct,Conviction
+Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Breadth,Reason,Profit_Pct,Dollar_PnL,ADX_Slope,Peak_Pct,Conviction,Commission
 2026-05-05 12:08:22,SELL,SPY,CALL,0.19,723.38,16.57,723.52,722.76,721.58,,Hard Stop Loss 50% Hit. (Current: -50.00%),-50.00%,-133.00,,
 2026-05-15 12:42:16,BUY,SPY,CALL,0.3999999999999999,742.25,26.31,741.71,741.90,737.96,,Bullish: Price (742.25) > VWAP (741.71) and ORB High (741.90). ADX: 26.31,,,,
 2026-05-15 12:47:17,SELL,SPY,CALL,0.4500000000000002,742.45,23.06,742.52,741.90,737.96,,"Dropped to 70% of Max Profit. (Max: 25.00%, Current: 12.50%)",12.50%,35.00,,
@@ -45,3 +45,11 @@ Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_L
 2026-07-06 14:30:34,SELL,SPY,CALL,0.47,751.37,30.59,751.40,749.54,747.41,,Thesis invalidated: price closed below VWAP for 3 consecutive bars (Current P&L: +4.44%),4.44%,12.00,,17.78%
 2026-07-06 15:00:01,BUY,SPY,CALL,0.31,751.98,25.99,751.72,749.54,747.41,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (751.98) > VWAP (751.72) and ORB High+buffer (750.29). ADX: 25.99 rising +10.01,,,+10.01,
 2026-07-06 15:09:41,SELL,SPY,CALL,0.24999999999999997,751.75,25.31,751.88,749.54,747.41,,Thesis invalidated: price closed below VWAP for 3 consecutive bars (Current P&L: -19.35%),-19.35%,-54.00,,6.45%
+2026-07-07 10:19:22,BUY,SPY,PUT,0.377143,747.40,45.64,748.20,750.96,748.25,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (747.40) < VWAP (748.20) and ORB Low−buffer (747.50). ADX: 45.64 rising +0.70,,,+0.70,,MEDIUM 3/5 | ADX✓ slope✗ agree✓(QQQ+IWM) early✓ tape✗(6x)
+2026-07-07 10:20:35,BUY,QQQ,PUT,0.39,708.07,36.28,710.00,716.35,709.97,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (708.07) < VWAP (710.00) and ORB Low−buffer (709.26). ADX: 36.28 rising +0.99,,,+0.99,,MEDIUM 3/5 | ADX✓ slope✗ agree✓(SPY+IWM) early✓ tape✗(8x)
+2026-07-07 10:37:46,SELL,QQQ,PUT,0.5299999999999998,706.26,31.86,706.71,716.35,709.97,,"Trailing stop after +50% peak: gave back to 35.90% (Peak: 57.69%, Threshold: 51.92%)",35.90%,98.00,,57.69%,
+2026-07-07 10:44:24,BUY,IWM,PUT,0.45,295.61,26.31,295.82,299.98,296.39,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (295.61) < VWAP (295.82) and ORB Low−buffer (296.09). ADX: 26.31 rising +1.00,,,+1.00,,MEDIUM 2/5 | ADX✗ slope✗ agree✓(QQQ) early✓ tape✗(8x)
+2026-07-07 10:47:51,SELL,IWM,PUT,0.305,296.30,21.99,295.75,299.98,296.39,,Thesis invalidated: price closed on the wrong side of VWAP for 3 consecutive bars (Current P&L: -32.22%),-32.22%,-87.00,,0.00%,
+2026-07-07 10:48:56,SELL,SPY,PUT,0.4500000000000002,746.13,38.89,746.01,750.96,748.25,,Thesis invalidated: price closed on the wrong side of VWAP for 3 consecutive bars (Current P&L: +19.32%),19.32%,51.00,,48.48%,
+2026-07-07 12:09:42,BUY,SPY,PUT,0.35,747.27,35.34,747.50,750.96,748.25,✓ confirmed | breadth data insufficient — filter bypassed,Bearish: Price (747.27) < VWAP (747.50) and ORB Low−buffer (747.50). ADX: 35.34 rising +9.18,,,+9.18,,LOW 0/5 | ADX✓ slope✓ agree✗ early✗ tape✗(22x) inv−2
+2026-07-07 12:14:02,SELL,SPY,PUT,0.22999999999999993,748.12,35.15,747.69,750.96,748.25,,Thesis invalidated: price closed on the wrong side of VWAP for 3 consecutive bars (Current P&L: -34.29%),-34.29%,-48.00,,0.00%,

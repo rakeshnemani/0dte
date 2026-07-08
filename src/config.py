@@ -43,6 +43,14 @@ CONVICTION_SIZING_ENABLED = os.getenv("CONVICTION_SIZING_ENABLED", "true").lower
 CONVICTION_LOW_MULT = float(os.getenv("CONVICTION_LOW_MULT", "0.5"))    # score <= 1
 CONVICTION_HIGH_MULT = float(os.getenv("CONVICTION_HIGH_MULT", "1.5"))  # score >= 4
 
+# Fast exit polling: the main loop runs every 60s normally, but drops to
+# FAST_POLL_SECONDS when an exit needs tight watching — a closing order in
+# flight, or an ACTIVE trade with profit >= FAST_POLL_ARM_PCT (approaching the
+# trail trigger). Fixes the sampling slippage where fast moves blew 10-16 pts
+# past exit thresholds between 60s checks (2026-07-07 QQQ). 0 disables.
+FAST_POLL_SECONDS = int(os.getenv("FAST_POLL_SECONDS", "15"))
+FAST_POLL_ARM_PCT = float(os.getenv("FAST_POLL_ARM_PCT", "0.35"))
+
 # Trailing stop activates only once a trade has peaked at TAKE_PROFIT_TRAIL_TRIGGER.
 # Below that the position rides untouched (only the hard stop applies). Once armed,
 # it exits if profit falls to (1 - TRAILING_STOP_LOSS_PCT) of the peak — i.e. gives
@@ -51,6 +59,10 @@ TAKE_PROFIT_TRAIL_TRIGGER = float(os.getenv("TAKE_PROFIT_TRAIL_TRIGGER", "0.50")
 TRAILING_STOP_LOSS_PCT = float(os.getenv("TRAILING_STOP_LOSS_PCT", "0.10"))
 HARD_STOP_LOSS_PCT = float(os.getenv("HARD_STOP_LOSS_PCT", "0.70"))
 MAX_CONSECUTIVE_LOSSES = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "5"))
+# Daily dollar loss limit: once realized P&L (net of commissions) for the day
+# breaches -MAX_DAILY_LOSS, no new entries until tomorrow. Open positions are
+# still managed by the exit rules. 0 disables.
+MAX_DAILY_LOSS = float(os.getenv("MAX_DAILY_LOSS", "400"))
 
 # End-of-day flatten time (ET) — force-close all 0DTE positions before the 4 PM close.
 _eod = os.getenv("EOD_FLATTEN_TIME", "15:55")

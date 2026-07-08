@@ -54,6 +54,7 @@ def orphan_row(ts, entry):
         'adx_slope': None, 'pct': None, 'peak': None, 'pnl': None,
         'exit_cat': '', 'status': 'Orphaned/manual',
         'conviction': entry.get('Conviction', '') or '',
+        'commission': None,
     }
 
 
@@ -87,6 +88,7 @@ def parse_trades():
                     'adx_slope': slope, 'pct': pct, 'peak': peak, 'pnl': pnl,
                     'exit_cat': exit_category(row['Reason']), 'status': 'Closed',
                     'conviction': entry.get('Conviction', '') or '',
+                    'commission': float(row['Commission']) if (row.get('Commission') or '').strip() else None,
                 })
     for sym, (ts, entry) in open_pos.items():
         trades.append(orphan_row(ts, entry))
@@ -109,7 +111,7 @@ def build():
     tr = wb.create_sheet('Trades')
     cols = ['Date', 'Symbol', 'Direction', 'Entry (ET)', 'Exit (ET)', 'Hold (min)',
             'Entry Hr', 'Entry $', 'Exit $', 'ADX', 'ADX Slope', 'Peak %', 'P&L %',
-            'P&L $', 'Exit Rule', 'Status', 'Conviction']
+            'P&L $', 'Exit Rule', 'Status', 'Conviction', 'Commission']
     tr.append(cols)
     style_header(tr, 1, len(cols))
     for t in trades:
@@ -119,16 +121,17 @@ def build():
             t['exit_ts'].strftime('%m-%d %H:%M') if t['exit_ts'] else '',
             t['hold_min'], t['entry_hour'], t['entry_px'], t['exit_px'],
             t['adx'], t['adx_slope'], t['peak'], t['pct'], t['pnl'],
-            t['exit_cat'], t['status'], t['conviction'],
+            t['exit_cat'], t['status'], t['conviction'], t['commission'],
         ])
     n = len(trades) + 1
     for r in range(2, n + 1):
         tr.cell(row=r, column=12).number_format = PCT
         tr.cell(row=r, column=13).number_format = PCT
         tr.cell(row=r, column=14).number_format = MONEY
+        tr.cell(row=r, column=18).number_format = MONEY
         for c in range(1, len(cols) + 1):
             tr.cell(row=r, column=c).font = BODY_FONT
-    for i, w in enumerate([11, 8, 9, 12, 12, 9, 8, 8, 8, 7, 9, 8, 8, 11, 18, 16, 30], 1):
+    for i, w in enumerate([11, 8, 9, 12, 12, 9, 8, 8, 8, 7, 9, 8, 8, 11, 18, 16, 30, 11], 1):
         tr.column_dimensions[get_column_letter(i)].width = w
 
     # ── Daily aggregates (data block feeds Summary charts) ─────────────────
@@ -246,6 +249,8 @@ def build():
         ('Profit factor', f'=IF(SUMIF(Trades!$N$2:$N${n},"<0")=0,0,-SUMIF(Trades!$N$2:$N${n},">0")/SUMIF(Trades!$N$2:$N${n},"<0"))', '0.00'),
         ('Best day $', f'=MAX(Daily!$B$2:$B${ndays})', MONEY),
         ('Worst day $', f'=MIN(Daily!$B$2:$B${ndays})', MONEY),
+        ('Commissions $', f'=SUM(Trades!$R$2:$R${n})', MONEY),
+        ('Net after fees $', '=B4-B12', MONEY),
     ]
     for i, (label, formula, fmt) in enumerate(kpis, start=4):
         sm.cell(row=i, column=1, value=label).font = Font(name='Arial', bold=True)

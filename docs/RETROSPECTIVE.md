@@ -44,6 +44,78 @@ score separates winners from losers** (calibration pass after ~2 weeks of the
 
 ---
 
+## 2026-07-07 — Bearish chop day 🟢 (+$14) — first PUT day; conviction sizing + throttle live
+
+**Bot realized: +$14.00 (2W / 2L).** First green chop-adjacent day ever. All four
+trades were PUTs — the first bearish signals in the bot's history, proving the PUT
+path end-to-end (entries, BAG orders, exits). First day fully on the refactored
+modules and with conviction sizing + the invalidation throttle in production.
+
+### Ledger (times ET)
+
+| # | Trade | Entry | Exit | Held | P&L | Peak | Conviction | Exit |
+|---|-------|-------|------|------|-----|------|------------|------|
+| 1 | SPY PUT | 10:19 @0.377 | 10:48 @0.45 | 29m | **+19.3% / +$51** | 48.5% | MEDIUM 3/5 | Invalidation (profitable!) |
+| 2 | QQQ PUT | 10:20 @0.39 | 10:37 @0.53 | 17m | **+35.9% / +$98** | 57.7% | MEDIUM 3/5 | Trail after +50% peak |
+| 3 | IWM PUT | 10:44 @0.45 | 10:47 @0.305 | 3m | **−32.2% / −$87** | 0% | MEDIUM 2/5 | Invalidation |
+| 4 | SPY PUT | 12:09 @0.35 | 12:14 @0.23 | 4m | **−34.3% / −$48** | 0% | **LOW 0/5** | Invalidation |
+
+After #4, SPY PUT hit 2 invalidation exits → **⛔ throttle fired** (first time),
+standing SPY PUT down for the rest of the day.
+
+### What worked
+
+1. **Conviction sizing earned its keep on day one.** The 12:09 SPY PUT re-entry
+   scored **LOW 0/5** (`tape✗(22x)` — 22 VWAP crosses — plus the `inv−2` penalty)
+   → $150 budget → 4 contracts. The −34% loss cost **−$48 instead of ~−$96** at
+   flat sizing. The score read the regime correctly in real time.
+2. **All three symbols agreed bearish at the open** (`agree✓(QQQ+IWM)`) — the
+   cross-symbol component confirming a genuine down-tape, and the two agreeing
+   morning entries were both winners (+$149 combined).
+3. **Throttle fired correctly — and the counterfactual cleared it.** After the
+   12:14 exit SPY *rallied* to ~749.3 and stayed above the buffered ORB low
+   (~747.50) until ~14:45, so no PUT signal could have re-fired anyway; the only
+   window was a ~15-min sliver before the 15:00 entry cutoff into a fade that
+   bounced back. Verdict: the throttle cost $0 today, and both invalidation exits
+   were vindicated (holding the 12:14 PUT would have hard-stopped at −70%).
+   TODO #12 (2-hour stand-down) gains no urgency from today — identical outcome
+   either way.
+4. **Refactor survived production day 1** — all alerts, audit columns (Conviction
+   populating), exits, throttle, sizing worked on the new module layout.
+5. **Chop-day P&L trend: −$305 → −$131 → +$14.** The guard stack is converging.
+
+### Watch-items
+
+1. **→ New hypothesis #8: exit-fill sampling slippage.** QQQ's trail threshold was
+   +51.9% but it filled at +35.9% — the 60-second loop sampled after a fast drop,
+   giving back ~16 extra points (06-30's gaps were only 2–5 pts). On fast days the
+   60s heartbeat is the exit's weakest link. Candidate fixes: poll armed trades
+   faster (e.g. 15s once peak ≥ +50%), or attach a native IBKR stop order at the
+   threshold. → TODO #13.
+2. **Invalidation losses aren't small on violent bounces:** IWM −32% in 3 minutes,
+   SPY −34% in 4. Still far better than −70%, but the "cut at −20/−30%" estimate
+   from 07-01 is optimistic when the recross is sharp.
+3. **SPY PUT #1 peaked +48.5%** — 1.5 pts shy of arming the trail — then the
+   invalidation exit banked +19.3%. Fine outcome, but a near-miss of the +50%
+   trigger; watch whether peaks clustering just under 50% recur (would argue for
+   arming at 40–45%).
+4. **No HIGH-conviction entries today** (morning slopes +0.7…+1.0 < 3, tape already
+   6–8 crosses at 10:20). On a mixed day that's correct behavior — the 1.5× tier
+   should be rare.
+
+### Running totals (bot-closed trades only)
+
+| Day | Regime | Net | Record |
+|-----|--------|-----|--------|
+| 06-29 | Chop (old broken exits) | +$13.00 | scratches |
+| 06-30 | Trend | +$645.50 | 5W/0L |
+| 07-01 | Trend → reversal | −$305.00 | 2W/3L |
+| 07-06 | Flat chop (guards live) | −$131.00 | 1W/3L |
+| 07-07 | Bearish chop (sizing + throttle live) | **+$14.00** | 2W/2L |
+| **Cumulative** | | **+$236.50** | |
+
+---
+
 ## 2026-07-06 — Flat chop day 🟡 (first full day with all chop guards live)
 
 **Bot realized: −$131.00 (1W / 3L).** SPY pinned in a tight range all day; QQQ/IWM

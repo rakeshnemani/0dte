@@ -13,7 +13,7 @@ AUDIT_FILE = "audit.csv"
 _COLUMNS = [
     "Timestamp", "Action", "Symbol", "Direction", "Price", "Underlying_Price",
     "ADX", "VWAP", "ORB_High", "ORB_Low", "Breadth", "Reason",
-    "Profit_Pct", "Dollar_PnL", "ADX_Slope", "Peak_Pct", "Conviction",
+    "Profit_Pct", "Dollar_PnL", "ADX_Slope", "Peak_Pct", "Conviction", "Commission",
 ]
 
 
@@ -23,7 +23,7 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
            underlying_price: Optional[float] = None, profit_pct: Optional[float] = None,
            dollar_pnl: Optional[float] = None, breadth: Optional[str] = None,
            adx_slope: Optional[float] = None, peak_pct: Optional[float] = None,
-           conviction: Optional[str] = None):
+           conviction: Optional[str] = None, commission: Optional[float] = None):
     file_exists = os.path.isfile(AUDIT_FILE)
     try:
         with open(AUDIT_FILE, mode='a', newline='') as file:
@@ -46,6 +46,7 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
                 f"{adx_slope:+.2f}" if adx_slope is not None else "",
                 f"{peak_pct*100:.2f}%" if peak_pct is not None else "",
                 conviction or "",
+                f"{commission:.2f}" if commission is not None else "",
             ])
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")

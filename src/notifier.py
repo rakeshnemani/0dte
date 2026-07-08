@@ -82,14 +82,17 @@ def notify_filled(symbol: str, trade: dict, filled_price: float):
 
 
 def notify_closed(symbol: str, trade: dict, exit_price: float,
-                  profit_pct: float, dollar_pnl: float, reason: str):
+                  profit_pct: float, dollar_pnl: float, reason: str,
+                  commission: float = 0.0):
     desc = (
         f"**📊 Ticker:** {symbol}\n"
         f"**🎯 Direction:** {trade['direction']} Spread\n"
-        f"**🚪 Exit Price:** ${exit_price:.2f} per contract\n\n"
+        f"**🚪 Exit Fill:** ${exit_price:.2f} per contract (IBKR-confirmed)\n\n"
         f"**📈 Performance:**\n"
         f"• Net Profit: {profit_pct*100:+.2f}%\n"
         f"• Dollar PnL: ${dollar_pnl:+.2f}\n"
+        + (f"• Commissions (round trip): ${commission:.2f} → net ${dollar_pnl - commission:+.2f}\n"
+           if commission else "") +
         f"• Max Profit Reached: {trade.get('max_profit_pct', 0)*100:.2f}%\n\n"
         f"**📝 Exit Reason:** {reason}"
     )
@@ -103,6 +106,16 @@ def notify_circuit_breaker(consecutive_losses: int):
         "🚨 CIRCUIT BREAKER TRIPPED",
         f"**{consecutive_losses} consecutive losing trades.**\n"
         f"No new entries will be placed for the rest of today.",
+        BRIGHT_RED
+    )
+
+
+def notify_daily_loss_limit(realized: float, limit: float):
+    send(
+        "🛑 DAILY LOSS LIMIT HIT",
+        f"**Realized P&L today: ${realized:+.2f}** (net of commissions) breached the "
+        f"-${limit:.0f} daily limit.\nNo new entries for the rest of today. "
+        f"Open positions remain managed by the exit rules.",
         BRIGHT_RED
     )
 
@@ -186,6 +199,7 @@ def notify_day_summary(date, closed_trades: list, circuit_breaker_tripped: bool)
     if not closed_trades:
         return
     net = sum(c['dollar_pnl'] for c in closed_trades)
+    fees = sum(c.get('commission', 0.0) for c in closed_trades)
     wins = sum(1 for c in closed_trades if c['profit_pct'] > 0)
     losses = sum(1 for c in closed_trades if c['profit_pct'] <= 0)
     win_rate = wins / len(closed_trades) * 100
@@ -196,7 +210,8 @@ def notify_day_summary(date, closed_trades: list, circuit_breaker_tripped: bool)
     ]
     desc = (
         f"**📅 {date}**\n\n"
-        f"**💵 Net P&L:** ${net:+.2f}\n"
+        f"**💵 Gross P&L:** ${net:+.2f}\n"
+        f"**💸 Commissions:** ${fees:.2f}  →  **Net after fees: ${net - fees:+.2f}**\n"
         f"**📊 Trades:** {len(closed_trades)}  |  Wins: {wins}  Losses: {losses}  "
         f"(Win rate: {win_rate:.0f}%)\n"
     )

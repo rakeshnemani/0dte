@@ -124,8 +124,25 @@ class IBKRBroker:
         """Submit a limit order; returns the ib_insync Trade object."""
         return self.ib.placeOrder(contract, LimitOrder(action, qty, round(price, 2)))
 
+    def modify_limit_price(self, ibkr_trade, price: float):
+        """Amend an open limit order's price in place (same orderId, no cancel race)."""
+        ibkr_trade.order.lmtPrice = round(price, 2)
+        return self.ib.placeOrder(ibkr_trade.contract, ibkr_trade.order)
+
     def cancel_order(self, order):
         self.ib.cancelOrder(order)
+
+    def order_commission(self, ibkr_trade) -> float:
+        """Total commissions IBKR reported for a trade's fills (all legs).
+        Returns 0.0 if reports haven't arrived yet."""
+        total = 0.0
+        try:
+            for f in ibkr_trade.fills:
+                if f.commissionReport and f.commissionReport.commission:
+                    total += float(f.commissionReport.commission)
+        except Exception:
+            pass
+        return total
 
     def positions(self):
         return self.ib.positions()
@@ -185,7 +202,9 @@ class IBKRBroker:
             if not bars:
                 return pd.DataFrame()
 
-            df = util.df(bars)
+            # .copy() avoids pandas chained-assignment FutureWarnings on the
+            # column writes below
+            df = util.df(bars).copy()
             df['date'] = pd.to_datetime(df['date'])
             if df['date'].dt.tz is None:
                 df['date'] = df['date'].dt.tz_localize('America/New_York')
@@ -265,7 +284,7 @@ class IBKRBroker:
                     useRTH=True, formatDate=1, timeout=30)
                 if not bars:
                     return pd.DataFrame()
-                df = util.df(bars)
+                df = util.df(bars).copy()
                 df['date'] = pd.to_datetime(df['date'])
                 if df['date'].dt.tz is None:
                     df['date'] = df['date'].dt.tz_localize('America/New_York')

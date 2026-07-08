@@ -14,7 +14,8 @@ A Python algorithmic trading bot that paper trades 0DTE options spreads on Inter
 ├── dashboard.xlsx       # Excel dashboard (regenerated after each trading day)
 ├── docs/
 │   ├── HOW_IT_WORKS.md  # Deep-dive on bot logic and design decisions
-│   └── RETROSPECTIVE.md # Daily trade journal + hypotheses under test
+│   ├── RETROSPECTIVE.md # Daily trade journal + hypotheses under test
+│   └── GO_LIVE.md       # Paper→live readiness gates and progress
 ├── scripts/
 │   ├── build_dashboard.py  # audit.csv → dashboard.xlsx
 │   └── counterfactual.py   # "what did SYMBOL do after HH:MM?" retro helper
@@ -92,11 +93,16 @@ CONVICTION_SIZING_ENABLED=true   # Score entries 0-5 and size the budget by tier
 CONVICTION_LOW_MULT=0.5          # Budget multiplier when score <= 1
 CONVICTION_HIGH_MULT=1.5         # Budget multiplier when score >= 4
 
+# Fast exit polling (fixes exit sampling slippage; 0 disables)
+FAST_POLL_SECONDS=15             # Loop cadence while an exit needs tight watching
+FAST_POLL_ARM_PCT=0.35           # Profit level that switches to fast polling
+
 # Risk management
 TAKE_PROFIT_TRAIL_TRIGGER=0.50   # Trailing stop arms only after the trade peaks here (+50%)
 TRAILING_STOP_LOSS_PCT=0.10      # Once armed, exit if profit falls to (1 - this) of the peak (90%)
 HARD_STOP_LOSS_PCT=0.70          # Exit immediately if spread loses this much
 MAX_CONSECUTIVE_LOSSES=5         # Circuit breaker threshold
+MAX_DAILY_LOSS=400               # Stop entries once day's realized net P&L <= -$400 (0=off)
 EOD_FLATTEN_TIME=15:55           # Force-close all positions at this ET time (before the 4 PM close)
 
 # Optional
@@ -135,12 +141,13 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 | ⏳ ORDER SUBMITTED | 🟠 Orange | Immediately when the BAG order is sent to IBKR (fires even if later rejected) — includes the conviction score and sized budget |
 | 📋 TODAY | 🟢/🔴 by net | After every new trade — snapshot of all open positions (live P&L), closed trades (realized P&L), and the running net |
 | 🟢 NEW ENTRY FILLED | 🟢 Green | When IBKR confirms the order is filled — includes strikes, price, indicators |
-| 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When the closing order is submitted — includes P&L and exit reason |
+| 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When IBKR **confirms the closing fill** — actual fill price, P&L, round-trip commissions, net after fees |
 | ⚠️ POSITION CLOSED EXTERNALLY | 🟠 Orange | When the bot detects a tracked position is no longer in your IBKR account (closed manually via Client Portal, mobile, or TWS) — drops it from tracking |
 | 🔁 ADOPTED ORPHANED POSITIONS | 🟠 Orange | At startup, when the account holds open 0DTE spreads the bot wasn't tracking (e.g. after a restart) — they're adopted and managed by the normal exit rules |
 | ⛔ SIGNAL THROTTLED | ⚪ Grey | When a symbol+direction hits N thesis-invalidation exits in a day — no re-entries on that signal until tomorrow |
+| 🛑 DAILY LOSS LIMIT | 🔴 Red | When the day's realized P&L (net of fees) breaches −`MAX_DAILY_LOSS` — no new entries today; open positions still managed |
 | 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
-| 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — total realized P&L, win/loss count, win rate, per-trade breakdown |
+| 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — gross P&L, **commissions, net after fees**, win/loss count, win rate, per-trade breakdown |
 
 ---
 
@@ -234,6 +241,10 @@ These are 0DTE options — they expire worthless or get assigned at the close. A
 
 After `MAX_CONSECUTIVE_LOSSES` (default 5) losing trades **in a row**, the bot stops placing new entries for the rest of the day. A Discord alert fires immediately. The counter resets at midnight. A single winning trade between losses resets the counter to zero.
 
+### Daily Loss Limit
+
+The backstop beneath every other guard: once the day's **realized P&L net of commissions** breaches −`MAX_DAILY_LOSS` (default $400), no new entries are placed until tomorrow — regardless of what the signals say. Open positions remain managed by the exit rules and the EOD flatten. A 🛑 Discord alert fires the moment the limit is breached. Unlike the circuit breaker (which needs consecutive losses), this catches death-by-many-cuts days where wins are interleaved but the net bleeds.
+
 ---
 
 ## Audit Log
@@ -259,6 +270,9 @@ Every fill (entry and exit) is appended to `audit.csv`:
 | ADX_Slope | ADX change over the slope-lookback window at entry (BUY rows) |
 | Peak_Pct | Highest profit % the trade reached before exit (SELL rows only) |
 | Conviction | Sizing score at entry, e.g. `HIGH 4/5 \| ADX✓ slope✓ agree✓(QQQ) early✓ tape✗(6x)` (BUY rows) |
+| Commission | IBKR-reported commissions — entry legs on BUY rows; full round trip on SELL rows |
+
+> Exit prices are **IBKR-confirmed fills** (`avgFillPrice`), not submission prices. Unfilled closing orders are repriced after 3 minutes.
 
 > Timestamps are logged in **ET** (rows before 2026-07-05 are in the machine's local time, CDT).
 

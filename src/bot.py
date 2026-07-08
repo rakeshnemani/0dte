@@ -39,6 +39,7 @@ class TradingBot:
         self.signal_cooldowns: Dict[tuple, datetime.datetime] = {}
         self.consecutive_losses: int = 0
         self.circuit_breaker_tripped: bool = False
+        self.daily_loss_limit_hit: bool = False
         # Day-level P&L tracking — populated as trades close, used for the
         # post-close day summary.
         self.closed_trades_today: list = []
@@ -49,6 +50,9 @@ class TradingBot:
         # Last raw directional lean per symbol (price vs VWAP), for the
         # cross-symbol agreement component of the conviction score.
         self.symbol_lean: Dict[str, tuple] = {}
+        # Entry scans stay on a ~60s cadence even when the loop fast-polls exits
+        self._last_entry_scan = None
+        self._last_interval: int = 60
 
         # A restart wipes active_trades — adopt any open option positions the
         # account still holds so they are managed instead of orphaned.
@@ -64,11 +68,17 @@ class TradingBot:
             self.signal_cooldowns.clear()
             self.consecutive_losses = 0
             self.circuit_breaker_tripped = False
+            self.daily_loss_limit_hit = False
             self.closed_trades_today = []
             self.daily_summary_sent = False
             self.invalidation_counts.clear()
             self.symbol_lean.clear()
             logger.info(f"Daily trade count reset for {today}")
+
+    def _realized_pnl_today(self) -> float:
+        """Realized P&L for the day, net of commissions (confirmed fills only)."""
+        return sum(c['dollar_pnl'] - c.get('commission', 0.0)
+                   for c in self.closed_trades_today)
 
     # ── Startup adoption / reconciliation ────────────────────────────────────
 
@@ -235,6 +245,13 @@ class TradingBot:
             logger.warning(f"Circuit breaker active — {self.consecutive_losses} consecutive losses. No new entries today.")
             return
 
+        if self.daily_loss_limit_hit:
+            logger.warning(
+                f"Daily loss limit active — realized ${self._realized_pnl_today():+.2f} "
+                f"(limit -${config.MAX_DAILY_LOSS:.0f}). No new entries today."
+            )
+            return
+
         if self.daily_trade_count >= config.MAX_TRADES_PER_DAY:
             logger.warning(f"Daily trade limit of {config.MAX_TRADES_PER_DAY} reached.")
             return
@@ -325,6 +342,11 @@ class TradingBot:
 
         trade = self.active_trades[symbol]
 
+        # A closing order is in flight — confirm its fill before anything else
+        if trade.get('status') == 'PENDING_EXIT':
+            self._check_pending_exit(symbol, trade)
+            return
+
         # Reconcile against the real IBKR account. If an ACTIVE position is no
         # longer held (closed manually via Client Portal / mobile / TWS,
         # assigned, etc.), stop tracking it instead of trying to manage or sell
@@ -365,14 +387,20 @@ class TradingBot:
             if profit_pct > 0:
                 logger.info(f"[{symbol}] New Max Profit: {profit_pct*100:.2f}%")
 
-        # Thesis-invalidation check (sustained VWAP recross against the trade)
-        invalidated = False
+        # Thesis-invalidation check (sustained VWAP recross against the trade).
+        # 1-min bars change at most once a minute, so cache the verdict ~50s —
+        # fast polling shouldn't multiply bar fetches.
+        invalidated = trade.get('_inval_last', False)
         if config.VWAP_INVALIDATION_BARS > 0:
-            try:
-                df = self.broker.fetch_intraday_data(symbol)
-                invalidated = strategy.thesis_invalidated(trade['direction'], df)
-            except Exception as e:
-                logger.warning(f"[{symbol}] VWAP invalidation check failed: {e}")
+            checked_at = trade.get('_inval_checked_at')
+            if checked_at is None or (market_time.now_et() - checked_at).total_seconds() >= 50:
+                try:
+                    df = self.broker.fetch_intraday_data(symbol)
+                    invalidated = strategy.thesis_invalidated(trade['direction'], df)
+                except Exception as e:
+                    logger.warning(f"[{symbol}] VWAP invalidation check failed: {e}")
+                trade['_inval_checked_at'] = market_time.now_et()
+                trade['_inval_last'] = invalidated
 
         exit_triggered, exit_reason = strategy.exit_decision(
             profit_pct, trade['max_profit_pct'], invalidated
@@ -396,6 +424,7 @@ class TradingBot:
                 # Fill time — reconciliation grace period anchor
                 trade['activated_at'] = market_time.now_et()
                 ind = trade['entry_indicators']
+                entry_commission = self.broker.order_commission(ibkr_trade)
                 audit.record(
                     "BUY", symbol, trade['direction'], filled_price, trade.get('reason', ''),
                     adx=ind.get('adx'), vwap=ind.get('vwap'),
@@ -404,6 +433,7 @@ class TradingBot:
                     breadth=ind.get('breadth'),
                     adx_slope=ind.get('adx_slope'),
                     conviction=ind.get('conviction_str'),
+                    commission=entry_commission,
                 )
                 notifier.notify_filled(symbol, trade, filled_price)
 
@@ -415,86 +445,163 @@ class TradingBot:
         except Exception as e:
             logger.error(f"[{symbol}] Error checking IBKR order status: {e}")
 
+    # Reprice an unfilled closing order after this many seconds
+    _EXIT_REPRICE_AFTER_S = 180
+
     def close_position(self, symbol: str, current_spread_value: float, reason: str):
-        """Submit a closing BAG order for the active spread position."""
+        """Submit a closing BAG order and mark the trade PENDING_EXIT.
+
+        P&L is NOT booked here — it's booked in _check_pending_exit once IBKR
+        confirms the fill, using the actual fill price and reported commissions
+        (the audit previously assumed the submission price; see TODO #14)."""
         if symbol not in self.active_trades:
             return
-
         trade = self.active_trades[symbol]
+        if trade.get('status') == 'PENDING_EXIT':
+            return  # already closing; _check_pending_exit manages fill/repricing
+
         try:
             # Same BAG contract as entry — a SELL order closes the position
             exit_ibkr_trade = self.broker.place_limit(
                 trade['bag_contract'], 'SELL', trade['qty'], current_spread_value
             )
+            trade['status'] = 'PENDING_EXIT'
+            trade['exit_ibkr_trade'] = exit_ibkr_trade
+            trade['exit_reason'] = reason
+            trade['exit_limit'] = current_spread_value
+            trade['exit_submitted_at'] = market_time.now_et()
             logger.info(
                 f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to IBKR at LIMIT "
-                f"${current_spread_value:.2f} (OrderId: {exit_ibkr_trade.order.orderId})"
-            )
-
-            profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
-            dollar_pnl = (current_spread_value - trade['entry_price']) * trade['qty'] * 100
-
-            # Record for the post-close day summary
-            self.closed_trades_today.append({
-                'symbol': symbol, 'direction': trade['direction'],
-                'entry_price': trade['entry_price'], 'exit_price': current_spread_value,
-                'profit_pct': profit_pct, 'dollar_pnl': dollar_pnl, 'reason': reason,
-            })
-
-            # Track invalidation exits — feeds the entry throttle and the
-            # conviction-score penalty for the rest of the day
-            if 'Thesis invalidated' in reason:
-                key = (symbol, trade['direction'])
-                self.invalidation_counts[key] = self.invalidation_counts.get(key, 0) + 1
-                if (config.MAX_INVALIDATIONS_PER_SIGNAL > 0 and
-                        self.invalidation_counts[key] == config.MAX_INVALIDATIONS_PER_SIGNAL):
-                    logger.warning(
-                        f"[{symbol}] {trade['direction']} signal throttled for the day: "
-                        f"{self.invalidation_counts[key]} invalidation exits."
-                    )
-                    notifier.notify_throttled(symbol, trade['direction'], self.invalidation_counts[key])
-
-            # Circuit breaker counter
-            if profit_pct < 0:
-                self.consecutive_losses += 1
-                if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES and not self.circuit_breaker_tripped:
-                    self.circuit_breaker_tripped = True
-                    logger.warning(
-                        f"CIRCUIT BREAKER TRIPPED: {self.consecutive_losses} consecutive losses. "
-                        f"No new entries for the rest of the day."
-                    )
-                    notifier.notify_circuit_breaker(self.consecutive_losses)
-            else:
-                self.consecutive_losses = 0
-
-            notifier.notify_closed(symbol, trade, current_spread_value, profit_pct, dollar_pnl, reason)
-
-            # Capture exit-time indicators for the audit log
-            df = self.broker.fetch_intraday_data(symbol)
-            exit_indicators = trade.get('entry_indicators', {}).copy()
-            # >= 30 bars: ADX(14) raises "index out of bounds" below ~29 bars
-            if not df.empty and len(df) >= 30:
-                strategy.add_indicators(df)
-                orb = strategy.orb_levels(df, market_time.now_et())
-                if orb is not None:
-                    exit_indicators = {
-                        'adx': df['ADX'].iloc[-1], 'vwap': df['VWAP'].iloc[-1],
-                        'orb_high': orb[0], 'orb_low': orb[1],
-                        'current_price': df['close'].iloc[-1],
-                    }
-
-            audit.record(
-                "SELL", symbol, trade['direction'], current_spread_value, reason,
-                adx=exit_indicators.get('adx'), vwap=exit_indicators.get('vwap'),
-                orb_high=exit_indicators.get('orb_high'), orb_low=exit_indicators.get('orb_low'),
-                underlying_price=exit_indicators.get('current_price'),
-                profit_pct=profit_pct, dollar_pnl=dollar_pnl,
-                peak_pct=trade.get('max_profit_pct'),
+                f"${current_spread_value:.2f} (OrderId: {exit_ibkr_trade.order.orderId}). "
+                f"Awaiting fill confirmation."
             )
         except Exception as e:
             logger.error(f"[{symbol}] Failed to submit IBKR closing order: {e}")
-        finally:
-            self.active_trades.pop(symbol, None)
+
+    def _check_pending_exit(self, symbol: str, trade: dict):
+        """Poll a PENDING_EXIT order: book the trade on fill (actual price +
+        commissions); reprice if it sits unfilled too long; revert to ACTIVE if
+        the order dies so the exit rules can fire again."""
+        try:
+            self.broker.sleep(0)  # flush event loop so orderStatus is current
+            exit_trade = trade['exit_ibkr_trade']
+            status = exit_trade.orderStatus.status
+
+            if status == 'Filled':
+                fill_price = float(exit_trade.orderStatus.avgFillPrice)
+                commission = (self.broker.order_commission(trade.get('ibkr_trade'))
+                              if trade.get('ibkr_trade') else 0.0)
+                commission += self.broker.order_commission(exit_trade)
+                self._finalize_closed_trade(symbol, trade, fill_price, commission)
+
+            elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
+                logger.warning(f"[{symbol}] Closing order {status} — reverting to ACTIVE; exit rules will re-fire.")
+                trade['status'] = 'ACTIVE'
+
+            else:
+                waited = (market_time.now_et() - trade['exit_submitted_at']).total_seconds()
+                if waited >= self._EXIT_REPRICE_AFTER_S:
+                    fresh = self.broker.get_spread_value(
+                        symbol, trade['direction'], trade['long_strike'], trade['short_strike']
+                    )
+                    if fresh > 0 and abs(fresh - trade['exit_limit']) >= 0.01:
+                        logger.warning(
+                            f"[{symbol}] Closing order unfilled for {waited:.0f}s — repricing "
+                            f"${trade['exit_limit']:.2f} → ${fresh:.2f}"
+                        )
+                        self.broker.modify_limit_price(exit_trade, fresh)
+                        trade['exit_limit'] = fresh
+                        trade['exit_submitted_at'] = market_time.now_et()
+                else:
+                    logger.info(f"[{symbol}] Closing order still pending (Status: {status}).")
+        except Exception as e:
+            logger.error(f"[{symbol}] Error checking closing order status: {e}")
+
+    def _finalize_closed_trade(self, symbol: str, trade: dict,
+                               fill_price: float, commission: float):
+        """Book a confirmed exit: day record, throttle/breaker counters, Discord,
+        audit row — all from the ACTUAL fill price and IBKR-reported commissions."""
+        reason = trade.get('exit_reason', '')
+        profit_pct = (fill_price - trade['entry_price']) / trade['entry_price']
+        dollar_pnl = (fill_price - trade['entry_price']) * trade['qty'] * 100
+        logger.info(
+            f"[{symbol}] CLOSING ORDER FILLED at ${fill_price:.2f} "
+            f"(limit was ${trade.get('exit_limit', 0):.2f}) — P&L {profit_pct*100:+.2f}% "
+            f"/ ${dollar_pnl:+.2f}, commissions ${commission:.2f}"
+        )
+
+        # Record for the post-close day summary
+        self.closed_trades_today.append({
+            'symbol': symbol, 'direction': trade['direction'],
+            'entry_price': trade['entry_price'], 'exit_price': fill_price,
+            'profit_pct': profit_pct, 'dollar_pnl': dollar_pnl, 'reason': reason,
+            'commission': commission,
+        })
+
+        # Track invalidation exits — feeds the entry throttle and the
+        # conviction-score penalty for the rest of the day
+        if 'Thesis invalidated' in reason:
+            key = (symbol, trade['direction'])
+            self.invalidation_counts[key] = self.invalidation_counts.get(key, 0) + 1
+            if (config.MAX_INVALIDATIONS_PER_SIGNAL > 0 and
+                    self.invalidation_counts[key] == config.MAX_INVALIDATIONS_PER_SIGNAL):
+                logger.warning(
+                    f"[{symbol}] {trade['direction']} signal throttled for the day: "
+                    f"{self.invalidation_counts[key]} invalidation exits."
+                )
+                notifier.notify_throttled(symbol, trade['direction'], self.invalidation_counts[key])
+
+        # Circuit breaker counter
+        if profit_pct < 0:
+            self.consecutive_losses += 1
+            if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES and not self.circuit_breaker_tripped:
+                self.circuit_breaker_tripped = True
+                logger.warning(
+                    f"CIRCUIT BREAKER TRIPPED: {self.consecutive_losses} consecutive losses. "
+                    f"No new entries for the rest of the day."
+                )
+                notifier.notify_circuit_breaker(self.consecutive_losses)
+        else:
+            self.consecutive_losses = 0
+
+        # Daily loss limit — the backstop beneath every other guard
+        realized = self._realized_pnl_today()
+        if (config.MAX_DAILY_LOSS > 0 and not self.daily_loss_limit_hit
+                and realized <= -config.MAX_DAILY_LOSS):
+            self.daily_loss_limit_hit = True
+            logger.warning(
+                f"DAILY LOSS LIMIT HIT: realized ${realized:+.2f} (limit -${config.MAX_DAILY_LOSS:.0f}). "
+                f"No new entries for the rest of the day."
+            )
+            notifier.notify_daily_loss_limit(realized, config.MAX_DAILY_LOSS)
+
+        notifier.notify_closed(symbol, trade, fill_price, profit_pct, dollar_pnl,
+                               reason, commission=commission)
+
+        # Capture exit-time indicators for the audit log
+        df = self.broker.fetch_intraday_data(symbol)
+        exit_indicators = trade.get('entry_indicators', {}).copy()
+        # >= 30 bars: ADX(14) raises "index out of bounds" below ~29 bars
+        if not df.empty and len(df) >= 30:
+            strategy.add_indicators(df)
+            orb = strategy.orb_levels(df, market_time.now_et())
+            if orb is not None:
+                exit_indicators = {
+                    'adx': df['ADX'].iloc[-1], 'vwap': df['VWAP'].iloc[-1],
+                    'orb_high': orb[0], 'orb_low': orb[1],
+                    'current_price': df['close'].iloc[-1],
+                }
+
+        audit.record(
+            "SELL", symbol, trade['direction'], fill_price, reason,
+            adx=exit_indicators.get('adx'), vwap=exit_indicators.get('vwap'),
+            orb_high=exit_indicators.get('orb_high'), orb_low=exit_indicators.get('orb_low'),
+            underlying_price=exit_indicators.get('current_price'),
+            profit_pct=profit_pct, dollar_pnl=dollar_pnl,
+            peak_pct=trade.get('max_profit_pct'),
+            commission=commission,
+        )
+        self.active_trades.pop(symbol, None)
 
     def close_all_positions(self, reason: str):
         """Force-close every open position (end-of-day flatten)."""
@@ -540,6 +647,25 @@ class TradingBot:
 
     # ── Main loop ────────────────────────────────────────────────────────────
 
+    def _loop_interval(self) -> int:
+        """60s normally; FAST_POLL_SECONDS when an exit needs tight watching —
+        a closing order in flight, or an ACTIVE trade whose profit is at or
+        past FAST_POLL_ARM_PCT (approaching the trail trigger). Fixes the
+        sampling slippage where fast moves blew past exit thresholds between
+        60-second checks (see TODO #13 / 2026-07-07 retro)."""
+        if config.FAST_POLL_SECONDS <= 0:
+            return 60
+        for trade in self.active_trades.values():
+            status = trade.get('status')
+            if status == 'PENDING_EXIT':
+                return config.FAST_POLL_SECONDS
+            if status == 'ACTIVE':
+                watermark = max(trade.get('max_profit_pct', 0.0),
+                                trade.get('current_profit_pct', 0.0))
+                if watermark >= config.FAST_POLL_ARM_PCT:
+                    return config.FAST_POLL_SECONDS
+        return 60
+
     def run(self):
         logger.info("Starting 0DTE Options Spread Trading Bot (IBKR)...")
         while True:
@@ -576,16 +702,27 @@ class TradingBot:
                     logger.info("EOD flatten time reached — closing all open positions.")
                     self.close_all_positions("End of day — flattening 0DTE positions")
 
-                if not market_time.is_entry_window():
-                    logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
-                else:
-                    for symbol in config.SYMBOLS:
-                        if symbol not in self.active_trades:
-                            direction, reason, indicators = self.evaluate_entry_strategy(symbol)
-                            if direction in ("CALL", "PUT"):
-                                self.execute_trade(symbol, direction, reason, indicators)
+                # Entry scanning stays on a ~60s cadence even when the loop
+                # fast-polls exits — no point re-fetching bars every 15s.
+                scan_due = (self._last_entry_scan is None or
+                            (market_time.now_et() - self._last_entry_scan).total_seconds() >= 55)
+                if scan_due:
+                    self._last_entry_scan = market_time.now_et()
+                    if not market_time.is_entry_window():
+                        logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
+                    else:
+                        for symbol in config.SYMBOLS:
+                            if symbol not in self.active_trades:
+                                direction, reason, indicators = self.evaluate_entry_strategy(symbol)
+                                if direction in ("CALL", "PUT"):
+                                    self.execute_trade(symbol, direction, reason, indicators)
 
-                self.broker.sleep(60)
+                interval = self._loop_interval()
+                if interval != self._last_interval:
+                    logger.info(f"Loop cadence → {interval}s "
+                                f"({'fast exit watch' if interval < 60 else 'normal'}).")
+                    self._last_interval = interval
+                self.broker.sleep(interval)
             except KeyboardInterrupt:
                 logger.info("Bot stopped manually.")
                 self.broker.disconnect()
