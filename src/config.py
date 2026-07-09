@@ -42,6 +42,17 @@ MAX_INVALIDATIONS_PER_SIGNAL = int(os.getenv("MAX_INVALIDATIONS_PER_SIGNAL", "2"
 CONVICTION_SIZING_ENABLED = os.getenv("CONVICTION_SIZING_ENABLED", "true").lower() == "true"
 CONVICTION_LOW_MULT = float(os.getenv("CONVICTION_LOW_MULT", "0.5"))    # score <= 1
 CONVICTION_HIGH_MULT = float(os.getenv("CONVICTION_HIGH_MULT", "1.5"))  # score >= 4
+# Minimum score to trade at all. LOW-tier record through 2026-07-08: 1W/5L,
+# -$147 gross — and tiny positions can't clear the per-contract fee floor.
+# Below this score the right size is zero, not half. Set to -99 to disable.
+MIN_CONVICTION_SCORE = int(os.getenv("MIN_CONVICTION_SCORE", "2"))
+
+# Take-profit target: on entry fill, a resting limit sell is parked at
+# entry x (1 + this). Max peak ever recorded is +64.6% (all winners peak
+# 48-65%) — waiting for +100% means holding gamma risk for value that only
+# exists at expiry. Resting form fills between heartbeats and sells into
+# strength. 0 disables.
+TAKE_PROFIT_TARGET_PCT = float(os.getenv("TAKE_PROFIT_TARGET_PCT", "0.60"))
 
 # Fast exit polling: the main loop runs every 60s normally, but drops to
 # FAST_POLL_SECONDS when an exit needs tight watching — a closing order in

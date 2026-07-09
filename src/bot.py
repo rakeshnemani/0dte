@@ -44,9 +44,13 @@ class TradingBot:
         # post-close day summary.
         self.closed_trades_today: list = []
         self.daily_summary_sent: bool = False
-        # Chop tracking: invalidation exits per (symbol, direction) today —
-        # feeds the entry throttle and the conviction-score penalty.
+        # Chop tracking. invalidation_counts feeds the entry throttle and only
+        # counts LOSING invalidation exits (a signal that exits with profit
+        # wasn't proven wrong — 2026-07-08 IWM was throttled after two winners).
+        # invalidation_total_today counts ALL invalidation exits and feeds the
+        # conviction-score penalty (tape character, not signal quality).
         self.invalidation_counts: Dict[tuple, int] = {}
+        self.invalidation_total_today: int = 0
         # Last raw directional lean per symbol (price vs VWAP), for the
         # cross-symbol agreement component of the conviction score.
         self.symbol_lean: Dict[str, tuple] = {}
@@ -72,6 +76,7 @@ class TradingBot:
             self.closed_trades_today = []
             self.daily_summary_sent = False
             self.invalidation_counts.clear()
+            self.invalidation_total_today = 0
             self.symbol_lean.clear()
             logger.info(f"Daily trade count reset for {today}")
 
@@ -211,7 +216,7 @@ class TradingBot:
         # Conviction score — sizes the position in execute_trade
         conviction = strategy.conviction_score(
             symbol, direction, df, indicators, now,
-            self.symbol_lean, sum(self.invalidation_counts.values())
+            self.symbol_lean, self.invalidation_total_today
         )
         indicators['conviction'] = conviction
         indicators['conviction_str'] = conviction['str']
@@ -254,6 +259,17 @@ class TradingBot:
 
         if self.daily_trade_count >= config.MAX_TRADES_PER_DAY:
             logger.warning(f"Daily trade limit of {config.MAX_TRADES_PER_DAY} reached.")
+            return
+
+        # Minimum conviction to trade at all — below this, the odds and the
+        # per-contract fee floor make the trade -EV regardless of size
+        conviction = indicators.get('conviction')
+        if (config.CONVICTION_SIZING_ENABLED and conviction
+                and conviction['score'] < config.MIN_CONVICTION_SCORE):
+            logger.info(
+                f"[{symbol}] Conviction {conviction['tier']} ({conviction['score']}/5) below "
+                f"minimum ({config.MIN_CONVICTION_SCORE}). Skipping entry."
+            )
             return
 
         underlying_price = self.broker.get_current_price(symbol)
@@ -347,6 +363,12 @@ class TradingBot:
             self._check_pending_exit(symbol, trade)
             return
 
+        # Resting take-profit filled? Must be checked BEFORE reconciliation —
+        # a filled TP removes the legs from the account, which would otherwise
+        # be misread as an external close (and its P&L discarded).
+        if trade.get('status') == 'ACTIVE' and self._tp_filled(symbol, trade):
+            return
+
         # Reconcile against the real IBKR account. If an ACTIVE position is no
         # longer held (closed manually via Client Portal / mobile / TWS,
         # assigned, etc.), stop tracking it instead of trying to manage or sell
@@ -359,6 +381,7 @@ class TradingBot:
                 trade['reconcile_misses'] = trade.get('reconcile_misses', 0) + 1
                 if trade['reconcile_misses'] >= 2:
                     logger.warning(f"[{symbol}] Position no longer in IBKR account — closed externally. Dropping from tracking.")
+                    self._cancel_tp_order(symbol, trade)  # never leave a resting sell behind
                     notifier.notify_closed_externally(symbol, trade['direction'])
                     self.active_trades.pop(symbol, None)
                 else:
@@ -409,6 +432,63 @@ class TradingBot:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")
             self.close_position(symbol, current_spread_value, exit_reason)
 
+    def _tp_filled(self, symbol: str, trade: dict) -> bool:
+        """If the resting take-profit limit filled, book the trade from its
+        actual fill. Returns True when the trade was finalized (or the TP order
+        died and was cleared — caller should just continue next loop)."""
+        tp = trade.get('tp_ibkr_trade')
+        if tp is None:
+            return False
+        try:
+            self.broker.sleep(0)
+            status = tp.orderStatus.status
+            if status == 'Filled':
+                fill_price = float(tp.orderStatus.avgFillPrice)
+                commission = (self.broker.order_commission(trade.get('ibkr_trade'))
+                              if trade.get('ibkr_trade') else 0.0)
+                commission += self.broker.order_commission(tp)
+                trade['exit_reason'] = (
+                    f"Take-profit target +{config.TAKE_PROFIT_TARGET_PCT*100:.0f}% hit "
+                    f"(resting limit ${trade.get('tp_price', 0):.2f})"
+                )
+                logger.info(f"[{symbol}] TAKE-PROFIT FILLED at ${fill_price:.2f}")
+                self._finalize_closed_trade(symbol, trade, fill_price, commission)
+                return True
+            if status in ('Cancelled', 'ApiCancelled', 'Inactive'):
+                logger.warning(f"[{symbol}] Resting take-profit order {status} — clearing; loop exits still protect.")
+                trade.pop('tp_ibkr_trade', None)
+        except Exception as e:
+            logger.error(f"[{symbol}] Error checking take-profit order: {e}")
+        return False
+
+    def _cancel_tp_order(self, symbol: str, trade: dict) -> bool:
+        """Cancel a resting take-profit before another exit path submits its own
+        sell — otherwise a late TP fill would open a naked short spread.
+        Returns True if the TP turned out to have FILLED (won the race) and the
+        trade was finalized — callers must then abort their own exit."""
+        tp = trade.pop('tp_ibkr_trade', None)
+        if tp is None:
+            return False
+        try:
+            if not tp.isDone():
+                self.broker.cancel_order(tp.order)
+                self.broker.sleep(1)  # let the cancel/fill race resolve
+            if tp.orderStatus.status == 'Filled':
+                fill_price = float(tp.orderStatus.avgFillPrice)
+                commission = (self.broker.order_commission(trade.get('ibkr_trade'))
+                              if trade.get('ibkr_trade') else 0.0)
+                commission += self.broker.order_commission(tp)
+                trade['exit_reason'] = (
+                    f"Take-profit target +{config.TAKE_PROFIT_TARGET_PCT*100:.0f}% hit "
+                    f"(filled during cancel race)"
+                )
+                logger.info(f"[{symbol}] Take-profit filled just before cancellation — booking it.")
+                self._finalize_closed_trade(symbol, trade, fill_price, commission)
+                return True
+        except Exception as e:
+            logger.warning(f"[{symbol}] Error cancelling take-profit order: {e}")
+        return False
+
     def _check_pending_fill(self, symbol: str, trade: dict):
         """Poll a PENDING_ENTRY order: promote to ACTIVE on fill, drop on cancel."""
         try:
@@ -423,6 +503,22 @@ class TradingBot:
                 trade['entry_price'] = filled_price
                 # Fill time — reconciliation grace period anchor
                 trade['activated_at'] = market_time.now_et()
+
+                # Park a resting take-profit limit at entry x (1 + target).
+                # Fills between heartbeats (no sampling loss) and sells into
+                # strength. Every other exit path cancels it first.
+                if config.TAKE_PROFIT_TARGET_PCT > 0:
+                    try:
+                        tp_price = round(filled_price * (1 + config.TAKE_PROFIT_TARGET_PCT), 2)
+                        trade['tp_ibkr_trade'] = self.broker.place_limit(
+                            trade['bag_contract'], 'SELL', trade['qty'], tp_price
+                        )
+                        trade['tp_price'] = tp_price
+                        logger.info(f"[{symbol}] Take-profit limit resting at ${tp_price:.2f} "
+                                    f"(+{config.TAKE_PROFIT_TARGET_PCT*100:.0f}%).")
+                    except Exception as e:
+                        logger.warning(f"[{symbol}] Could not place take-profit order: {e}")
+
                 ind = trade['entry_indicators']
                 entry_commission = self.broker.order_commission(ibkr_trade)
                 audit.record(
@@ -459,6 +555,11 @@ class TradingBot:
         trade = self.active_trades[symbol]
         if trade.get('status') == 'PENDING_EXIT':
             return  # already closing; _check_pending_exit manages fill/repricing
+
+        # Cancel any resting take-profit first — if it filled during the cancel
+        # race, the trade is already booked and this exit must abort.
+        if self._cancel_tp_order(symbol, trade):
+            return
 
         try:
             # Same BAG contract as entry — a SELL order closes the position
@@ -538,18 +639,21 @@ class TradingBot:
             'commission': commission,
         })
 
-        # Track invalidation exits — feeds the entry throttle and the
-        # conviction-score penalty for the rest of the day
+        # Track invalidation exits. ALL of them feed the conviction penalty
+        # (tape character); only LOSING ones (< -10%) count toward the throttle —
+        # a signal that exits with profit wasn't proven wrong, just early.
         if 'Thesis invalidated' in reason:
-            key = (symbol, trade['direction'])
-            self.invalidation_counts[key] = self.invalidation_counts.get(key, 0) + 1
-            if (config.MAX_INVALIDATIONS_PER_SIGNAL > 0 and
-                    self.invalidation_counts[key] == config.MAX_INVALIDATIONS_PER_SIGNAL):
-                logger.warning(
-                    f"[{symbol}] {trade['direction']} signal throttled for the day: "
-                    f"{self.invalidation_counts[key]} invalidation exits."
-                )
-                notifier.notify_throttled(symbol, trade['direction'], self.invalidation_counts[key])
+            self.invalidation_total_today += 1
+            if profit_pct < -0.10:
+                key = (symbol, trade['direction'])
+                self.invalidation_counts[key] = self.invalidation_counts.get(key, 0) + 1
+                if (config.MAX_INVALIDATIONS_PER_SIGNAL > 0 and
+                        self.invalidation_counts[key] == config.MAX_INVALIDATIONS_PER_SIGNAL):
+                    logger.warning(
+                        f"[{symbol}] {trade['direction']} signal throttled for the day: "
+                        f"{self.invalidation_counts[key]} losing invalidation exits."
+                    )
+                    notifier.notify_throttled(symbol, trade['direction'], self.invalidation_counts[key])
 
         # Circuit breaker counter
         if profit_pct < 0:

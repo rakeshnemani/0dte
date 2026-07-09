@@ -92,6 +92,10 @@ MAX_INVALIDATIONS_PER_SIGNAL=2   # Stand down a signal after N invalidation exit
 CONVICTION_SIZING_ENABLED=true   # Score entries 0-5 and size the budget by tier
 CONVICTION_LOW_MULT=0.5          # Budget multiplier when score <= 1
 CONVICTION_HIGH_MULT=1.5         # Budget multiplier when score >= 4
+MIN_CONVICTION_SCORE=2           # Skip entries scoring below this (-99 to disable)
+
+# Take-profit target
+TAKE_PROFIT_TARGET_PCT=0.60      # Resting limit sell at entry x 1.60 on fill (0=off)
 
 # Fast exit polling (fixes exit sampling slippage; 0 disables)
 FAST_POLL_SECONDS=15             # Loop cadence while an exit needs tight watching
@@ -144,7 +148,7 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 | 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When IBKR **confirms the closing fill** — actual fill price, P&L, round-trip commissions, net after fees |
 | ⚠️ POSITION CLOSED EXTERNALLY | 🟠 Orange | When the bot detects a tracked position is no longer in your IBKR account (closed manually via Client Portal, mobile, or TWS) — drops it from tracking |
 | 🔁 ADOPTED ORPHANED POSITIONS | 🟠 Orange | At startup, when the account holds open 0DTE spreads the bot wasn't tracking (e.g. after a restart) — they're adopted and managed by the normal exit rules |
-| ⛔ SIGNAL THROTTLED | ⚪ Grey | When a symbol+direction hits N thesis-invalidation exits in a day — no re-entries on that signal until tomorrow |
+| ⛔ SIGNAL THROTTLED | ⚪ Grey | When a symbol+direction hits N **losing** thesis-invalidation exits (< −10%) in a day — no re-entries on that signal until tomorrow. Profitable invalidations don't count |
 | 🛑 DAILY LOSS LIMIT | 🔴 Red | When the day's realized P&L (net of fees) breaches −`MAX_DAILY_LOSS` — no new entries today; open positions still managed |
 | 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
 | 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — gross P&L, **commissions, net after fees**, win/loss count, win rate, per-trade breakdown |
@@ -205,11 +209,11 @@ Every entry is scored **0–5** from signals already computed:
 | Entry before 11:00 ET (open drive, not midday) | |
 | Calm tape: ≤ 4 VWAP crosses so far today | |
 
-The score sets the position budget:
+The score sets the position budget — and below `MIN_CONVICTION_SCORE` (default 2) the bot **doesn't trade at all**: LOW-tier trades ran 1W/5L and tiny positions can't clear the per-contract fee floor (one +$13 gross "winner" lost money after $13.87 commissions).
 
-| Score | Tier | Budget (at `MAX_POSITION_SIZE=300`) |
+| Score | Tier | Action (at `MAX_POSITION_SIZE=300`) |
 |-------|------|--------------------------------------|
-| ≤ 1 | LOW | $150 (0.5×) |
+| ≤ 1 | LOW | **Skip — no trade** (set `MIN_CONVICTION_SCORE=-99` to size at $150 instead) |
 | 2–3 | MEDIUM | $300 (1.0×) |
 | ≥ 4 | HIGH | $450 (1.5×) |
 
@@ -223,10 +227,11 @@ The score and its component breakdown are logged, written to `audit.csv` (`Convi
 
 ## Risk Management
 
-Three exit rules, checked every 60 seconds:
+Four exit mechanisms:
 
 | Rule | Condition | Notes |
 |------|-----------|-------|
+| **Take-Profit Target** | Resting limit sell at entry × 1.60, parked the moment the entry fills | Fills between heartbeats and sells into strength. Max peak ever recorded is +64.6% — waiting for +100% holds gamma risk for value that only exists at expiry. All other exit paths cancel it first |
 | **Hard Stop Loss** | Spread loses ≥ 70% of entry value | Immediate exit; the catastrophic backstop |
 | **Thesis Invalidation** | Price closes on the wrong side of VWAP for `VWAP_INVALIDATION_BARS` (default 3) consecutive 1-min bars | The entry reason was "price beyond VWAP + ORB" — when that's gone, exit instead of riding to −70%. On 2026-07-01 this would have cut three −71/−74% losers near −20/−30% |
 | **Trailing Stop** | Arms only after the trade peaks at +50%; then exits if profit falls to 90% of the peak (e.g. peak +50% → exit +45%) | Lets winners run, then locks them in |

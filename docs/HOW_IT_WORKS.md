@@ -118,7 +118,7 @@ After any trade (entry submitted), the `(symbol, direction)` pair is locked for 
 
 **Example:** SPY PUT fires at 10:05. Bot exits at 10:22. SPY PUT is locked until 10:35. If SPY is still bearish at 10:36, the bot can re-enter.
 
-**Invalidation throttle (stronger than the cooldown):** if the same (symbol, direction) suffers `MAX_INVALIDATIONS_PER_SIGNAL` (default 2) thesis-invalidation exits in one day, the market has proven that signal chop — it stands down **until tomorrow**, regardless of cooldown. A ⛔ Discord alert fires when the throttle trips. (Motivated by 2026-07-06: four SPY CALL re-entries into the same failing grind, all invalidated.)
+**Invalidation throttle (stronger than the cooldown):** if the same (symbol, direction) suffers `MAX_INVALIDATIONS_PER_SIGNAL` (default 2) **losing** thesis-invalidation exits (worse than −10%) in one day, the market has proven that signal chop — it stands down **until tomorrow**, regardless of cooldown. A ⛔ Discord alert fires when the throttle trips. Profitable invalidation exits don't count toward the throttle (a signal that exits with profit wasn't proven wrong — 2026-07-08 IWM was stood down after two *winning* exits, which motivated the refinement), but **all** invalidations count toward the conviction-score penalty, which measures tape character rather than signal quality. (Original motivation 2026-07-06: four SPY CALL re-entries into the same failing grind, all invalidated.)
 
 ### Guard 4: One Trade Per Symbol
 If a trade is already `PENDING_ENTRY` or `ACTIVE` for this symbol, skip.
@@ -208,7 +208,7 @@ order = LimitOrder('BUY', qty, round(spread_cost, 2))
 ibkr_trade = ib.placeOrder(bag, order)
 ```
 
-Position sizing is **conviction-based**. Each entry is scored 0–5 (+1 each: ADX ≥ 30, ADX slope ≥ +3, another symbol leaning the same direction within 5 min, entry before 11:00 ET, ≤ 4 VWAP crosses today; −1 per invalidation exit already today). The score picks the budget tier — LOW (score ≤ 1) = 0.5× `MAX_POSITION_SIZE`, MEDIUM (2–3) = 1×, HIGH (≥ 4) = 1.5×:
+Position sizing is **conviction-based**. Each entry is scored 0–5 (+1 each: ADX ≥ 30, ADX slope ≥ +3, another symbol leaning the same direction within 5 min, entry before 11:00 ET, ≤ 4 VWAP crosses today; −1 per invalidation exit already today). Scores below `MIN_CONVICTION_SCORE` (default 2) **don't trade at all** — LOW-tier trades ran 1W/5L and can't clear the per-contract fee floor. Above it, the score picks the budget tier — MEDIUM (2–3) = 1× `MAX_POSITION_SIZE`, HIGH (≥ 4) = 1.5×:
 
 ```
 budget = MAX_POSITION_SIZE × tier_multiplier
@@ -252,7 +252,15 @@ If status is `PENDING_ENTRY`, the bot checks the live IBKR trade object's `order
 
 ### Active Trade: Exit Rules
 
-Once `ACTIVE`, the bot fetches the current spread value (live bid/ask from IBKR) every 60 seconds and evaluates three rules in priority order:
+Once `ACTIVE`, two exit layers operate:
+
+#### Layer 0 — Resting Take-Profit Limit (order-driven, not loop-driven)
+
+The moment the entry fills, a limit sell is parked at `entry × (1 + TAKE_PROFIT_TARGET_PCT)` (default +60%). It fills the instant the market touches it — between heartbeats, no sampling loss — and it sells **into strength** (resting limits get lifted, unlike loop exits that sell into falling prices). Rationale: the highest peak ever recorded is +64.6% and every winner peaked in the 48–65% band; a $1-wide spread only approaches +100%+ near expiry, so waiting for it means holding gamma risk for value that doesn't exist yet.
+
+**Safety invariant:** every other exit path (invalidation, trail, hard stop, EOD flatten, external-close detection) **cancels the resting TP first** and checks whether it filled during the cancel race — a forgotten resting sell after a close would open a naked short spread. TP fills are booked through the same confirmed-fill path as everything else (actual price + commissions).
+
+The loop then evaluates three rules in priority order:
 
 #### Rule 1 — Hard Stop Loss (70%)
 ```
@@ -368,6 +376,8 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `CONVICTION_SIZING_ENABLED` | `true` | Score entries 0–5 and size the position budget by tier |
 | `CONVICTION_LOW_MULT` | `0.5` | Budget multiplier for LOW conviction (score ≤ 1) |
 | `CONVICTION_HIGH_MULT` | `1.5` | Budget multiplier for HIGH conviction (score ≥ 4) |
+| `MIN_CONVICTION_SCORE` | `2` | Skip entries scoring below this (−99 to disable) |
+| `TAKE_PROFIT_TARGET_PCT` | `0.60` | Resting limit sell at entry × (1 + this), parked on fill (0 = off) |
 | `TAKE_PROFIT_TRAIL_TRIGGER` | `0.50` | Peak profit % that arms the trailing stop |
 | `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |

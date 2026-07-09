@@ -70,7 +70,8 @@ def notify_filled(symbol: str, trade: dict, filled_price: float):
         f"**💰 Entry Price:** ${filled_price:.2f} per contract\n"
         f"**📈 Quantity:** {trade['qty']} Contracts\n"
         f"**💸 Total Investment:** ${filled_price * trade['qty'] * 100:.2f}\n"
-        + (f"**🎚️ Conviction:** {conviction_entry}\n" if conviction_entry else "") +
+        + (f"**🎚️ Conviction:** {conviction_entry}\n" if conviction_entry else "")
+        + (f"**🎯 Take-profit resting at:** ${trade['tp_price']:.2f}\n" if trade.get('tp_price') else "") +
         f"\n**📉 Indicators at Entry:**\n"
         f"• ADX: {ind.get('adx', 0):.2f}\n"
         f"• Price vs VWAP: ${ind.get('current_price', 0):.2f} / ${ind.get('vwap', 0):.2f}\n"

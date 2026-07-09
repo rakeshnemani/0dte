@@ -44,6 +44,79 @@ score separates winners from losers** (calibration pass after ~2 weeks of the
 
 ---
 
+## 2026-07-08 — V-reversal day 🔴 (−$156 gross / −$210 net of fees) — the entry-selection lesson
+
+**2W/5L, all seven exits via invalidation.** SPY: 741.3 → **739.6 low (11:31)** →
+**745.7 (13:31)** — morning dip, churn at the low, strong afternoon rally. The
+worst regime for breakout-following: the bot faded the V all day (5 PUTs into the
+bottom, 2 CALLs knocked out by the turn's first pullback). First day with
+commissions + fill-confirmed exits in the audit.
+
+### Ledger (times ET)
+
+| # | Trade | Held | Gross | Fees | Peak | Conviction | Exit |
+|---|-------|------|-------|------|------|------------|------|
+| 1 | IWM PUT 10:44 | 10m | +$13 | $13.87 (**net −$0.87**) | 20.4% | MEDIUM 3/5 | Invalidation |
+| 2 | SPY PUT 10:52 | 3m | −$70 | $12.46 | 0% | MEDIUM 3/5 | Invalidation |
+| 3 | IWM PUT 11:19 | 17m | +$16 | $6.32 | 25.6% | LOW −1/5 | Invalidation |
+| 4 | QQQ PUT 11:29 | 9m | −$39 | $5.41 | 16.3% | LOW 0/5 | Invalidation |
+| 5 | SPY PUT 11:31 | 7m | −$43 | $5.05 | 0% | LOW −1/5 | Invalidation |
+| 6 | SPY CALL 13:31 | 8m | −$21 | $6.43 | 2.4% | LOW −2/5 | Invalidation |
+| 7 | QQQ CALL 13:39 | 2m | −$12 | $4.98 | 0% | LOW −2/5 | Invalidation |
+
+### The "should we have held longer?" question — answered by the data
+
+Half yes, half catastrophic-no. **Whipsaw exits (held longer = winner):** #2 exited
+at −25% 35 min before SPY hit the day's low (that PUT would have gone +50%+);
+#6/#7 CALLs were cut by a 3-bar wiggle just after the turn, into a rally.
+**Rescues (held longer = disaster):** #4/#5 entered PUTs *at the bottom* —
+invalidation at −28/−32% was the only thing between them and −70% hard stops.
+Loosening the exit is not the fix. **All 7 entries fired at 12–33 VWAP crosses** —
+the tape component said "don't" while raw signal conditions were technically met.
+This was an entry-selection failure, not an exit-timing failure.
+
+### What the new instrumentation revealed
+
+1. **Conviction gradient = damage control, confirmed.** Losses shrank monotonically
+   with score: MEDIUM −$70 → LOW −$43/−$39 → LOW−2 −$21/−$12. Flat sizing ≈ −$300+.
+2. **→ Hypothesis #9: skip entries when conviction score < 0.** Trades at −1/−2
+   went 0W/3L (plus one −1 winner earlier); penalties exceeding all positives means
+   the regime has already been proven hostile. Also fixes the fee floor (below).
+3. **The fee floor is real:** $54.52 total fees (26% of the day's gross loss);
+   trade #1 *won* gross and lost net; #7 paid 41% fee overhead. Tiny LOW-tier
+   positions structurally can't clear friction — below some conviction the right
+   size is zero, not half.
+4. **Fill slippage now visible (thanks #14):** decision-vs-fill gaps up to ~21 pts
+   (#4 decided at −6.5% mid, filled −28.3% — ~$0.10 crossing cost on a $0.46
+   spread). Fees + slippage together ≈ $85–100/day at this trade count. The lever
+   is trade COUNT, same direction as #9-skip.
+5. **→ Hypothesis #10: profitable invalidations shouldn't count toward the
+   throttle.** IWM PUT was stood down after two *winning* exits (+$13, +$16) —
+   that signal wasn't proven wrong, its exits were just early.
+6. Fast-poll (#13) never engaged — no trade reached the +35% arm zone. Unjudged.
+
+### Regime scoreboard — the strategic takeaway
+
+6 meaningful days: **1 clean trend (+$645), 5 chop/reversal variants (−$305, −$131,
++$14, −$156, and old-rules +$13).** The debit-breakout strategy monetizes ~1 day in
+6; the guards have cut chop losses ~2× but can't make chop profitable. This is the
+strongest evidence yet for the regime-matched credit-side build (TODO #9): 5 of 6
+days were premium-seller days.
+
+### Running totals (bot-closed, gross)
+
+| Day | Regime | Net | Record |
+|-----|--------|-----|--------|
+| 06-29 | Chop (old exits) | +$13.00 | scratches |
+| 06-30 | Trend | +$645.50 | 5W/0L |
+| 07-01 | Trend → reversal | −$305.00 | 2W/3L |
+| 07-06 | Flat chop | −$131.00 | 1W/3L |
+| 07-07 | Bearish chop | +$14.00 | 2W/2L |
+| 07-08 | V-reversal | **−$156.00** (−$210.52 net) | 2W/5L |
+| **Cumulative** | | **+$80.50 gross** | fees now tracked |
+
+---
+
 ## 2026-07-07 — Bearish chop day 🟢 (+$14) — first PUT day; conviction sizing + throttle live
 
 **Bot realized: +$14.00 (2W / 2L).** First green chop-adjacent day ever. All four
