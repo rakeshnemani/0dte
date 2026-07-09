@@ -11,7 +11,7 @@ for how they map to the paper→live gates.
 | Priority | Meaning | Items |
 |----------|---------|-------|
 | **P0 — do next** | Directly moves the fee-adjusted edge or is a mandatory safety control; small builds | *(cleared — #13 and #15 done 2026-07-07)* |
-| **P1 — soon** | Required before live or user-committed next major build | **#2** exposure cap, **#16** always-on host, **#9** credit spreads *(#17, #18, #19 → done 2026-07-08)* |
+| **P1 — soon** | Required before live or user-committed next major build | **#2** exposure cap, **#16** always-on host *(#9 condors → done 2026-07-08; #17, #18, #19 → done 2026-07-08)* |
 | **P2 — evidence-gated** | Good hypotheses waiting for data or a trigger day | **#20** wider spreads (fee-ratio experiment), **#5** time stop, **#6** midday tightening, **#7** expected-move anchor, **#12** 2-hour throttle |
 | **P3 — parked / live-transition** | By design not now | **#3** XSP switch, **#4** GLD/TLT, **#8** VIX1D |
 
@@ -32,7 +32,6 @@ requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
 
 16. **[P1] Always-on host** — Move the bot off the laptop (VPS or dedicated machine; interim: tmux + caffeinate). Two Ctrl+C/sleep incidents already; GO_LIVE Gate 4's "20 clean sessions" clock can't start until this is done. Operational task, not code. *(Imported from the go-live checklist.)*
 
-9. **[P1 — next major build] Credit-side structures (regime-matched)** — Sell premium (credit spreads / iron condors) on chop days; keep the debit playbook for trend days. *2026-07-06 was the motivating example: SPY pinned in a 5-point range all day — a premium seller's day; our debit strategy lost −$131 on it. User confirmed: implement soon, after the current chop guards have a stable track record.* Scope: short-spread margin handling, credit-side exit rules (e.g. buy back at 50% of credit received, stop at 2× credit), and a chop-day detector to pick the structure — the conviction score's LOW tier is the natural trigger. Start after the P0s land and a week of clean data.
 
 ## P2 — Evidence-gated
 
@@ -74,5 +73,7 @@ requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
 17. ~~**Skip low-conviction entries**~~ — ✅ **2026-07-08** as `MIN_CONVICTION_SCORE=2` (user chose ≤1 = skip the whole LOW tier, stronger than the original <0 proposal). Evidence: LOW-tier record 1W/5L, −$147 gross, and tiny positions can't clear the per-contract fee floor. `-99` disables.
 
 18. ~~**Throttle only on losing invalidations**~~ — ✅ **2026-07-08**: only invalidation exits worse than −10% count toward `MAX_INVALIDATIONS_PER_SIGNAL`; profitable ones don't (IWM was stood down after two winners). ALL invalidations still feed the conviction penalty via a separate counter (tape character vs signal quality).
+
+9. ~~**Credit-side structures (regime-matched iron condors)**~~ — ✅ **2026-07-08**: on proven range days (ADX < 22, ≥ 8 VWAP crosses, 11:00–13:30 ET, price mid-range), the bot sells an iron condor around the day's high/low (wings `SPREAD_WIDTH` out) as a 4-leg BAG. Sized by max loss (`(width − credit) × 100 × qty ≤ MAX_POSITION_SIZE`). Exits: resting buy-back at 50% of credit, hard stop −70% (=1.7× credit), range-breach invalidation (2 closes beyond a short strike), trail + EOD flatten shared. Mutually exclusive with debit entries by ADX construction. *Evidence: 5 of the first 6 days were premium-seller days.* Known limitation: restart adoption alerts (not reconstructs) open condors. Watch for IBKR error 201 on first fill (may need spread permissions bump).
 
 19. ~~**Take-profit target via resting limit order (+60%)**~~ — ✅ **2026-07-08** as `TAKE_PROFIT_TARGET_PCT=0.60`: on entry fill, a limit sell rests at entry × 1.60. Fills between heartbeats, sells into strength. Every other exit path cancels it first and handles the cancel/fill race (a TP that fills mid-cancel is booked as the exit); external-close detection also cleans it up so no naked short can be left behind. Evidence: max peak ever +64.6%, winners cluster 48–65%; +50% flat target beat the trail on 5 of 7 historical winners. Calibrate 55 vs 60 after ~2 weeks.

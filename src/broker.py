@@ -47,8 +47,12 @@ class IBKRBroker:
     def connect(self):
         logger.info(f"Connecting to IBKR at {config.IBKR_HOST}:{config.IBKR_PORT} (clientId={config.IBKR_CLIENT_ID})")
         self.ib.connect(config.IBKR_HOST, config.IBKR_PORT, clientId=config.IBKR_CLIENT_ID)
-        # Use delayed data (type 4) so paper accounts work without live subscriptions
-        self.ib.reqMarketDataType(4)
+        # 1 = live (real-time), 3/4 = delayed. Real-time needs data subscriptions;
+        # the paper account inherits them from the live account.
+        self.ib.reqMarketDataType(config.IBKR_MARKET_DATA_TYPE)
+        _dtype = {1: "live/real-time", 2: "frozen", 3: "delayed", 4: "delayed-frozen"}
+        logger.info(f"Market data type: {config.IBKR_MARKET_DATA_TYPE} "
+                    f"({_dtype.get(config.IBKR_MARKET_DATA_TYPE, 'unknown')})")
         # Silence ib_insync's internal wrapper logger — it prints every IBKR error
         # code (including expected ones like 162 "no data yet") as ERROR. We route
         # real errors ourselves via errorEvent below.
@@ -106,16 +110,23 @@ class IBKRBroker:
         return qualified[0]
 
     def make_bag(self, symbol: str, long_conid: int, short_conid: int) -> Contract:
-        """Build a BAG combo contract (long leg BUY, short leg SELL)."""
+        """Build a 2-leg BAG combo contract (long leg BUY, short leg SELL)."""
+        return self.make_bag_multi(symbol, [(long_conid, 'BUY'), (short_conid, 'SELL')])
+
+    def make_bag_multi(self, symbol: str, legs: list) -> Contract:
+        """Build an N-leg BAG combo from [(conId, action), ...].
+
+        Convention: define the package so its market value is POSITIVE (each
+        vertical's expensive leg gets the BUY action). Then a BUY order opens a
+        debit position and a SELL order opens a credit position (e.g. an iron
+        condor), and limit prices stay plain positive numbers either way."""
         bag = Contract()
         bag.symbol = self.option_symbol(symbol)
         bag.secType = 'BAG'
         bag.currency = 'USD'
         bag.exchange = 'SMART'
-        bag.comboLegs = [
-            ComboLeg(conId=long_conid, ratio=1, action='BUY', exchange='SMART'),
-            ComboLeg(conId=short_conid, ratio=1, action='SELL', exchange='SMART'),
-        ]
+        bag.comboLegs = [ComboLeg(conId=cid, ratio=1, action=action, exchange='SMART')
+                         for cid, action in legs]
         return bag
 
     # ── Orders / account ─────────────────────────────────────────────────────
@@ -261,6 +272,26 @@ class IBKRBroker:
             return max(long_mid - short_mid, 0.01)
         except Exception as e:
             logger.error(f"Error fetching spread value for {symbol}: {e}")
+            return 0.0
+
+    def get_condor_value(self, symbol: str, short_call: float, wing_call: float,
+                         short_put: float, wing_put: float) -> float:
+        """Current market value of an iron condor package (positive number).
+
+        Value = (short_call − call_wing) + (short_put − put_wing) mids — i.e.
+        the credit collected to open (SELL) or the cost to close (BUY)."""
+        try:
+            sc = self._get_option_mid(self.get_option_contract(symbol, 'CALL', short_call))
+            wc = self._get_option_mid(self.get_option_contract(symbol, 'CALL', wing_call))
+            sp = self._get_option_mid(self.get_option_contract(symbol, 'PUT', short_put))
+            wp = self._get_option_mid(self.get_option_contract(symbol, 'PUT', wing_put))
+            if min(sc, sp) <= 0 or wc < 0 or wp < 0:
+                logger.warning(f"Could not price {symbol} condor {short_put}/{short_call}: "
+                               f"sc={sc} wc={wc} sp={sp} wp={wp}")
+                return 0.0
+            return max((sc - wc) + (sp - wp), 0.01)
+        except Exception as e:
+            logger.error(f"Error fetching condor value for {symbol}: {e}")
             return 0.0
 
     def fetch_breadth_data(self) -> Tuple[pd.DataFrame, pd.DataFrame]:

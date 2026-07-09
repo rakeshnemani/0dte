@@ -7,6 +7,10 @@ load_dotenv()
 IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
 IBKR_PORT = int(os.getenv("IBKR_PORT", "4002"))        # 4002 = IB Gateway paper, 7497 = TWS paper
 IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", "1"))
+# Market data type: 1 = live (real-time), 2 = frozen, 3 = delayed, 4 = delayed-frozen.
+# Default 1 — requires active data subscriptions (paper inherits the live account's).
+# Use 3/4 only if running without subscriptions.
+IBKR_MARKET_DATA_TYPE = int(os.getenv("IBKR_MARKET_DATA_TYPE", "1"))
 
 SYMBOLS = os.getenv("SYMBOLS", "SPY,QQQ,IWM").split(",")
 MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", "200.0"))
@@ -53,6 +57,18 @@ MIN_CONVICTION_SCORE = int(os.getenv("MIN_CONVICTION_SCORE", "2"))
 # exists at expiry. Resting form fills between heartbeats and sells into
 # strength. 0 disables.
 TAKE_PROFIT_TARGET_PCT = float(os.getenv("TAKE_PROFIT_TARGET_PCT", "0.60"))
+
+# ── Iron condors (regime-matched credit side) ────────────────────────────────
+# On proven range days (low ADX + many VWAP crosses — the regime where the
+# debit playbook structurally loses), sell an iron condor around the day's
+# range instead: short strikes just outside the day high/low, wings
+# SPREAD_WIDTH out. Entered 11:00–13:30 ET only. Sized by max loss
+# ((width − credit) × 100 × qty <= MAX_POSITION_SIZE).
+CONDOR_ENABLED = os.getenv("CONDOR_ENABLED", "true").lower() == "true"
+CONDOR_MAX_ADX = float(os.getenv("CONDOR_MAX_ADX", "22"))            # trend must be absent
+CONDOR_MIN_VWAP_CROSSES = int(os.getenv("CONDOR_MIN_VWAP_CROSSES", "8"))  # chop must be proven
+MIN_CONDOR_CREDIT = float(os.getenv("MIN_CONDOR_CREDIT", "0.15"))    # skip if premium too thin
+CONDOR_TP_PCT = float(os.getenv("CONDOR_TP_PCT", "0.50"))            # buy back at 50% of credit
 
 # Fast exit polling: the main loop runs every 60s normally, but drops to
 # FAST_POLL_SECONDS when an exit needs tight watching — a closing order in

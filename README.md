@@ -72,6 +72,7 @@ pip install -r requirements.txt
 IBKR_HOST=127.0.0.1
 IBKR_PORT=4002              # 4002 = IB Gateway paper, 7497 = TWS paper
 IBKR_CLIENT_ID=1
+IBKR_MARKET_DATA_TYPE=1     # 1=live/real-time (needs subscriptions), 3=delayed, 4=delayed-frozen
 
 # Symbols
 SYMBOLS=SPY,QQQ,IWM
@@ -96,6 +97,13 @@ MIN_CONVICTION_SCORE=2           # Skip entries scoring below this (-99 to disab
 
 # Take-profit target
 TAKE_PROFIT_TARGET_PCT=0.60      # Resting limit sell at entry x 1.60 on fill (0=off)
+
+# Iron condors (credit playbook on proven range days, 11:00-13:30 ET)
+CONDOR_ENABLED=true
+CONDOR_MAX_ADX=22                # Only when trend is absent
+CONDOR_MIN_VWAP_CROSSES=8        # Only when chop is proven
+MIN_CONDOR_CREDIT=0.15           # Skip if total credit below this
+CONDOR_TP_PCT=0.50               # Resting buy-back at 50% of credit
 
 # Fast exit polling (fixes exit sampling slippage; 0 disables)
 FAST_POLL_SECONDS=15             # Loop cadence while an exit needs tight watching
@@ -143,6 +151,7 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 | Alert | Colour | Trigger |
 |-------|--------|---------|
 | ⏳ ORDER SUBMITTED | 🟠 Orange | Immediately when the BAG order is sent to IBKR (fires even if later rejected) — includes the conviction score and sized budget |
+| ⏳ CONDOR SUBMITTED / 🦅 IRON CONDOR SOLD | 🟠 / 🟢 | Credit-playbook lifecycle — strikes, credit received, max loss, resting buy-back level |
 | 📋 TODAY | 🟢/🔴 by net | After every new trade — snapshot of all open positions (live P&L), closed trades (realized P&L), and the running net |
 | 🟢 NEW ENTRY FILLED | 🟢 Green | When IBKR confirms the order is filled — includes strikes, price, indicators |
 | 🔵 POSITION CLOSED | 🔵 Blue (profit) / 🔴 Red (loss) | When IBKR **confirms the closing fill** — actual fill price, P&L, round-trip commissions, net after fees |
@@ -171,6 +180,13 @@ All three are American-style ETF options with $1 strike steps and $1 spread widt
 
 ## Strategy
 
+Two regime-matched playbooks share the watchlist. They are mutually exclusive by construction — the debit side needs a trend (ADX ≥ 25 **rising**), the credit side needs its absence (ADX < 22):
+
+| Regime | Playbook | Structure |
+|--------|----------|-----------|
+| **Trend** (breakout + rising ADX) | Directional debit | ATM CALL/PUT vertical, $1 wide |
+| **Proven chop** (ADX < 22, ≥ 8 VWAP crosses, 11:00–13:30 ET) | Premium selling | Iron condor around the day's range, wings $1 out |
+
 ### Indicators (calculated on 1-minute bars from IBKR)
 
 - **VWAP** — Volume-Weighted Average Price anchored to 9:30 AM EST each day
@@ -196,6 +212,17 @@ All three are American-style ETF options with $1 strike steps and $1 spread widt
 8. **Breakout buffer (chop guard)** — Price must clear the ORB level by `ORB_BREAKOUT_BUFFER_PCT` (default 0.1%), filtering micro-poke false breakouts
 9. **Invalidation throttle (chop guard)** — After `MAX_INVALIDATIONS_PER_SIGNAL` (default 2) thesis-invalidation exits on the same symbol+direction in one day, that signal stands down until tomorrow — the market has proven it chop. A ⛔ Discord alert fires when the throttle trips
 10. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
+
+### The Credit Playbook (iron condors)
+
+When no directional signal exists and the day has **proven itself range-bound** (ADX < `CONDOR_MAX_ADX`, ≥ `CONDOR_MIN_VWAP_CROSSES` VWAP crosses, price mid-range), the bot sells an iron condor between **11:00–13:30 ET**:
+
+- **Short strikes** just outside the day's high/low; **wings** `SPREAD_WIDTH` further out
+- **Sized by max loss**: `(width − credit) × 100 × qty ≤ MAX_POSITION_SIZE` — same "budget = max loss" convention as the debit side
+- **Exits**: resting buy-back at `CONDOR_TP_PCT` (50%) of credit · hard stop at −70% (buy back at 1.7× credit) · **range-breach invalidation** (2 consecutive closes beyond a short strike) · EOD flatten
+- Skipped if total credit < `MIN_CONDOR_CREDIT`
+
+> Rationale: 5 of the first 6 trading days were chop/range days where the debit playbook can only lose less — the condor is the structure that *earns* on them. Requires spread-level options permissions (same as debit verticals); if orders reject with IBKR error 201, check Trading Permissions.
 
 ### Position Sizing (conviction-based)
 
@@ -303,7 +330,7 @@ Three sheets, built from `audit.csv` with live Excel formulas:
 
 ## IBKR Notes
 
-- **Delayed data** — The bot requests market data type 4 (15-min delayed) on connect. No live data subscription is required for paper trading.
+- **Market data type** — Set by `IBKR_MARKET_DATA_TYPE` (default **1 = real-time**). Real-time needs active data subscriptions (US Equity & Options Add-On Streaming Bundle + Securities Snapshot Bundle); the paper account inherits them from the live account once sharing is enabled. Set to `3`/`4` to run on 15-min delayed data without subscriptions. Note: option-spread pricing and exit decisions are only as fresh as this feed — delayed data lags fills by ~15 min.
 - **Informational IBKR codes** — Codes like 162 (no data yet), 2104/2106 (farm connected), 10091/10167 (delayed data notice) are suppressed from logs and handled silently. Real errors (order rejections, etc.) still appear as `WARNING`.
 - **Auto-reconnect** — If the IBKR connection drops mid-session, the bot attempts to reconnect at the start of the next loop iteration.
 - **Position reconciliation** — Each loop the bot checks every tracked position against your actual IBKR account (`ib.positions()`). If you close a spread manually (Client Portal, mobile app, or TWS), the bot detects the missing position (after two consecutive checks, with a 90-second grace period after entry) and drops it from tracking — so it never tries to manage or re-sell a position you no longer hold. A ⚠️ alert fires. P&L for an externally-closed trade is **not** recorded, since the bot doesn't know the price you exited at.

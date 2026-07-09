@@ -85,6 +85,25 @@ class TradingBot:
         return sum(c['dollar_pnl'] - c.get('commission', 0.0)
                    for c in self.closed_trades_today)
 
+    # ── Structure-agnostic helpers (debit spread vs iron condor) ─────────────
+
+    @staticmethod
+    def _side(trade: dict) -> int:
+        """+1 for long-premium (debit spread), −1 for short-premium (condor).
+        profit = side × (value − entry) / entry works for both."""
+        return -1 if trade.get('structure') == 'CONDOR' else 1
+
+    def _current_value(self, symbol: str, trade: dict) -> float:
+        """Current market value of the trade's package, whatever its shape."""
+        if trade.get('structure') == 'CONDOR':
+            return self.broker.get_condor_value(
+                symbol, trade['short_call'], trade['wing_call'],
+                trade['short_put'], trade['wing_put']
+            )
+        return self.broker.get_spread_value(
+            symbol, trade['direction'], trade['long_strike'], trade['short_strike']
+        )
+
     # ── Startup adoption / reconciliation ────────────────────────────────────
 
     def adopt_orphan_positions(self):
@@ -114,11 +133,18 @@ class TradingBot:
                 continue
             groups.setdefault((underlying, c.right), []).append(p)
 
+        # Underlyings with legs in BOTH rights are condor-shaped — adopting each
+        # right as a separate "vertical" would misread the position. Alert only.
+        multi_right = {u for (u, _r) in groups}
+        multi_right = {u for u in multi_right
+                       if len({r for (u2, r) in groups if u2 == u}) > 1}
+
         adopted = []
         for (underlying, right), legs in groups.items():
             longs = [p for p in legs if p.position > 0]
             shorts = [p for p in legs if p.position < 0]
-            if len(longs) != 1 or len(shorts) != 1 or underlying in self.active_trades:
+            if (len(longs) != 1 or len(shorts) != 1
+                    or underlying in self.active_trades or underlying in multi_right):
                 leftovers.extend(legs)
                 continue
             long_p, short_p = longs[0], shorts[0]
@@ -204,6 +230,18 @@ class TradingBot:
             self.symbol_lean[symbol] = (lean, now)
 
         if direction is None:
+            # No directional signal — on proven range days, the credit playbook
+            # takes over: sell an iron condor around the day's range. Mutually
+            # exclusive with debit entries by construction (needs ADX < 22 vs
+            # the debit side's ADX >= 25 rising).
+            if config.CONDOR_ENABLED:
+                ok, c_reason, c_ind = strategy.condor_signal(
+                    symbol, df, now,
+                    config.STRIKE_STEP.get(symbol, 1),
+                    config.SPREAD_WIDTH.get(symbol, 1),
+                )
+                if ok:
+                    return 'CONDOR', c_reason, c_ind
             return None, "", {}
 
         # Breadth annotation (logged, not a gate — fails open on missing data)
@@ -346,6 +384,91 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Failed to place IBKR spread order for {symbol}: {e}")
 
+    def execute_condor(self, symbol: str, reason: str, indicators: dict):
+        """Sell an iron condor around the day's range (credit playbook).
+        Sized by max loss: (width − credit) × 100 × qty <= MAX_POSITION_SIZE."""
+        if symbol in self.active_trades:
+            return
+
+        now_est = market_time.now_et()
+        cooldown_expires = self.signal_cooldowns.get((symbol, 'CONDOR'))
+        if cooldown_expires and now_est < cooldown_expires:
+            return
+
+        if self.circuit_breaker_tripped or self.daily_loss_limit_hit:
+            logger.info(f"[{symbol}] Condor signal skipped — risk halt active.")
+            return
+        if self.daily_trade_count >= config.MAX_TRADES_PER_DAY:
+            return
+
+        sc, wc = indicators['short_call'], indicators['wing_call']
+        sp, wp = indicators['short_put'], indicators['wing_put']
+        width = config.SPREAD_WIDTH.get(symbol, 1)
+
+        credit = self.broker.get_condor_value(symbol, sc, wc, sp, wp)
+        if credit <= 0:
+            logger.warning(f"[{symbol}] Could not price condor. Aborting.")
+            return
+        if credit < config.MIN_CONDOR_CREDIT:
+            logger.info(f"[{symbol}] Condor credit ${credit:.2f} below minimum "
+                        f"${config.MIN_CONDOR_CREDIT:.2f}. Skipping.")
+            return
+        if credit >= width:   # sanity: max loss would be <= 0 / mispriced quotes
+            logger.warning(f"[{symbol}] Condor credit ${credit:.2f} >= width {width} — mispriced. Skipping.")
+            return
+
+        max_loss_per = (width - credit) * 100
+        qty = int(config.MAX_POSITION_SIZE // max_loss_per)
+        if qty < 1:
+            logger.info(f"[{symbol}] Condor max loss ${max_loss_per:.0f}/contract exceeds "
+                        f"budget ${config.MAX_POSITION_SIZE:.0f}. Skipping.")
+            return
+
+        try:
+            sc_c = self.broker.get_option_contract(symbol, 'CALL', sc)
+            wc_c = self.broker.get_option_contract(symbol, 'CALL', wc)
+            sp_c = self.broker.get_option_contract(symbol, 'PUT', sp)
+            wp_c = self.broker.get_option_contract(symbol, 'PUT', wp)
+            # Positive-value package (see make_bag_multi): SELL opens the condor
+            bag = self.broker.make_bag_multi(symbol, [
+                (sc_c.conId, 'BUY'), (wc_c.conId, 'SELL'),
+                (sp_c.conId, 'BUY'), (wp_c.conId, 'SELL'),
+            ])
+            ibkr_trade = self.broker.place_limit(bag, 'SELL', qty, credit)
+
+            self.active_trades[symbol] = {
+                'structure': 'CONDOR',
+                'direction': 'CONDOR',
+                'target_entry_price': credit,
+                'status': 'PENDING_ENTRY',
+                'ibkr_trade': ibkr_trade,
+                'bag_contract': bag,
+                'qty': qty,
+                'max_profit_pct': 0.0,
+                'short_call': sc, 'wing_call': wc,
+                'short_put': sp, 'wing_put': wp,
+                # Wing call is a leg we HOLD — reconciliation tracks it
+                'long_conid': wc_c.conId,
+                'short_conid': sc_c.conId,
+                'entry_indicators': indicators,
+                'reason': reason,
+            }
+            self.daily_trade_count += 1
+            self.signal_cooldowns[(symbol, 'CONDOR')] = (
+                now_est + datetime.timedelta(minutes=config.SIGNAL_COOLDOWN_MINUTES)
+            )
+            logger.info(
+                f"SUBMITTED IRON CONDOR to IBKR: {qty}x {symbol} {sp:.0f}/{sc:.0f} "
+                f"(wings ±{width}) at CREDIT ${credit:.2f} — max loss "
+                f"${max_loss_per * qty:.0f} (OrderId: {ibkr_trade.order.orderId})"
+            )
+            notifier.notify_condor_submit(symbol, sc, wc, sp, wp, credit, qty,
+                                          max_loss_per * qty, reason,
+                                          ibkr_trade.order.orderId)
+            notifier.notify_today_summary(self.active_trades, self.closed_trades_today)
+        except Exception as e:
+            logger.error(f"Failed to place IBKR condor order for {symbol}: {e}")
+
     # ── Exit management ──────────────────────────────────────────────────────
 
     def evaluate_exit_conditions(self):
@@ -388,9 +511,7 @@ class TradingBot:
                     logger.info(f"[{symbol}] Position not found in account (miss {trade['reconcile_misses']}/2); re-checking next loop.")
                 return  # skip exit eval while the position's status is uncertain/closed
 
-        current_spread_value = self.broker.get_spread_value(
-            symbol, trade['direction'], trade['long_strike'], trade['short_strike']
-        )
+        current_spread_value = self._current_value(symbol, trade)
         if current_spread_value <= 0:
             logger.warning(f"Could not fetch spread value for {symbol}. Skipping exit eval.")
             return
@@ -399,7 +520,8 @@ class TradingBot:
             self._check_pending_fill(symbol, trade)
             return
 
-        profit_pct = (current_spread_value - trade['entry_price']) / trade['entry_price']
+        # side: +1 long premium (debit), −1 short premium (condor)
+        profit_pct = self._side(trade) * (current_spread_value - trade['entry_price']) / trade['entry_price']
 
         # Cache live P&L so the "today" summary can read it without extra IBKR calls
         trade['current_value'] = current_spread_value
@@ -410,23 +532,37 @@ class TradingBot:
             if profit_pct > 0:
                 logger.info(f"[{symbol}] New Max Profit: {profit_pct*100:.2f}%")
 
-        # Thesis-invalidation check (sustained VWAP recross against the trade).
-        # 1-min bars change at most once a minute, so cache the verdict ~50s —
-        # fast polling shouldn't multiply bar fetches.
+        # Thesis-invalidation check — debit: sustained VWAP recross; condor:
+        # price closed beyond a short strike (range thesis dead). 1-min bars
+        # change at most once a minute, so cache the verdict ~50s — fast
+        # polling shouldn't multiply bar fetches.
+        is_condor = trade.get('structure') == 'CONDOR'
         invalidated = trade.get('_inval_last', False)
-        if config.VWAP_INVALIDATION_BARS > 0:
+        if config.VWAP_INVALIDATION_BARS > 0 or is_condor:
             checked_at = trade.get('_inval_checked_at')
             if checked_at is None or (market_time.now_et() - checked_at).total_seconds() >= 50:
                 try:
                     df = self.broker.fetch_intraday_data(symbol)
-                    invalidated = strategy.thesis_invalidated(trade['direction'], df)
+                    if is_condor:
+                        invalidated = strategy.condor_breached(
+                            df, trade['short_call'], trade['short_put'])
+                    else:
+                        invalidated = strategy.thesis_invalidated(trade['direction'], df)
                 except Exception as e:
-                    logger.warning(f"[{symbol}] VWAP invalidation check failed: {e}")
+                    logger.warning(f"[{symbol}] Invalidation check failed: {e}")
                 trade['_inval_checked_at'] = market_time.now_et()
                 trade['_inval_last'] = invalidated
 
+        inval_reason = None
+        if is_condor:
+            inval_reason = (
+                f"Range breached: price closed beyond a short strike "
+                f"({trade['short_put']:.0f}/{trade['short_call']:.0f}) for "
+                f"{strategy.CONDOR_BREACH_BARS} consecutive bars"
+            )
         exit_triggered, exit_reason = strategy.exit_decision(
-            profit_pct, trade['max_profit_pct'], invalidated
+            profit_pct, trade['max_profit_pct'], invalidated,
+            invalidation_reason=inval_reason
         )
         if exit_triggered:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")
@@ -447,8 +583,10 @@ class TradingBot:
                 commission = (self.broker.order_commission(trade.get('ibkr_trade'))
                               if trade.get('ibkr_trade') else 0.0)
                 commission += self.broker.order_commission(tp)
+                tp_pct = (config.CONDOR_TP_PCT if trade.get('structure') == 'CONDOR'
+                          else config.TAKE_PROFIT_TARGET_PCT)
                 trade['exit_reason'] = (
-                    f"Take-profit target +{config.TAKE_PROFIT_TARGET_PCT*100:.0f}% hit "
+                    f"Take-profit target +{tp_pct*100:.0f}% hit "
                     f"(resting limit ${trade.get('tp_price', 0):.2f})"
                 )
                 logger.info(f"[{symbol}] TAKE-PROFIT FILLED at ${fill_price:.2f}")
@@ -478,8 +616,10 @@ class TradingBot:
                 commission = (self.broker.order_commission(trade.get('ibkr_trade'))
                               if trade.get('ibkr_trade') else 0.0)
                 commission += self.broker.order_commission(tp)
+                tp_pct = (config.CONDOR_TP_PCT if trade.get('structure') == 'CONDOR'
+                          else config.TAKE_PROFIT_TARGET_PCT)
                 trade['exit_reason'] = (
-                    f"Take-profit target +{config.TAKE_PROFIT_TARGET_PCT*100:.0f}% hit "
+                    f"Take-profit target +{tp_pct*100:.0f}% hit "
                     f"(filled during cancel race)"
                 )
                 logger.info(f"[{symbol}] Take-profit filled just before cancellation — booking it.")
@@ -504,18 +644,25 @@ class TradingBot:
                 # Fill time — reconciliation grace period anchor
                 trade['activated_at'] = market_time.now_et()
 
-                # Park a resting take-profit limit at entry x (1 + target).
-                # Fills between heartbeats (no sampling loss) and sells into
-                # strength. Every other exit path cancels it first.
-                if config.TAKE_PROFIT_TARGET_PCT > 0:
+                # Park a resting take-profit limit. Debit: SELL at entry×(1+target).
+                # Condor: BUY back at credit×(1−CONDOR_TP_PCT). Fills between
+                # heartbeats (no sampling loss) and trades with the move, not
+                # against it. Every other exit path cancels it first.
+                if trade.get('structure') == 'CONDOR':
+                    tp_price = (round(filled_price * (1 - config.CONDOR_TP_PCT), 2)
+                                if config.CONDOR_TP_PCT > 0 else None)
+                    tp_action = 'BUY'
+                else:
+                    tp_price = (round(filled_price * (1 + config.TAKE_PROFIT_TARGET_PCT), 2)
+                                if config.TAKE_PROFIT_TARGET_PCT > 0 else None)
+                    tp_action = 'SELL'
+                if tp_price and tp_price > 0:
                     try:
-                        tp_price = round(filled_price * (1 + config.TAKE_PROFIT_TARGET_PCT), 2)
                         trade['tp_ibkr_trade'] = self.broker.place_limit(
-                            trade['bag_contract'], 'SELL', trade['qty'], tp_price
+                            trade['bag_contract'], tp_action, trade['qty'], tp_price
                         )
                         trade['tp_price'] = tp_price
-                        logger.info(f"[{symbol}] Take-profit limit resting at ${tp_price:.2f} "
-                                    f"(+{config.TAKE_PROFIT_TARGET_PCT*100:.0f}%).")
+                        logger.info(f"[{symbol}] Take-profit limit ({tp_action}) resting at ${tp_price:.2f}.")
                     except Exception as e:
                         logger.warning(f"[{symbol}] Could not place take-profit order: {e}")
 
@@ -531,7 +678,10 @@ class TradingBot:
                     conviction=ind.get('conviction_str'),
                     commission=entry_commission,
                 )
-                notifier.notify_filled(symbol, trade, filled_price)
+                if trade.get('structure') == 'CONDOR':
+                    notifier.notify_condor_filled(symbol, trade, filled_price)
+                else:
+                    notifier.notify_filled(symbol, trade, filled_price)
 
             elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
                 logger.warning(f"[{symbol}] IBKR order {status}. Removing from tracking.")
@@ -562,9 +712,11 @@ class TradingBot:
             return
 
         try:
-            # Same BAG contract as entry — a SELL order closes the position
+            # Same BAG contract as entry; closing action is the opposite of
+            # opening — SELL closes a debit spread, BUY closes a condor
+            close_action = 'BUY' if trade.get('structure') == 'CONDOR' else 'SELL'
             exit_ibkr_trade = self.broker.place_limit(
-                trade['bag_contract'], 'SELL', trade['qty'], current_spread_value
+                trade['bag_contract'], close_action, trade['qty'], current_spread_value
             )
             trade['status'] = 'PENDING_EXIT'
             trade['exit_ibkr_trade'] = exit_ibkr_trade
@@ -602,9 +754,7 @@ class TradingBot:
             else:
                 waited = (market_time.now_et() - trade['exit_submitted_at']).total_seconds()
                 if waited >= self._EXIT_REPRICE_AFTER_S:
-                    fresh = self.broker.get_spread_value(
-                        symbol, trade['direction'], trade['long_strike'], trade['short_strike']
-                    )
+                    fresh = self._current_value(symbol, trade)
                     if fresh > 0 and abs(fresh - trade['exit_limit']) >= 0.01:
                         logger.warning(
                             f"[{symbol}] Closing order unfilled for {waited:.0f}s — repricing "
@@ -623,8 +773,9 @@ class TradingBot:
         """Book a confirmed exit: day record, throttle/breaker counters, Discord,
         audit row — all from the ACTUAL fill price and IBKR-reported commissions."""
         reason = trade.get('exit_reason', '')
-        profit_pct = (fill_price - trade['entry_price']) / trade['entry_price']
-        dollar_pnl = (fill_price - trade['entry_price']) * trade['qty'] * 100
+        side = self._side(trade)   # +1 debit, −1 condor (short premium)
+        profit_pct = side * (fill_price - trade['entry_price']) / trade['entry_price']
+        dollar_pnl = side * (fill_price - trade['entry_price']) * trade['qty'] * 100
         logger.info(
             f"[{symbol}] CLOSING ORDER FILLED at ${fill_price:.2f} "
             f"(limit was ${trade.get('exit_limit', 0):.2f}) — P&L {profit_pct*100:+.2f}% "
@@ -718,9 +869,7 @@ class TradingBot:
                     logger.info(f"[{symbol}] EOD: cancelled unfilled entry order.")
                     self.active_trades.pop(symbol, None)
                     continue
-                current_spread_value = self.broker.get_spread_value(
-                    symbol, trade['direction'], trade['long_strike'], trade['short_strike']
-                )
+                current_spread_value = self._current_value(symbol, trade)
                 if current_spread_value <= 0:
                     current_spread_value = 0.01  # still flatten — submit at minimum tick
                 self.close_position(symbol, current_spread_value, reason)
@@ -820,6 +969,8 @@ class TradingBot:
                                 direction, reason, indicators = self.evaluate_entry_strategy(symbol)
                                 if direction in ("CALL", "PUT"):
                                     self.execute_trade(symbol, direction, reason, indicators)
+                                elif direction == 'CONDOR':
+                                    self.execute_condor(symbol, reason, indicators)
 
                 interval = self._loop_interval()
                 if interval != self._last_interval:

@@ -6,6 +6,7 @@ independently testable. Orchestration lives in bot.py; market data in broker.py.
 """
 import datetime
 import logging
+import math
 from typing import Optional, Tuple
 
 import pandas as pd
@@ -126,6 +127,85 @@ def entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
     except Exception as e:
         logger.error(f"Error calculating indicators for {symbol}: {e}")
         return None, "", {}, None
+
+
+# ── Iron condor (regime-matched credit side) ─────────────────────────────────
+
+# Entry window: after the range has proven itself, while premium remains
+CONDOR_WINDOW_START = (11, 0)    # ET
+CONDOR_WINDOW_END = (13, 30)
+# Range thesis is dead when price closes beyond a short strike this many bars
+CONDOR_BREACH_BARS = 2
+
+
+def condor_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime,
+                  strike_step: float, wing_width: float
+                  ) -> Tuple[bool, str, dict]:
+    """Range-day signal: sell an iron condor around the day's proven range.
+
+    Fires only in the regime where the debit playbook structurally loses —
+    no trend (ADX < CONDOR_MAX_ADX) plus proven chop (>= CONDOR_MIN_VWAP_CROSSES
+    VWAP crosses), inside the 11:00–13:30 ET window. Short strikes sit just
+    outside the day high/low; wings are wing_width further out.
+    Returns (ok, reason, indicators) — indicators carries the four strikes.
+    """
+    hm = (now.hour, now.minute)
+    if hm < CONDOR_WINDOW_START or hm > CONDOR_WINDOW_END:
+        return False, "", {}
+    if df.empty or len(df) < 60:
+        return False, "", {}
+
+    try:
+        if 'ADX' not in df.columns or 'VWAP' not in df.columns:
+            add_indicators(df)
+
+        current_adx = df['ADX'].iloc[-1]
+        if pd.isna(current_adx) or current_adx >= config.CONDOR_MAX_ADX:
+            return False, "", {}
+
+        above = (df['close'] > df['VWAP']).dropna()
+        crosses = int((above != above.shift()).sum()) - 1 if len(above) > 1 else 0
+        if crosses < config.CONDOR_MIN_VWAP_CROSSES:
+            return False, "", {}
+
+        day_high = float(df['high'].max())
+        day_low = float(df['low'].min())
+        current = float(df['close'].iloc[-1])
+
+        # Short strikes just OUTSIDE the day's range; wings one width further
+        short_call = math.ceil((day_high + 1e-9) / strike_step) * strike_step
+        short_put = math.floor((day_low - 1e-9) / strike_step) * strike_step
+        if short_call - short_put < 2 * strike_step:      # range too narrow
+            return False, "", {}
+        if not (short_put < current < short_call):        # already at an edge
+            return False, "", {}
+
+        indicators = {
+            'adx': float(current_adx), 'vwap': float(df['VWAP'].iloc[-1]),
+            'current_price': current, 'vwap_crosses': crosses,
+            'orb_high': day_high, 'orb_low': day_low,   # audit columns reuse
+            'short_call': short_call, 'wing_call': short_call + wing_width,
+            'short_put': short_put, 'wing_put': short_put - wing_width,
+        }
+        reason = (
+            f"Range day: ADX {current_adx:.1f} < {config.CONDOR_MAX_ADX:.0f}, "
+            f"{crosses} VWAP crosses, range {day_low:.2f}–{day_high:.2f}. "
+            f"Selling {short_put:.0f}/{short_call:.0f} condor (wings ±{wing_width:.0f})."
+        )
+        return True, reason, indicators
+    except Exception as e:
+        logger.error(f"Error evaluating condor signal for {symbol}: {e}")
+        return False, "", {}
+
+
+def condor_breached(df: pd.DataFrame, short_call: float, short_put: float) -> bool:
+    """Range thesis invalidated: price closed beyond a short strike for
+    CONDOR_BREACH_BARS consecutive 1-min bars."""
+    n = CONDOR_BREACH_BARS
+    if df.empty or len(df) < n:
+        return False
+    closes = df['close'].tail(n)
+    return bool((closes > short_call).all() or (closes < short_put).all())
 
 
 # ── Breadth annotation ───────────────────────────────────────────────────────
@@ -250,7 +330,8 @@ def thesis_invalidated(direction: str, df: pd.DataFrame) -> bool:
 
 
 def exit_decision(profit_pct: float, max_profit_pct: float,
-                  invalidated: bool) -> Tuple[bool, str]:
+                  invalidated: bool,
+                  invalidation_reason: Optional[str] = None) -> Tuple[bool, str]:
     """Three-rule exit model, evaluated in priority order:
       1. Hard stop — cap the downside at HARD_STOP_LOSS_PCT.
       2. Thesis invalidation — sustained VWAP recross against the trade.
@@ -262,10 +343,11 @@ def exit_decision(profit_pct: float, max_profit_pct: float,
         return True, f"Hard stop loss: spread lost {abs(profit_pct)*100:.1f}% of entry value"
 
     if invalidated:
-        return True, (
+        base = invalidation_reason or (
             f"Thesis invalidated: price closed on the wrong side of VWAP for "
-            f"{config.VWAP_INVALIDATION_BARS} consecutive bars (Current P&L: {profit_pct*100:+.2f}%)"
+            f"{config.VWAP_INVALIDATION_BARS} consecutive bars"
         )
+        return True, f"{base} (Current P&L: {profit_pct*100:+.2f}%)"
 
     if max_profit_pct >= config.TAKE_PROFIT_TRAIL_TRIGGER:
         trailing_threshold = max_profit_pct * (1 - config.TRAILING_STOP_LOSS_PCT)

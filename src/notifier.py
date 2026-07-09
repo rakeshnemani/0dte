@@ -82,6 +82,40 @@ def notify_filled(symbol: str, trade: dict, filled_price: float):
     send("🟢 NEW 0DTE SPREAD ENTRY", desc, GREEN)
 
 
+def notify_condor_submit(symbol: str, short_call: float, wing_call: float,
+                         short_put: float, wing_put: float, credit: float,
+                         qty: int, max_loss: float, reason: str, order_id):
+    desc = (
+        f"**📊 Ticker:** {symbol}\n"
+        f"**🦅 Structure:** Iron Condor (credit)\n"
+        f"**⚙️ Strikes:** Put {wing_put:.0f}/{short_put:.0f} — Call {short_call:.0f}/{wing_call:.0f}\n"
+        f"**💰 Credit:** ${credit:.2f} per condor\n"
+        f"**📈 Quantity:** {qty} contracts\n"
+        f"**⚠️ Max Loss:** ${max_loss:.0f}\n\n"
+        f"**📝 Signal:** {reason}\n"
+        f"**⏳ Status:** Pending fill (Order #{order_id})"
+    )
+    send("⏳ CONDOR SUBMITTED — Awaiting Fill", desc, AMBER)
+
+
+def notify_condor_filled(symbol: str, trade: dict, filled_credit: float):
+    ind = trade['entry_indicators']
+    desc = (
+        f"**📊 Ticker:** {symbol}\n"
+        f"**🦅 Structure:** Iron Condor (credit)\n"
+        f"**⚙️ Strikes:** Put {trade['wing_put']:.0f}/{trade['short_put']:.0f} — "
+        f"Call {trade['short_call']:.0f}/{trade['wing_call']:.0f}\n"
+        f"**💰 Credit Received:** ${filled_credit:.2f} per condor\n"
+        f"**📈 Quantity:** {trade['qty']} contracts\n"
+        + (f"**🎯 Buy-back resting at:** ${trade['tp_price']:.2f}\n" if trade.get('tp_price') else "") +
+        f"\n**📉 At Entry:** ADX {ind.get('adx', 0):.1f} | "
+        f"{ind.get('vwap_crosses', 0)} VWAP crosses | "
+        f"range {ind.get('orb_low', 0):.2f}–{ind.get('orb_high', 0):.2f}\n\n"
+        f"**📝 Reason:** {trade.get('reason', 'N/A')}"
+    )
+    send("🦅 IRON CONDOR SOLD", desc, GREEN)
+
+
 def notify_closed(symbol: str, trade: dict, exit_price: float,
                   profit_pct: float, dollar_pnl: float, reason: str,
                   commission: float = 0.0):

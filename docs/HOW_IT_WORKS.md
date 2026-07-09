@@ -15,7 +15,7 @@ The code is split by concern: `bot.py` holds state and orchestration only; `brok
 `main.py` first creates an asyncio event loop (required for Python 3.10+ compatibility with `ib_insync`), then instantiates `TradingBot`, which:
 
 1. Connects to IBKR via IB Gateway or TWS using the host/port from `.env`
-2. Requests **delayed market data (type 4)** — no live subscription needed for paper trading
+2. Sets the market data type from `IBKR_MARKET_DATA_TYPE` (default **1 = real-time**; the paper account inherits the live account's data subscriptions). Set to `3`/`4` for delayed data when running without subscriptions
 3. Silences `ib_insync`'s internal error logger and subscribes to `errorEvent` to route IBKR messages itself — suppressing expected info codes (162, 2104, 2106, 10091, 10167, etc.) and surfacing real problems as `WARNING`
 4. Subscribes to account positions (`reqPositions`) and **adopts orphaned positions**: any open 0DTE spread found in the account but not in bot state (a restart wipes `active_trades`) is reconstructed — entry price estimated from account `avgCost` — and managed by the normal exit rules and EOD flatten. A 🔁 Discord alert lists what was adopted; unpairable positions get a ⚠️ alert for manual review instead
 5. Enters the main `while True:` loop
@@ -194,6 +194,27 @@ The bot looks at the **last 10 bars (~10 minutes)** of each index and evaluates:
 
 The breadth label (`✓ confirmed` or `✗ diverging`) also appears in the Discord ⏳ submission and 🟢 fill alerts.
 
+### Fallback: The Credit Playbook (iron condor on proven range days)
+
+If no directional signal fires, the same bar data is checked against the **condor signal** — the regime where the debit playbook structurally loses is exactly where premium selling earns:
+
+| Condition | Threshold | Why |
+|-----------|-----------|-----|
+| Time window | 11:00–13:30 ET | The range must have proven itself; premium must remain |
+| No trend | ADX < `CONDOR_MAX_ADX` (22) | Mutually exclusive with debit entries (ADX ≥ 25 rising) by construction |
+| Proven chop | ≥ `CONDOR_MIN_VWAP_CROSSES` (8) VWAP crosses | The tape has demonstrated range behavior — the same counter that penalizes debit conviction |
+| Geometry | Price mid-range; range ≥ 2 strikes wide; credit ≥ `MIN_CONDOR_CREDIT` | Strikes must exist outside the range and pay enough to be worth the risk |
+
+**Structure:** short call just above the day high, short put just below the day low, wings `SPREAD_WIDTH` out — a 4-leg BAG defined as a positive-value package (**SELL to open** collects the credit, **BUY to close**). Sized by max loss: `(width − credit) × 100 × qty ≤ MAX_POSITION_SIZE`.
+
+**Condor exits** reuse the shared machinery with inverted P&L sign (`profit = credit − current cost`):
+- Resting **buy-back limit at 50% of credit** (`CONDOR_TP_PCT`), parked on fill — the mirror of the debit TP
+- **Hard stop −70%** → buys back at 1.7× credit (tighter than the classic 2× rule)
+- **Range-breach invalidation** — 2 consecutive 1-min closes beyond a short strike means the range thesis is dead; exit instead of riding toward max loss
+- **Trailing stop and EOD flatten** apply unchanged
+
+**Restart caveat:** adoption does *not* reconstruct condors — an underlying with legs in both rights triggers the ⚠️ manual-review alert instead (half-adopting a condor as a "vertical" would misread it). Avoid restarting with a condor open, or close it manually first.
+
 ### Execution: BAG Combo Order
 
 IBKR represents multi-leg options as `BAG` contracts with `ComboLeg` objects:
@@ -362,6 +383,7 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `IBKR_HOST` | `127.0.0.1` | IB Gateway / TWS host |
 | `IBKR_PORT` | `4002` | `4002` = IB Gateway paper, `7497` = TWS paper |
 | `IBKR_CLIENT_ID` | `1` | Unique socket client ID; change if running multiple bots |
+| `IBKR_MARKET_DATA_TYPE` | `1` | 1 = real-time (needs subscriptions), 3/4 = delayed |
 | `SYMBOLS` | `SPY,QQQ,IWM` | Comma-separated underlyings to scan |
 | `MAX_POSITION_SIZE` | `300.0` | Max dollars risked per spread |
 | `MAX_TRADES_PER_DAY` | `12` | Hard daily cap across all symbols |
@@ -378,6 +400,11 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `CONVICTION_HIGH_MULT` | `1.5` | Budget multiplier for HIGH conviction (score ≥ 4) |
 | `MIN_CONVICTION_SCORE` | `2` | Skip entries scoring below this (−99 to disable) |
 | `TAKE_PROFIT_TARGET_PCT` | `0.60` | Resting limit sell at entry × (1 + this), parked on fill (0 = off) |
+| `CONDOR_ENABLED` | `true` | Sell iron condors on proven range days (11:00–13:30 ET) |
+| `CONDOR_MAX_ADX` | `22` | Condor requires ADX below this (no trend) |
+| `CONDOR_MIN_VWAP_CROSSES` | `8` | Condor requires at least this many VWAP crosses (proven chop) |
+| `MIN_CONDOR_CREDIT` | `0.15` | Skip condors collecting less than this |
+| `CONDOR_TP_PCT` | `0.50` | Resting buy-back at this fraction of credit received |
 | `TAKE_PROFIT_TRAIL_TRIGGER` | `0.50` | Peak profit % that arms the trailing stop |
 | `TRAILING_STOP_LOSS_PCT` | `0.10` | Once armed, exit if profit falls to (1 − this) of the peak — i.e. gives back 10% of the peak |
 | `HARD_STOP_LOSS_PCT` | `0.70` | Exit immediately if spread loses this fraction of entry value |
