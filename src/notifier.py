@@ -185,6 +185,17 @@ def notify_adopted(lines: list):
     )
 
 
+def notify_untracked_holding(symbol: str, lines: list):
+    send(
+        "⚠️ UNTRACKED POSITION — ENTRIES BLOCKED",
+        f"The account holds **{symbol}** option legs that no tracked trade owns "
+        f"(a leftover the bot isn't managing). New {symbol} entries are blocked "
+        f"until it's cleared, to avoid stacking positions:\n\n" + "\n".join(lines)
+        + "\n\n**Flatten it manually in IBKR** (or restart the bot to adopt it).",
+        RED
+    )
+
+
 def notify_unadoptable(lines: list):
     send(
         "⚠️ UNTRACKED POSITIONS NEED ATTENTION",

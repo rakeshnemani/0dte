@@ -10,6 +10,7 @@ for how they map to the paper→live gates.
 
 | Priority | Meaning | Items |
 |----------|---------|-------|
+| **P0 — CRITICAL** | Live-money correctness bug | ✅ **#21 + #25 done 2026-07-09** (reconciliation hardened, permId is a tracked key). **#26** retry-loop still open |
 | **P0 — do next** | Directly moves the fee-adjusted edge or is a mandatory safety control; small builds | *(cleared — #13 and #15 done 2026-07-07)* |
 | **P1 — soon** | Required before live or user-committed next major build | **#2** exposure cap, **#16** always-on host *(#9 condors → done 2026-07-08; #17, #18, #19 → done 2026-07-08)* |
 | **P2 — evidence-gated** | Good hypotheses waiting for data or a trigger day | **#20** wider spreads (fee-ratio experiment), **#5** time stop, **#6** midday tightening, **#7** expected-move anchor, **#12** 2-hour throttle |
@@ -33,7 +34,19 @@ requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
 16. **[P1] Always-on host** — Move the bot off the laptop (VPS or dedicated machine; interim: tmux + caffeinate). Two Ctrl+C/sleep incidents already; GO_LIVE Gate 4's "20 clean sessions" clock can't start until this is done. Operational task, not code. *(Imported from the go-live checklist.)*
 
 
-## P2 — Evidence-gated
+## P0 — CRITICAL
+
+26. **[P0-CRITICAL] Order reject/retry infinite loop on error 201** — Revealed by the 2026-07-09 logs: the SPY closing order was rejected with **IBKR error 201** ("Cannot have open orders on both sides of the same US Option contract") ~every 15s from 14:57–15:00, because `_check_pending_exit` sees the order go `Inactive` → reverts the trade to `ACTIVE` → EOD flatten re-submits the identical order → rejected again → loop. Two problems: (a) **root cause** — the orphan cascade (#21) left opposite-side resting/opening orders alive on the same legs, triggering 201; (b) **the retry logic blindly re-submits a permanently-rejected order.** Fix: on a hard rejection (201 and similar), do NOT revert-and-retry blindly — cancel conflicting orders on those legs first, cap retries with backoff, and alert if a close can't be placed. **#21's fix removes the root cause (no more orphan cascade → no conflicting orders); (b) the blind-retry is still worth hardening.** (Also seen: error 202 post-close = stale resting orders auto-cancelled by IBKR at EOD.)
+
+## P1 / P2 — Queued & evidence-gated
+
+23. **[P1] Hourly Discord health summary** — *User-requested 2026-07-09.* Every hour during market hours, post a compact status: positions **awaiting fill** (PENDING_ENTRY/PENDING_EXIT), **open** (with live P&L), and **closed today** (with net). Gives an at-a-glance heartbeat so orphans/stuck orders surface within an hour instead of at EOD. Reuse the `notify_today_summary` data; add a wall-clock hourly trigger in the loop (track `last_hourly_sent`). Cheap; high monitoring value while the bot is still maturing.
+
+24. **[P1 — partly built] Ad-hoc P&L reconciliation by date** — *User-requested 2026-07-09.* `scripts/reconcile_ibkr.py [YYYY-MM-DD]` already exists: pulls IBKR executions, groups by `permId`, sums realized P&L + commissions, lists still-open positions, and diffs against `audit.csv`. **Remaining:** (a) the live API only covers ~24h — add an **IBKR Flex Query** path for older dates; (b) once `PermId` is in the audit (#25), join on it for exact per-trade matching instead of date-level totals; (c) optionally auto-append reconciled orphan settlements to the audit.
+
+28. **[P1 — reconsider] Condors may be a net-negative structure** — Cumulative through 07-09: condors 1W/2L, −$137 gross, and the $1-wide structure needs an **86% win rate** to break even (collect ~$0.30, risk $0.70). Options: (a) require much higher `MIN_CONDOR_CREDIT` / wider wings so R:R isn't so lopsided; (b) tighten the breach exit (#22) so run-overs cost less; (c) **shelve condors entirely (`CONDOR_ENABLED=false`) until the debit side is fee-adjusted-green** — don't let a second unproven structure add fee drag while the core isn't paying for itself. Decide after ~5 more condor days OR just disable now to reduce noise. Small sample — but the structural math is a red flag.
+
+22. **[P1] Condor breach exit fires too late** — 2026-07-09 QQQ condor exited at −67% (near the hard stop), not the intended ~−25%: the "2 consecutive 1-min *closes* beyond a short strike" rule lags a fast breakout by minutes. Consider an intrabar trigger (price *touches* beyond the short strike), or reduce to 1 close, or add a tighter condor-specific stop (e.g. −40%). Needs a couple more condor days to calibrate vs. false breaches.
 
 20. **[P2] Wider spreads to cut the fee ratio** — Fees are per contract, so raising `MAX_POSITION_SIZE` does NOT improve the commission ratio (1.67× budget = 1.67× contracts = 1.67× fees). What does: $2-wide spreads on SPY/QQQ — roughly double the premium per contract → half the contracts → **half the fees per dollar of exposure** (~4.4% → ~2.2%). Needs analysis first: liquidity at $2 widths, and whether the deeper spread's % P&L behavior changes exit-rule calibration. Run as an experiment on one symbol after #17/#19 have a week of data.
 
@@ -56,6 +69,12 @@ requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
 ---
 
 ## ✅ Done
+
+21. ~~**Reconciliation false-positives orphan live positions**~~ — ✅ **2026-07-09**. `_position_still_open()` rewritten: **fails open on an empty positions feed** (an account with an open 0DTE spread always shows ≥2 legs, so empty = feed-not-ready, not closed — the actual bug), checks whether **any** leg is held (all leg conIds now stored per trade, incl. all 4 condor legs), and the drop decision is **time-based (180s of consistent absence)** not loop-count so 15s fast-poll can't drop a live trade in 30s. Added an **anti-cascade entry guard**: `execute_trade`/`execute_condor` refuse to open while the account holds untracked legs for that symbol (⚠️ alert once/day), so a phantom-close can't spawn a duplicate. Unit-tested (empty-feed → still-open, any-leg → still-open, live-feed-absent → closed, entry guard). Root-causes #26 too.
+
+25. ~~**permId as a tracked key + in audit**~~ — ✅ **2026-07-09**. `broker.order_perm_id()` reads IBKR's permanent order id; captured as `entry_permId`/`exit_permId` on the trade and written to a new `PermId` audit column (both BUY and SELL rows). `scripts/backfill_permid.py` retro-filled today's rows by matching IBKR executions on (symbol, price, time) — 9/10 matched (older rows are outside IBKR's ~24h execution window; need Flex Query per #24). permId is the exact join key for reconciliation and audit↔IBKR.
+
+27. ~~**Operational logging (separate from audit)**~~ — ✅ **2026-07-09** (`src/logging_setup.py`): all bot activity (orders, IBKR errors, reconnects, exit decisions, reconciliation drops, dashboard rebuilds) now written to `logs/bot.log` — daily rotation, 30-day retention, ET timestamps, with module names. Console output unchanged. Distinct from `audit.csv` (financials only). Motivated by the 2026-07-09 error-201 loop scrolling off the terminal. *Tuning knob: ib_insync INFO `placeOrder` dumps are captured for order-debugging; drop them to WARNING if the file gets noisy.*
 
 1. ~~**ADX slope check (rising vs. flat)**~~ — ✅ **2026-07-05** as `ADX_SLOPE_BARS=10` (entry requires ADX rising over the last 10 bars; fails open early-session).
    *Evidence 2026-07-01: ADX direction (entry→exit) predicted all 5 trade outcomes.*

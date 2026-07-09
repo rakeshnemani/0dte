@@ -10,10 +10,12 @@ A Python algorithmic trading bot that paper trades 0DTE options spreads on Inter
 ├── .gitignore
 ├── README.md
 ├── requirements.txt     # Python dependencies
-├── audit.csv            # Trade log (auto-created on first run)
+├── audit.csv            # Financial trade log (auto-created on first run)
 ├── dashboard.xlsx       # Excel dashboard (regenerated after each trading day)
+├── logs/                # Operational logs — daily-rotating bot.log (gitignored)
 ├── docs/
 │   ├── HOW_IT_WORKS.md  # Deep-dive on bot logic and design decisions
+│   ├── PLAYBOOKS.md     # Entry/exit/P&L reference per structure (debit vs condor)
 │   ├── RETROSPECTIVE.md # Daily trade journal + hypotheses under test
 │   └── GO_LIVE.md       # Paper→live readiness gates and progress
 ├── scripts/
@@ -303,8 +305,11 @@ Every fill (entry and exit) is appended to `audit.csv`:
 | Peak_Pct | Highest profit % the trade reached before exit (SELL rows only) |
 | Conviction | Sizing score at entry, e.g. `HIGH 4/5 \| ADX✓ slope✓ agree✓(QQQ) early✓ tape✗(6x)` (BUY rows) |
 | Commission | IBKR-reported commissions — entry legs on BUY rows; full round trip on SELL rows |
+| PermId | IBKR permanent order id — the primary key joining each row to the IBKR account (entry permId on BUY, exit permId on SELL) |
 
 > Exit prices are **IBKR-confirmed fills** (`avgFillPrice`), not submission prices. Unfilled closing orders are repriced after 3 minutes.
+
+Two companion tools use `PermId` as the join key: `scripts/reconcile_ibkr.py [date]` (pull IBKR executions + account P&L, diff against the audit) and `scripts/backfill_permid.py` (retro-fill permIds for recent rows).
 
 > Timestamps are logged in **ET** (rows before 2026-07-05 are in the machine's local time, CDT).
 
@@ -333,8 +338,8 @@ Three sheets, built from `audit.csv` with live Excel formulas:
 - **Market data type** — Set by `IBKR_MARKET_DATA_TYPE` (default **1 = real-time**). Real-time needs active data subscriptions (US Equity & Options Add-On Streaming Bundle + Securities Snapshot Bundle); the paper account inherits them from the live account once sharing is enabled. Set to `3`/`4` to run on 15-min delayed data without subscriptions. Note: option-spread pricing and exit decisions are only as fresh as this feed — delayed data lags fills by ~15 min.
 - **Informational IBKR codes** — Codes like 162 (no data yet), 2104/2106 (farm connected), 10091/10167 (delayed data notice) are suppressed from logs and handled silently. Real errors (order rejections, etc.) still appear as `WARNING`.
 - **Auto-reconnect** — If the IBKR connection drops mid-session, the bot attempts to reconnect at the start of the next loop iteration.
-- **Position reconciliation** — Each loop the bot checks every tracked position against your actual IBKR account (`ib.positions()`). If you close a spread manually (Client Portal, mobile app, or TWS), the bot detects the missing position (after two consecutive checks, with a 90-second grace period after entry) and drops it from tracking — so it never tries to manage or re-sell a position you no longer hold. A ⚠️ alert fires. P&L for an externally-closed trade is **not** recorded, since the bot doesn't know the price you exited at.
+- **Position reconciliation** — Each loop the bot checks every tracked position against your actual IBKR account (`ib.positions()`). If you close a spread manually (Client Portal, mobile app, or TWS), the bot detects it and drops it from tracking so it never manages a position you no longer hold. **Hardened against false-positives** (which once orphaned live positions): it fails open on an empty/incomplete feed, treats a trade as open if *any* leg is still held, and only concludes "closed" after the legs have been absent for a sustained 180-second window — a data glitch cannot orphan a live position. An **anti-cascade guard** also blocks new entries in a symbol whose legs are still held but untracked.
 - **Startup adoption** — On start, the bot scans `ib.positions()` for open 0DTE option spreads it isn't tracking (orphaned by a restart), reconstructs them (entry price estimated from account `avgCost`), and manages them with the normal exit rules and EOD flatten. Unpairable or non-0DTE positions trigger a ⚠️ alert for manual review instead.
 - **Stale-feed detector** — If the latest intraday bar is more than 10 minutes old during market hours, a WARNING is logged (indicators may be unreliable).
 
-For a full explanation of the bot's internal logic, see [How It Works](docs/HOW_IT_WORKS.md).
+For a full explanation of the bot's internal logic, see [How It Works](docs/HOW_IT_WORKS.md). For the entry/exit/P&L rules broken out by structure (debit spread vs. iron condor), see [Playbooks](docs/PLAYBOOKS.md).

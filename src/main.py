@@ -3,9 +3,13 @@ import asyncio
 # dependency calls get_event_loop() at import time, so we must create one first.
 asyncio.set_event_loop(asyncio.new_event_loop())
 
-import time
-from bot import TradingBot
 import logging
+# Configure logging (console + daily-rotating file) BEFORE importing bot, so the
+# file handler captures everything from the first line.
+import logging_setup
+logging_setup.configure()
+
+from bot import TradingBot
 
 logger = logging.getLogger(__name__)
 

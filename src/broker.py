@@ -143,6 +143,14 @@ class IBKRBroker:
     def cancel_order(self, order):
         self.ib.cancelOrder(order)
 
+    def order_perm_id(self, ibkr_trade) -> int:
+        """IBKR permId for a trade — the permanent, account-wide order key
+        (survives restarts; same across API clients). 0 until IBKR acknowledges."""
+        try:
+            return int(ibkr_trade.order.permId or 0)
+        except Exception:
+            return 0
+
     def order_commission(self, ibkr_trade) -> float:
         """Total commissions IBKR reported for a trade's fills (all legs).
         Returns 0.0 if reports haven't arrived yet."""

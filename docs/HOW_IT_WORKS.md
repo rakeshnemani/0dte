@@ -2,6 +2,8 @@
 
 This document explains the full lifecycle of the bot — from startup and market-hours management through entry scanning, order execution, position monitoring, and exit rules.
 
+> Looking for the entry/exit/P&L rules organized **by trade structure** (CALL/PUT debit spread vs. iron condor, and why there's no standalone credit spread)? See [PLAYBOOKS.md](PLAYBOOKS.md). This document is the chronological lifecycle; that one is the structure-by-structure reference.
+
 ---
 
 ## 1. Startup
@@ -250,16 +252,18 @@ Every loop iteration, `evaluate_exit_conditions_for_symbol()` runs for each acti
 
 ### Position Reconciliation (runs first, for ACTIVE trades)
 
-Before any exit logic, the bot reconciles each `ACTIVE` trade against your **real IBKR account** via `ib.positions()` (subscribed at connect with `reqPositions()`). It matches the spread's long-leg `conId`:
+Before any exit logic, the bot reconciles each `ACTIVE` trade against your **real IBKR account** via `ib.positions()` (subscribed at connect with `reqPositions()`), checking **every leg** (all `leg_conids` — 2 for a vertical, 4 for a condor):
 
-- **Leg still held** → reset the miss counter, proceed to exit rules as normal.
-- **Leg missing** → increment a miss counter. After **two consecutive** missing reads, the position is treated as **closed externally** (you closed it manually via the Client Portal, mobile app, or TWS; or it was assigned): the bot drops it from `active_trades`, fires a ⚠️ alert, and records **no P&L** (it doesn't know your exit price).
+- **Any leg still held** → the position is open; proceed to exit rules.
+- **All legs absent** → start a **180-second confirmation window**. Only if they stay absent the whole window is the position treated as **closed externally** (closed manually via Client Portal / mobile / TWS, or assigned): the bot cancels any resting order, drops it from `active_trades`, fires a ⚠️ alert, and records no P&L.
 
-Two safeguards prevent false drops:
-- **90-second grace period** after a fill — gives the account feed time to reflect a just-opened position before it could be flagged missing.
-- **Fail-open** — if `ib.positions()` errors or the leg `conId` is unknown, the bot assumes the position is still open. A data hiccup never abandons a real trade.
+Four safeguards make a false drop — which once orphaned live positions (2026-07-09) — effectively impossible:
+- **Fail-open on an empty feed** — an account holding an open 0DTE spread *always* shows ≥ 2 option legs, so an empty `positions()` list means the feed isn't populated, **not** that everything closed. This was the actual 07-09 bug.
+- **Any-leg check** — one visible leg means open; a partial feed can't drop the trade.
+- **Time-based confirmation (180 s)**, not loop-count — so 15-second fast-polling can't drop a live trade in 30 s.
+- **90-second grace** after a fill, so a just-opened position isn't flagged before the feed catches up.
 
-This is what stops the bot from trying to re-sell (or mis-manage) a position you've already closed yourself.
+An **anti-cascade entry guard** complements this: the bot refuses to open a new position while the account holds untracked legs for that symbol — so even a wrongly-dropped position can't get a duplicate stacked on top (the mechanism behind the 07-09 25-lot IWM pileup). Every trade also carries its IBKR **`permId`**, written to the audit and used as the exact join key when reconciling against the account.
 
 ### Pending Entry Check
 

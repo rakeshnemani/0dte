@@ -51,6 +51,8 @@ class TradingBot:
         # conviction-score penalty (tape character, not signal quality).
         self.invalidation_counts: Dict[tuple, int] = {}
         self.invalidation_total_today: int = 0
+        # (symbol, date) pairs already warned about an untracked account position
+        self._untracked_alerted: set = set()
         # Last raw directional lean per symbol (price vs VWAP), for the
         # cross-symbol agreement component of the conviction score.
         self.symbol_lean: Dict[str, tuple] = {}
@@ -77,6 +79,7 @@ class TradingBot:
             self.daily_summary_sent = False
             self.invalidation_counts.clear()
             self.invalidation_total_today = 0
+            self._untracked_alerted.clear()
             self.symbol_lean.clear()
             logger.info(f"Daily trade count reset for {today}")
 
@@ -167,6 +170,7 @@ class TradingBot:
                 'short_strike': float(short_p.contract.strike),
                 'long_conid': long_p.contract.conId,
                 'short_conid': short_p.contract.conId,
+                'leg_conids': [long_p.contract.conId, short_p.contract.conId],
                 'entry_indicators': {},
                 'reason': 'Adopted at startup (position found in account, not in bot state)',
             }
@@ -185,16 +189,30 @@ class TradingBot:
             logger.warning(f"Unadoptable positions found at startup: {len(leftovers)}")
             notifier.notify_unadoptable(lines)
 
+    # Legs must be absent this long before a trade is deemed externally closed
+    _RECONCILE_DROP_AFTER_S = 180
+
+    def _trade_leg_conids(self, trade: dict) -> list:
+        """All option-leg conIds for a trade (2 for a vertical, 4 for a condor).
+        Falls back to the legacy long/short fields for trades opened pre-upgrade."""
+        legs = trade.get('leg_conids')
+        if legs:
+            return legs
+        return [c for c in (trade.get('long_conid'), trade.get('short_conid')) if c]
+
     def _position_still_open(self, trade: dict) -> bool:
-        """True if the spread's long leg is still held in the IBKR account.
-        Fails open whenever the answer can't be determined, so a data hiccup
-        never causes the bot to abandon a real open position."""
-        long_conid = trade.get('long_conid')
-        if long_conid is None:
+        """True if ANY of the trade's legs is still held in the IBKR account.
+
+        Hardened so a feed glitch can NEVER orphan a live position (the 2026-07-09
+        bug): fails open on an empty/incomplete positions snapshot, checks every
+        leg (not just one), and only the caller's time-based confirmation can
+        actually drop a trade.
+        """
+        leg_conids = self._trade_leg_conids(trade)
+        if not leg_conids:
             return True  # nothing to match against — assume open
 
-        # Grace period: give the account feed time to reflect a just-filled
-        # entry before this leg could be (wrongly) reported as missing.
+        # Grace period: let the account feed reflect a just-filled entry first.
         activated_at = trade.get('activated_at')
         if activated_at is not None:
             if (market_time.now_et() - activated_at).total_seconds() < 90:
@@ -205,10 +223,51 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"Position reconciliation fetch failed: {e}")
             return True  # fail-open
-        for p in positions:
-            if p.contract.conId == long_conid and p.position != 0:
-                return True
-        return False
+
+        # FAIL OPEN on an empty option-positions feed. An account holding an open
+        # 0DTE spread always shows >= 2 option legs; an empty list means the feed
+        # isn't populated, NOT that everything closed. (This guard is the specific
+        # fix for the orphaning bug.)
+        held = {p.contract.conId for p in positions
+                if p.contract.secType == 'OPT' and p.position != 0}
+        if not held:
+            return True
+
+        # Still open if we can see ANY of our legs.
+        return any(cid in held for cid in leg_conids)
+
+    def _symbol_option_positions(self, symbol: str) -> list:
+        """Account option legs held for `symbol` (root-matched, non-zero)."""
+        try:
+            positions = self.broker.positions()
+        except Exception:
+            return []
+        root = self.broker.option_symbol(symbol)
+        return [p for p in positions if p.contract.secType == 'OPT'
+                and p.position != 0 and p.contract.symbol == root]
+
+    def _symbol_has_untracked_position(self, symbol: str) -> bool:
+        """True if the account holds option legs for `symbol` that no tracked
+        trade owns — a live orphan. Never open on top of one (anti-cascade guard)."""
+        held = self._symbol_option_positions(symbol)
+        if not held:
+            return False
+        tracked = set()
+        for t in self.active_trades.values():
+            tracked.update(self._trade_leg_conids(t))
+        return any(p.contract.conId not in tracked for p in held)
+
+    def _alert_untracked_once(self, symbol: str):
+        """Fire a ⚠️ alert (once per symbol per day) about an untracked holding
+        that's blocking new entries — the human needs to flatten it manually."""
+        key = (symbol, market_time.now_et().date())
+        if key in self._untracked_alerted:
+            return
+        self._untracked_alerted.add(key)
+        held = self._symbol_option_positions(symbol)
+        lines = [f"• {symbol} {p.contract.right}{p.contract.strike:g}  pos {p.position:+g}"
+                 for p in held]
+        notifier.notify_untracked_holding(symbol, lines)
 
     # ── Entry ────────────────────────────────────────────────────────────────
 
@@ -266,6 +325,14 @@ class TradingBot:
         """Run the entry guards, size by conviction, and submit the BAG order."""
         if symbol in self.active_trades:
             logger.warning(f"Already in active trade for {symbol}. Skipping.")
+            return
+
+        # Anti-cascade guard: never open on top of an untracked position in this
+        # symbol. If a still-open orphan exists, a new order would pile on (the
+        # 2026-07-09 duplicate-IWM-condor cascade). Alert once, don't trade.
+        if self._symbol_has_untracked_position(symbol):
+            logger.warning(f"[{symbol}] Untracked option position held in account — skipping entry to avoid stacking.")
+            self._alert_untracked_once(symbol)
             return
 
         now_est = market_time.now_et()
@@ -362,6 +429,7 @@ class TradingBot:
                 'short_strike': short_strike,
                 'long_conid': long_c.conId,    # for position reconciliation
                 'short_conid': short_c.conId,
+                'leg_conids': [long_c.conId, short_c.conId],
                 'entry_indicators': indicators,
                 'reason': reason,
             }
@@ -388,6 +456,11 @@ class TradingBot:
         """Sell an iron condor around the day's range (credit playbook).
         Sized by max loss: (width − credit) × 100 × qty <= MAX_POSITION_SIZE."""
         if symbol in self.active_trades:
+            return
+
+        if self._symbol_has_untracked_position(symbol):
+            logger.warning(f"[{symbol}] Untracked option position held in account — skipping condor to avoid stacking.")
+            self._alert_untracked_once(symbol)
             return
 
         now_est = market_time.now_et()
@@ -447,9 +520,10 @@ class TradingBot:
                 'max_profit_pct': 0.0,
                 'short_call': sc, 'wing_call': wc,
                 'short_put': sp, 'wing_put': wp,
-                # Wing call is a leg we HOLD — reconciliation tracks it
                 'long_conid': wc_c.conId,
                 'short_conid': sc_c.conId,
+                # All four legs — reconciliation is "still open if ANY is held"
+                'leg_conids': [sc_c.conId, wc_c.conId, sp_c.conId, wp_c.conId],
                 'entry_indicators': indicators,
                 'reason': reason,
             }
@@ -492,24 +566,29 @@ class TradingBot:
         if trade.get('status') == 'ACTIVE' and self._tp_filled(symbol, trade):
             return
 
-        # Reconcile against the real IBKR account. If an ACTIVE position is no
-        # longer held (closed manually via Client Portal / mobile / TWS,
-        # assigned, etc.), stop tracking it instead of trying to manage or sell
-        # a position we don't own. Require two consecutive "missing" reads so a
-        # transient empty snapshot can't drop a live trade.
+        # Reconcile against the real IBKR account. Only conclude "externally
+        # closed" after the legs have been consistently absent for a sustained
+        # window — TIME-based, not loop-count, so 15s fast-polling can't drop a
+        # live trade in 30s (the 2026-07-09 orphaning bug). Combined with the
+        # fail-open guards in _position_still_open, a feed glitch cannot orphan.
         if trade.get('status') == 'ACTIVE':
             if self._position_still_open(trade):
-                trade['reconcile_misses'] = 0
+                trade.pop('first_missing_at', None)
             else:
-                trade['reconcile_misses'] = trade.get('reconcile_misses', 0) + 1
-                if trade['reconcile_misses'] >= 2:
-                    logger.warning(f"[{symbol}] Position no longer in IBKR account — closed externally. Dropping from tracking.")
-                    self._cancel_tp_order(symbol, trade)  # never leave a resting sell behind
+                first = trade.get('first_missing_at')
+                if first is None:
+                    trade['first_missing_at'] = market_time.now_et()
+                    logger.info(f"[{symbol}] Legs not found in account — starting {self._RECONCILE_DROP_AFTER_S}s confirmation window.")
+                    return
+                missing_for = (market_time.now_et() - first).total_seconds()
+                if missing_for >= self._RECONCILE_DROP_AFTER_S:
+                    logger.warning(f"[{symbol}] Legs absent for {missing_for:.0f}s — confirmed closed externally. Dropping from tracking.")
+                    self._cancel_tp_order(symbol, trade)  # never leave a resting order behind
                     notifier.notify_closed_externally(symbol, trade['direction'])
                     self.active_trades.pop(symbol, None)
                 else:
-                    logger.info(f"[{symbol}] Position not found in account (miss {trade['reconcile_misses']}/2); re-checking next loop.")
-                return  # skip exit eval while the position's status is uncertain/closed
+                    logger.info(f"[{symbol}] Legs still absent ({missing_for:.0f}/{self._RECONCILE_DROP_AFTER_S}s); re-checking.")
+                return  # skip exit eval while the position's status is uncertain
 
         current_spread_value = self._current_value(symbol, trade)
         if current_spread_value <= 0:
@@ -589,6 +668,7 @@ class TradingBot:
                     f"Take-profit target +{tp_pct*100:.0f}% hit "
                     f"(resting limit ${trade.get('tp_price', 0):.2f})"
                 )
+                trade['exit_permId'] = self.broker.order_perm_id(tp)
                 logger.info(f"[{symbol}] TAKE-PROFIT FILLED at ${fill_price:.2f}")
                 self._finalize_closed_trade(symbol, trade, fill_price, commission)
                 return True
@@ -622,6 +702,7 @@ class TradingBot:
                     f"Take-profit target +{tp_pct*100:.0f}% hit "
                     f"(filled during cancel race)"
                 )
+                trade['exit_permId'] = self.broker.order_perm_id(tp)
                 logger.info(f"[{symbol}] Take-profit filled just before cancellation — booking it.")
                 self._finalize_closed_trade(symbol, trade, fill_price, commission)
                 return True
@@ -643,6 +724,8 @@ class TradingBot:
                 trade['entry_price'] = filled_price
                 # Fill time — reconciliation grace period anchor
                 trade['activated_at'] = market_time.now_et()
+                # permId — the permanent, account-wide key for this trade
+                trade['entry_permId'] = self.broker.order_perm_id(ibkr_trade)
 
                 # Park a resting take-profit limit. Debit: SELL at entry×(1+target).
                 # Condor: BUY back at credit×(1−CONDOR_TP_PCT). Fills between
@@ -677,6 +760,7 @@ class TradingBot:
                     adx_slope=ind.get('adx_slope'),
                     conviction=ind.get('conviction_str'),
                     commission=entry_commission,
+                    perm_id=trade.get('entry_permId'),
                 )
                 if trade.get('structure') == 'CONDOR':
                     notifier.notify_condor_filled(symbol, trade, filled_price)
@@ -745,6 +829,7 @@ class TradingBot:
                 commission = (self.broker.order_commission(trade.get('ibkr_trade'))
                               if trade.get('ibkr_trade') else 0.0)
                 commission += self.broker.order_commission(exit_trade)
+                trade['exit_permId'] = self.broker.order_perm_id(exit_trade)
                 self._finalize_closed_trade(symbol, trade, fill_price, commission)
 
             elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
@@ -855,6 +940,7 @@ class TradingBot:
             profit_pct=profit_pct, dollar_pnl=dollar_pnl,
             peak_pct=trade.get('max_profit_pct'),
             commission=commission,
+            perm_id=trade.get('exit_permId'),
         )
         self.active_trades.pop(symbol, None)
 

@@ -44,6 +44,150 @@ score separates winners from losers** (calibration pass after ~2 weeks of the
 
 ---
 
+## 📊 CUMULATIVE META-ANALYSIS (through 2026-07-09) — "do we lose more than we win?"
+
+**Short answer: yes — 45% win rate. But the strategy is sitting *right at breakeven*,
+and fees are what push it into the red.** Not broken; underwater at the margin.
+
+### The numbers (current era, fixed exits, 06-30 →)
+
+| Cohort | Trades | W / L | Win rate | Gross | Fees | Net | Breakeven WR |
+|--------|--------|-------|----------|-------|------|-----|--------------|
+| **All current-era** | 29 | 13 / 16 | **45%** | −$122 | $120 | −$242 | 47% |
+| **Debit spreads** | 26 | 12 / 14 | **46%** | **+$16** | $85 | −$69 | 46% |
+| **Condors** | 3 | 1 / 2 | 33% | −$137 | $36 | −$173 | **86%** |
+
+### What this actually says
+
+1. **The exit-rule work paid off — R:R is now ~1:1.** Avg win +$85 vs avg loss −$77.
+   That's the key win: earlier the structure was inverted (small wins, −70% losses)
+   needing a 61% win rate. Now breakeven is **47%**. We're at 46% — *two points short*,
+   not a mile.
+2. **Debit spreads are break-even on gross (+$16 over 26 trades).** The directional
+   edge is real but tiny. **Fees ($85) are the entire difference** between flat and
+   −$69. This is the GO_LIVE Gate-2 problem, quantified: *the strategy's edge is
+   smaller than its transaction cost.*
+3. **Condors are a net drag so far.** 33% win rate, and the structure needs **86%**
+   to break even (tiny +$12 avg credit kept vs −$74 avg loss when run over). 3 trades
+   is a small sample, but the math is structurally unfavorable at this size — a
+   $1-wide condor collecting ~$0.30 risks $0.70 to make $0.30. Reconsider (wider,
+   or higher `MIN_CONDOR_CREDIT`, or shelve until the debit side is green).
+4. **The strategy only truly wins on clean trend days.** Day-by-day win rate: 06-30
+   **100%** (trend) → then 40%, 25%, 50%, 29%, 25%. Six of the last seven sessions
+   were chop/reversal, where it treads water at best. The edge is real but *regime-
+   dependent and thin*.
+
+### The path across breakeven (both already in the backlog)
+
+- **Win rate 45% → 50%+**: entry quality — the `MIN_CONVICTION_SCORE=2` skip (#17,
+  done), ADX-slope gate (done), and skipping negative-conviction days. A few
+  percentage points is all that's needed.
+- **Fees down**: fewer/bigger high-conviction trades, the +60% target capturing more
+  per win (#19, done), wider spreads (#20). Halving the $120 fee line alone flips
+  the current era from −$242 to roughly −$120.
+
+**Bottom line:** this is not a broken strategy — it's a marginal one being sunk by
+transaction costs. Two small, already-scoped pushes (a few points of win rate + a fee
+cut) move it from "loses slowly" to "roughly flat," and only then does trend-day
+upside make it net positive. Do NOT go live until the *fee-adjusted* number is
+consistently green (GO_LIVE Gate 2).
+
+---
+
+## 2026-07-09 — 🐛 CRITICAL BUG DAY: reconciliation orphaned live positions
+
+**Booked (bot-recorded) net: ≈ −$255** (−$189 gross + $66 fees) — but the real
+number is worse because **the bot orphaned 3 live positions**. First condor day,
+and it exposed a serious correctness bug that must be fixed before the next session.
+
+**IBKR reconciliation (`scripts/reconcile_ibkr.py`, run after expiry):**
+- **TRUE all-in result = account dailyPnL −$124.41** (realized −$218.29 + orphan
+  settlement +$93.88). Booked into `audit.csv` as a RECONCILE row.
+- **The orphans settled as WINNERS (+$93.88).** The SPY call spread finished ITM,
+  QQQ/IWM residuals settled favorably. So the bug cost *visibility and control*, not
+  (this time) money — but that's luck: the 25-lot IWM residual could as easily have
+  been a −$2.5k max-loss. The orphaning is unacceptable regardless of outcome.
+- **Commissions: $100.98** — enormous. The 13-lot HIGH-conviction QQQ PUT (held
+  **1 minute**) cost ~$40 in fees alone; 1.5× sizing multiplied the drag. This is the
+  GO_LIVE Gate-2 fee problem in the extreme.
+- Orphaned at peak: SPY 6-lot 750/751 call spread, QQQ 4-lot condor, and a **25-lot
+  IWM residual** from repeated orphan/re-open cycles (all expired ITM/worthless per
+  the account; user confirmed all showed "expired" on the site).
+
+### The bug (points 1–3): position reconciliation false-positives
+
+`_position_still_open()` ([bot.py:208](../src/bot.py)) declares a position "closed
+externally" if it can't find the tracked leg in `ib.positions()` — **but it has no
+guard for an empty/incomplete positions list.** When `ib.positions()` returns `[]`
+(feed hiccup, subscription gap, or just not-yet-repopulated), the loop finds nothing
+→ returns `False` → counts as a "miss." Two misses → the bot drops a **live**
+position from tracking and fires a phantom "⚠️ closed externally" alert.
+
+Made worse on 07-09 by: **fast-poll** (15s loops → 2 misses in 30s, not 2 min) +
+**longer holds** (positions lived past the 90s grace) + real-time data switch.
+
+**Proof from the audit — the duplicate IWM condor:**
+- 11:08 — BUY IWM condor #1 (0.32 credit). **No SELL row exists.**
+- 11:42 — BUY IWM condor #2 (0.16 credit) — *impossible unless #1 was dropped from
+  `active_trades`* (one-trade-per-symbol rule). Reconciliation phantom-closed #1.
+- 11:46 — BUY SPY CALL (0.49). **No SELL row.** Also orphaned (point 3).
+
+So two positions were silently orphaned: **IWM condor #1** (still open on the site
+per user — point 2) and the **SPY CALL** (in profit, never closed — point 3). When
+reconciliation drops a trade it also **cancels the resting TP**, so the SPY call
+lost even its profit-taking protection. Both settled at the 4 PM expiry unmanaged.
+
+> **ACTION FOR USER:** reconcile the IBKR statement for the 11:08 IWM 294/298 condor
+> and the 11:46 SPY 750/751 call — both expired at 4 PM. IWM sat at 297.4 (inside the
+> range → the condor likely kept most of its credit); the SPY call on a bullish close
+> likely finished ITM. Their P&L is NOT in `audit.csv` — add it by hand.
+
+### Point 4 — short premium into a directional afternoon
+
+The bot sold **3 condors at 11:05–11:08** when ADX was 12–14 (dead calm). The
+afternoon then broke into a trend and **ran them over**:
+- QQQ condor: −$96 (breach exit fired at **−67%** — far too late; nearly the hard stop)
+- SPY condor: −$53 (breached up at 11:43)
+
+It *did* correctly flip to a directional **SPY CALL at 11:46** when the breakout
+resumed — but that's the one the bug orphaned. So the bot was positioned exactly
+backwards for the afternoon (short vol into a trend) *and* the one right trade
+vanished. The user's read ("directional afternoon, no directional spreads, only SPY
+spread lost") is exactly right — the directional trade was made and then lost to the bug.
+
+### What worked ✅
+- **Condors traded end-to-end** (first time) — entries, credit collection, breach
+  exits, and one clean +$12 profitable buy-back (IWM #2). The mechanism is sound.
+- **First-ever HIGH 5/5 conviction** (10:26 QQQ PUT) — though it whipsaw-lost in 1 min.
+- The regime detector fired condors on a genuinely calm 11am (ADX 12–14, 9–11 crosses).
+
+### Findings → actions
+1. **[P0-CRITICAL, #21] Reconciliation false-positive** — fail-open on empty
+   positions; check *any* leg (not just the wing call); make the miss counter
+   time-based (~3 min), not loop-based, so fast-poll can't accelerate false drops;
+   don't reconcile during fast-poll. **The feature meant to prevent orphans is
+   causing them.** Fix before next run.
+2. **[P1, #22] Condor breach exit fires too late** — QQQ exited at −67%, not the
+   intended ~−25%. The 2-consecutive-*closes* rule lags a fast breakout by minutes.
+   Consider intrabar breach (price *touches* beyond short strike) or a tighter stop.
+3. **[watch] Condors are short-vol** — a calm morning that turns directional is
+   their worst case. 07-09 is the counter-example to the "5 of 6 days were
+   premium-seller days" thesis: some range days *become* trend days.
+
+### Running totals (bot-booked, gross — excludes orphans)
+
+| Day | Regime | Net | Record |
+|-----|--------|-----|--------|
+| 06-30 | Trend | +$645.50 | 5W/0L |
+| 07-01 | Trend → reversal | −$305.00 | 2W/3L |
+| 07-06 | Flat chop | −$131.00 | 1W/3L |
+| 07-07 | Bearish chop | +$14.00 | 2W/2L |
+| 07-08 | V-reversal | −$156.00 | 2W/5L |
+| 07-09 | Range → trend + BUG | **−$124.41 all-in** (IBKR dailyPnL, reconciled) | 1W/3L + 3 orphans |
+| **Cumulative** | | **~−$57 (gross, ex-fees)** across 6 days | |
+
+---
+
 ## 2026-07-08 — V-reversal day 🔴 (−$156 gross / −$210 net of fees) — the entry-selection lesson
 
 **2W/5L, all seven exits via invalidation.** SPY: 741.3 → **739.6 low (11:31)** →
