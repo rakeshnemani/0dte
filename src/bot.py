@@ -53,6 +53,8 @@ class TradingBot:
         self.invalidation_total_today: int = 0
         # (symbol, date) pairs already warned about an untracked account position
         self._untracked_alerted: set = set()
+        # Last ET clock-hour an hourly health summary was sent (once per hour)
+        self._last_hourly_hour = None
         # Last raw directional lean per symbol (price vs VWAP), for the
         # cross-symbol agreement component of the conviction score.
         self.symbol_lean: Dict[str, tuple] = {}
@@ -80,6 +82,7 @@ class TradingBot:
             self.invalidation_counts.clear()
             self.invalidation_total_today = 0
             self._untracked_alerted.clear()
+            self._last_hourly_hour = None
             self.symbol_lean.clear()
             logger.info(f"Daily trade count reset for {today}")
 
@@ -526,6 +529,13 @@ class TradingBot:
                 'leg_conids': [sc_c.conId, wc_c.conId, sp_c.conId, wp_c.conId],
                 'entry_indicators': indicators,
                 'reason': reason,
+                # Condor "conviction" analog — its own quality metrics, not the
+                # debit score (which is inverted for range trades). credit/width
+                # is the R:R (higher = better payoff for the max-loss risked).
+                'condor_quality': (
+                    f"credit/width {credit / width * 100:.0f}% | ADX {indicators.get('adx', 0):.1f} "
+                    f"(<{config.CONDOR_MAX_ADX:.0f}) | {indicators.get('vwap_crosses', 0)} VWAP crosses"
+                ),
             }
             self.daily_trade_count += 1
             self.signal_cooldowns[(symbol, 'CONDOR')] = (
@@ -538,7 +548,8 @@ class TradingBot:
             )
             notifier.notify_condor_submit(symbol, sc, wc, sp, wp, credit, qty,
                                           max_loss_per * qty, reason,
-                                          ibkr_trade.order.orderId)
+                                          ibkr_trade.order.orderId,
+                                          self.active_trades[symbol]['condor_quality'])
             notifier.notify_today_summary(self.active_trades, self.closed_trades_today)
         except Exception as e:
             logger.error(f"Failed to place IBKR condor order for {symbol}: {e}")
@@ -777,6 +788,10 @@ class TradingBot:
 
     # Reprice an unfilled closing order after this many seconds
     _EXIT_REPRICE_AFTER_S = 180
+    # Break the reject/retry loop (TODO #26): space out close attempts, and
+    # after this many rejections stop auto-retrying and alert a human.
+    _MAX_CLOSE_ATTEMPTS = 4
+    _CLOSE_RETRY_COOLDOWN_S = 30
 
     def close_position(self, symbol: str, current_spread_value: float, reason: str):
         """Submit a closing BAG order and mark the trade PENDING_EXIT.
@@ -789,6 +804,27 @@ class TradingBot:
         trade = self.active_trades[symbol]
         if trade.get('status') == 'PENDING_EXIT':
             return  # already closing; _check_pending_exit manages fill/repricing
+        if trade.get('close_failed'):
+            return  # gave up after repeated rejections — awaiting manual close / expiry
+
+        # Space out retries so a rejected order can't be re-submitted every loop
+        # (the 2026-07-09 error-201 loop fired ~every 15s until the close).
+        last = trade.get('last_close_attempt_at')
+        if last and (market_time.now_et() - last).total_seconds() < self._CLOSE_RETRY_COOLDOWN_S:
+            return
+
+        # Give up after N attempts rather than hammer forever — keep the trade
+        # tracked (never orphan it), alert, and let the human or expiry resolve it.
+        attempts = trade.get('close_attempts', 0)
+        if attempts >= self._MAX_CLOSE_ATTEMPTS:
+            trade['close_failed'] = True
+            code, msg = trade.get('last_close_error', (0, ''))
+            logger.error(
+                f"[{symbol}] Close FAILED after {attempts} attempts "
+                f"(last error {code}: {msg[:120]}). Halting auto-retry — manual intervention needed."
+            )
+            notifier.notify_close_failed(symbol, trade.get('direction', ''), attempts, code, msg)
+            return
 
         # Cancel any resting take-profit first — if it filled during the cancel
         # race, the trade is already booked and this exit must abort.
@@ -807,10 +843,12 @@ class TradingBot:
             trade['exit_reason'] = reason
             trade['exit_limit'] = current_spread_value
             trade['exit_submitted_at'] = market_time.now_et()
+            trade['close_attempts'] = attempts + 1
+            trade['last_close_attempt_at'] = market_time.now_et()
             logger.info(
                 f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to IBKR at LIMIT "
-                f"${current_spread_value:.2f} (OrderId: {exit_ibkr_trade.order.orderId}). "
-                f"Awaiting fill confirmation."
+                f"${current_spread_value:.2f} (OrderId: {exit_ibkr_trade.order.orderId}, "
+                f"attempt {attempts + 1}/{self._MAX_CLOSE_ATTEMPTS}). Awaiting fill confirmation."
             )
         except Exception as e:
             logger.error(f"[{symbol}] Failed to submit IBKR closing order: {e}")
@@ -833,7 +871,23 @@ class TradingBot:
                 self._finalize_closed_trade(symbol, trade, fill_price, commission)
 
             elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
-                logger.warning(f"[{symbol}] Closing order {status} — reverting to ACTIVE; exit rules will re-fire.")
+                code, msg = self.broker.last_order_error(exit_trade)
+                trade['last_close_error'] = (code, msg)
+                # Error 201 = an order already exists on the opposite side of a
+                # leg. Sweep our stray open orders on this underlying so the
+                # retry isn't rejected for the same reason (root-caused by #21,
+                # but clear it here too as a belt-and-suspenders).
+                if code == 201:
+                    root = self.broker.option_symbol(symbol)
+                    cleared = self.broker.cancel_open_orders_for(
+                        root, except_order_id=exit_trade.order.orderId)
+                    if cleared:
+                        logger.warning(f"[{symbol}] Cleared {cleared} conflicting open order(s) after error 201.")
+                logger.warning(
+                    f"[{symbol}] Closing order {status} (error {code}: {msg[:100]}) — "
+                    f"reverting to ACTIVE; retry gated by {self._CLOSE_RETRY_COOLDOWN_S}s cooldown "
+                    f"(attempt {trade.get('close_attempts', 0)}/{self._MAX_CLOSE_ATTEMPTS})."
+                )
                 trade['status'] = 'ACTIVE'
 
             else:
@@ -1035,6 +1089,13 @@ class TradingBot:
 
                 self.check_and_reset_daily_trade_count()
                 self.evaluate_exit_conditions()
+
+                # Hourly health heartbeat (once per ET clock hour) — surfaces
+                # awaiting-fill / open / closed within the hour, not just at EOD.
+                cur_hour = market_time.now_et().hour
+                if cur_hour != self._last_hourly_hour:
+                    self._last_hourly_hour = cur_hour
+                    notifier.notify_hourly_health(self.active_trades, self.closed_trades_today)
 
                 # End-of-day flatten — never hold 0DTE positions into the close
                 if market_time.is_eod_flatten_time() and self.active_trades:

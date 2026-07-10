@@ -335,8 +335,10 @@ Each loop, the pending exit is polled:
 | Closing order status | Action |
 |----------------------|--------|
 | `Filled` | Book the trade from the **actual `avgFillPrice`** and the **IBKR-reported commissions** (entry + exit legs, via each fill's `commissionReport`) |
-| `Cancelled` / `Inactive` | Revert the trade to `ACTIVE` — the exit rules will fire again next loop |
+| `Cancelled` / `Inactive` | Record the IBKR error code, sweep any conflicting open orders on the underlying if it was error 201, then revert to `ACTIVE` so a retry can fire — but **gated**: attempts are spaced by a 30s cooldown and capped at 4 |
 | Still pending after **3 minutes** | Reprice: amend the limit to the current spread value (same order, no cancel race) and keep waiting |
+
+If a close is rejected **4 times**, the bot sets `close_failed`, fires a 🛑 **CLOSE FAILED** alert, and **stops auto-retrying** — the trade stays tracked (never orphaned), and you close it manually or it expires. This bounds the reject/retry loop that once fired every ~15 seconds (2026-07-09 error-201).
 
 On the confirmed fill:
 1. **Recorded for the day summary** — `closed_trades_today` (with commission)

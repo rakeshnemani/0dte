@@ -16,6 +16,7 @@ A Python algorithmic trading bot that paper trades 0DTE options spreads on Inter
 ├── docs/
 │   ├── HOW_IT_WORKS.md  # Deep-dive on bot logic and design decisions
 │   ├── PLAYBOOKS.md     # Entry/exit/P&L reference per structure (debit vs condor)
+│   ├── RECONCILE.md     # How to reconcile audit.csv against IBKR (reconcile_ibkr.py)
 │   ├── RETROSPECTIVE.md # Daily trade journal + hypotheses under test
 │   └── GO_LIVE.md       # Paper→live readiness gates and progress
 ├── scripts/
@@ -160,8 +161,10 @@ Configure `DISCORD_WEBHOOK_URL` in `.env` to receive real-time trade notificatio
 | ⚠️ POSITION CLOSED EXTERNALLY | 🟠 Orange | When the bot detects a tracked position is no longer in your IBKR account (closed manually via Client Portal, mobile, or TWS) — drops it from tracking |
 | 🔁 ADOPTED ORPHANED POSITIONS | 🟠 Orange | At startup, when the account holds open 0DTE spreads the bot wasn't tracking (e.g. after a restart) — they're adopted and managed by the normal exit rules |
 | ⛔ SIGNAL THROTTLED | ⚪ Grey | When a symbol+direction hits N **losing** thesis-invalidation exits (< −10%) in a day — no re-entries on that signal until tomorrow. Profitable invalidations don't count |
+| 🛑 CLOSE FAILED | 🔴 Red | When a closing order keeps getting rejected — the bot stops auto-retrying after 4 attempts and asks you to close manually |
 | 🛑 DAILY LOSS LIMIT | 🔴 Red | When the day's realized P&L (net of fees) breaches −`MAX_DAILY_LOSS` — no new entries today; open positions still managed |
 | 🚨 CIRCUIT BREAKER | 🔴 Red | After N consecutive losing trades — no more entries today |
+| ⏰ HOURLY STATUS | 🟢/🔴 by net | Once per hour during market hours — awaiting-fill / open (live P&L) / closed-today + net. A liveness heartbeat that surfaces orphans or stuck orders within the hour |
 | 📅 DAY SUMMARY | 🟢/🔴 by net | Once after the market closes — gross P&L, **commissions, net after fees**, win/loss count, win rate, per-trade breakdown |
 
 ---
@@ -309,7 +312,25 @@ Every fill (entry and exit) is appended to `audit.csv`:
 
 > Exit prices are **IBKR-confirmed fills** (`avgFillPrice`), not submission prices. Unfilled closing orders are repriced after 3 minutes.
 
-Two companion tools use `PermId` as the join key: `scripts/reconcile_ibkr.py [date]` (pull IBKR executions + account P&L, diff against the audit) and `scripts/backfill_permid.py` (retro-fill permIds for recent rows).
+### Reconciling against IBKR
+
+`scripts/reconcile_ibkr.py [YYYY-MM-DD]` joins the audit to your actual IBKR account **by `permId`** and reports discrepancies two independent ways:
+
+- **permId join** — every IBKR order matched to its audit row; any IBKR order with no audit row is flagged **ORPHAN** (a fill the bot didn't book).
+- **Audit-internal check** — BUYs with no matching SELL for the day (a position opened but never closed in the books).
+
+Plus totals: IBKR realized P&L, commissions, account `dailyPnL` (the true all-in number, incl. expiry settlement), and the audit's booked net.
+
+```bash
+python scripts/reconcile_ibkr.py                # today (live API)
+python scripts/reconcile_ibkr.py 2026-07-09     # a recent day
+python scripts/reconcile_ibkr.py 2026-06-15     # older day — auto-uses a Flex Query if configured
+python scripts/reconcile_ibkr.py 2026-07-09 --write   # append orphan flags to audit.csv (backs up first)
+```
+
+The live API covers ~24h; for older dates set `IBKR_FLEX_TOKEN` + `IBKR_FLEX_QUERY_ID` in `.env` (a Trade Confirmation Flex Query, up to ~1 year). `scripts/backfill_permid.py` retro-fills permIds for recent audit rows.
+
+**Full guide — usage, reading the output, Flex setup, workflows, gotchas: [docs/RECONCILE.md](docs/RECONCILE.md).**
 
 > Timestamps are logged in **ET** (rows before 2026-07-05 are in the machine's local time, CDT).
 

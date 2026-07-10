@@ -33,6 +33,14 @@ hypotheses under test: watch for **entries the slope gate blocks that would have
 score separates winners from losers** (calibration pass after ~2 weeks of the
 `Conviction` audit column).
 
+**Watch-pattern (no action yet) — HIGH-conviction bear traps on marginal breakouts.**
+2026-07-09 QQQ PUT scored 5/5 (ADX 43 rising, SPY+IWM agree, early, calm tape) but
+entered just **$0.02** below the buffered ORB-low and V-reversed in ~1 min → invalidation
+exit at −12% → −$52 gross / **−$82 net** (13-lot HIGH size amplified the fee hit). Not a
+strategy flaw — a fakeout. *If a cluster of "5/5 → immediate invalidation whipsaw on a
+razor-thin breach" appears, that argues for a wider `ORB_BREAKOUT_BUFFER_PCT` and/or
+capping size when the breakout margin is thin.* Just logging it; act only on a pattern.
+
 | # | Idea | Evidence so far | What would confirm / kill it |
 |---|------|-----------------|------------------------------|
 | 1 | **Startup position discovery** | Restart orphaned open positions on **both** 2026-06-29 and 2026-06-30 — the fresh process lost `active_trades`, so it didn't manage or EOD-flatten them. (2026-07-01: restart happened pre-market, no orphans.) | This is an operational bug, not a hypothesis — do it before going live regardless of data. |
@@ -100,19 +108,21 @@ consistently green (GO_LIVE Gate 2).
 number is worse because **the bot orphaned 3 live positions**. First condor day,
 and it exposed a serious correctness bug that must be fixed before the next session.
 
-**IBKR reconciliation (`scripts/reconcile_ibkr.py`, run after expiry):**
-- **TRUE all-in result = account dailyPnL −$124.41** (realized −$218.29 + orphan
-  settlement +$93.88). Booked into `audit.csv` as a RECONCILE row.
-- **The orphans settled as WINNERS (+$93.88).** The SPY call spread finished ITM,
-  QQQ/IWM residuals settled favorably. So the bug cost *visibility and control*, not
-  (this time) money — but that's luck: the 25-lot IWM residual could as easily have
-  been a −$2.5k max-loss. The orphaning is unacceptable regardless of outcome.
-- **Commissions: $100.98** — enormous. The 13-lot HIGH-conviction QQQ PUT (held
-  **1 minute**) cost ~$40 in fees alone; 1.5× sizing multiplied the drag. This is the
-  GO_LIVE Gate-2 fee problem in the extreme.
-- Orphaned at peak: SPY 6-lot 750/751 call spread, QQQ 4-lot condor, and a **25-lot
-  IWM residual** from repeated orphan/re-open cycles (all expired ITM/worthless per
-  the account; user confirmed all showed "expired" on the site).
+**IBKR reconciliation (`scripts/reconcile_ibkr.py`, run AFTER settlement):**
+- **TRUE all-in result = account dailyPnL −$905.99.** Bot-booked closes ≈ −$218;
+  **orphaned positions settled ≈ −$688 at expiry.** Corrected in the audit RECONCILE row.
+- ⚠️ **Correction:** an earlier run *before* settlement showed −$124.41 with a +$93.88
+  unrealized mark, and this retro first claimed "the orphans settled as winners." **That
+  was wrong** — 0DTE mark-to-market near expiry is unreliable; only *settled* account
+  P&L is truth. At settlement the orphans cost ≈ −$688, not +$94. Lesson: **run the
+  reconcile AFTER settlement, never trust the intraday mark.**
+- The reconciliation bug (#21) therefore cost **~$600–700 of real money** on this day
+  alone — the strongest case for the fix that shipped the same evening.
+- **Commissions: $100.98** — the 13-lot HIGH-conviction QQQ PUT (held **1 minute**)
+  cost ~$40 alone; 1.5× sizing multiplied the drag. GO_LIVE Gate-2 fee problem, extreme.
+- The permId-keyed reconcile flagged **21 orphan IBKR orders** with no audit row and
+  the audit-internal check caught SPY×1 / IWM×1 opened-never-closed — two independent
+  detectors that would have surfaced this within the hour had they existed intraday.
 
 ### The bug (points 1–3): position reconciliation false-positives
 
@@ -183,8 +193,8 @@ spread lost") is exactly right — the directional trade was made and then lost 
 | 07-06 | Flat chop | −$131.00 | 1W/3L |
 | 07-07 | Bearish chop | +$14.00 | 2W/2L |
 | 07-08 | V-reversal | −$156.00 | 2W/5L |
-| 07-09 | Range → trend + BUG | **−$124.41 all-in** (IBKR dailyPnL, reconciled) | 1W/3L + 3 orphans |
-| **Cumulative** | | **~−$57 (gross, ex-fees)** across 6 days | |
+| 07-09 | Range → trend + BUG | **−$905.99 settled** (IBKR dailyPnL; ~−$688 was orphaned positions) | 1W/3L + 3 orphans |
+| **Cumulative** | | **deeply negative — the 07-09 bug day dominates** | |
 
 ---
 

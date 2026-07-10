@@ -84,14 +84,17 @@ def notify_filled(symbol: str, trade: dict, filled_price: float):
 
 def notify_condor_submit(symbol: str, short_call: float, wing_call: float,
                          short_put: float, wing_put: float, credit: float,
-                         qty: int, max_loss: float, reason: str, order_id):
+                         qty: int, max_loss: float, reason: str, order_id,
+                         quality: str = ""):
     desc = (
         f"**📊 Ticker:** {symbol}\n"
         f"**🦅 Structure:** Iron Condor (credit)\n"
         f"**⚙️ Strikes:** Put {wing_put:.0f}/{short_put:.0f} — Call {short_call:.0f}/{wing_call:.0f}\n"
         f"**💰 Credit:** ${credit:.2f} per condor\n"
         f"**📈 Quantity:** {qty} contracts\n"
-        f"**⚠️ Max Loss:** ${max_loss:.0f}\n\n"
+        f"**⚠️ Max Loss:** ${max_loss:.0f}\n"
+        + (f"**🎚️ Setup quality:** {quality}\n" if quality else "")
+        + "_(condors are sized by max-loss budget, not the directional conviction score)_\n\n"
         f"**📝 Signal:** {reason}\n"
         f"**⏳ Status:** Pending fill (Order #{order_id})"
     )
@@ -107,6 +110,7 @@ def notify_condor_filled(symbol: str, trade: dict, filled_credit: float):
         f"Call {trade['short_call']:.0f}/{trade['wing_call']:.0f}\n"
         f"**💰 Credit Received:** ${filled_credit:.2f} per condor\n"
         f"**📈 Quantity:** {trade['qty']} contracts\n"
+        + (f"**🎚️ Setup quality:** {trade['condor_quality']}\n" if trade.get('condor_quality') else "")
         + (f"**🎯 Buy-back resting at:** ${trade['tp_price']:.2f}\n" if trade.get('tp_price') else "") +
         f"\n**📉 At Entry:** ADX {ind.get('adx', 0):.1f} | "
         f"{ind.get('vwap_crosses', 0)} VWAP crosses | "
@@ -135,6 +139,17 @@ def notify_closed(symbol: str, trade: dict, exit_price: float,
 
 
 # ── Risk / lifecycle events ──────────────────────────────────────────────────
+
+def notify_close_failed(symbol: str, direction: str, attempts: int, code: int, msg: str):
+    send(
+        "🛑 CLOSE FAILED — MANUAL ACTION NEEDED",
+        f"**{symbol} {direction}** could not be closed after {attempts} attempts "
+        f"(last IBKR error **{code}**: {msg[:200]}).\n"
+        f"The bot has **stopped auto-retrying** to avoid an order loop and is still "
+        f"tracking the position — **close it manually in IBKR** if it doesn't expire cleanly.",
+        BRIGHT_RED
+    )
+
 
 def notify_circuit_breaker(consecutive_losses: int):
     send(
@@ -238,6 +253,31 @@ def notify_today_summary(active_trades: dict, closed_trades: list):
     desc += ("\n".join(closed_lines) if closed_lines else "_none_") + "\n\n"
     desc += f"**💵 Net so far (realized):** ${net:+.2f}"
     send("📋 TODAY", desc, GREEN if net >= 0 else RED)
+
+
+def notify_hourly_health(active_trades: dict, closed_trades: list):
+    """Hourly heartbeat: awaiting-fill / open (live P&L) / closed-today + net.
+    A liveness signal that surfaces orphans or stuck orders within the hour."""
+    pending = [(s, t) for s, t in active_trades.items()
+               if t.get('status') in ('PENDING_ENTRY', 'PENDING_EXIT')]
+    open_ = [(s, t) for s, t in active_trades.items() if t.get('status') == 'ACTIVE']
+    net = sum(c['dollar_pnl'] for c in closed_trades)
+
+    lines = [f"**⏳ Awaiting fill ({len(pending)})**"]
+    lines += ([f"• {s} {t.get('direction', '')} — {t.get('status')}"
+               + (" ⚠️ close failed" if t.get('close_failed') else "") for s, t in pending]
+              or ["_none_"])
+    lines.append(f"\n**▶ Open ({len(open_)})**")
+    if open_:
+        for s, t in open_:
+            pct = t.get('current_profit_pct')
+            peak = t.get('max_profit_pct', 0) * 100
+            pct_s = f"{pct*100:+.1f}%" if pct is not None else "—"
+            lines.append(f"• {s} {t.get('direction', '')}  {pct_s}  (peak {peak:+.1f}%)")
+    else:
+        lines.append("_none_")
+    lines.append(f"\n**✅ Closed today:** {len(closed_trades)}  |  **Net so far:** ${net:+.2f}")
+    send("⏰ HOURLY STATUS", "\n".join(lines), GREEN if net >= 0 else RED)
 
 
 def notify_day_summary(date, closed_trades: list, circuit_breaker_tripped: bool):

@@ -143,6 +143,33 @@ class IBKRBroker:
     def cancel_order(self, order):
         self.ib.cancelOrder(order)
 
+    def last_order_error(self, ibkr_trade) -> Tuple[int, str]:
+        """Most recent (errorCode, message) from a trade's log — e.g. why a
+        close was rejected. Returns (0, '') if there was no error entry."""
+        try:
+            for entry in reversed(ibkr_trade.log):
+                if entry.errorCode:
+                    return int(entry.errorCode), str(entry.message)
+        except Exception:
+            pass
+        return 0, ''
+
+    def cancel_open_orders_for(self, symbol_root: str, except_order_id=None) -> int:
+        """Cancel every still-open order on an underlying (used to clear the
+        conflicting order behind an error-201 rejection). Skips except_order_id."""
+        n = 0
+        try:
+            for t in self.ib.openTrades():
+                if getattr(t.contract, 'symbol', None) != symbol_root or t.isDone():
+                    continue
+                if except_order_id is not None and t.order.orderId == except_order_id:
+                    continue
+                self.ib.cancelOrder(t.order)
+                n += 1
+        except Exception as e:
+            logger.warning(f"Could not sweep open orders for {symbol_root}: {e}")
+        return n
+
     def order_perm_id(self, ibkr_trade) -> int:
         """IBKR permId for a trade — the permanent, account-wide order key
         (survives restarts; same across API clients). 0 until IBKR acknowledges."""
