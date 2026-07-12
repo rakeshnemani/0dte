@@ -61,8 +61,10 @@ IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bo
 
 ## Strategy in one screen
 
-**Debit entry:** `ADX>25 AND rising` + price beyond VWAP + beyond ORB level (+buffer) →
-CALL/PUT vertical. Conviction score 0–5 sizes it; **skip if score < `MIN_CONVICTION_SCORE`(2)**.
+**Debit entry:** `ADX>25 AND rising` + price beyond VWAP + beyond ORB level (+buffer) +
+**path guard #31** (level crossed within 10 bars AND last-3-closes net-move agrees — never
+fade a bounce; the 5/5 bear-trap fix) → CALL/PUT vertical. Conviction score 0–5 sizes it;
+**skip if score < `MIN_CONVICTION_SCORE`(2)**. Condors DISABLED 07-10 (#28).
 **Debit exits (priority):** resting take-profit at +60% · hard stop −70% · VWAP-recross
 invalidation (3 bars) · trailing stop after +50% peak · EOD flatten 15:55 ET.
 
@@ -104,6 +106,13 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 - **#25:** no key linking audit↔IBKR → added `permId` tracking + audit column + backfill.
 - **#26:** close-order reject/retry infinite loop → capped at 4 attempts w/ 30s cooldown +
   give-up alert + error-201 order sweep. Unit-tested.
+- **#30 (07-10, left an inverse 6-lot residual):** a `Cancelled` close had actually FILLED;
+  blind resubmit double-closed → close path now trusts fills + account position, never
+  status: fills-check on dead orders, per-submission requantification, over-close halt,
+  real-error-code capture. Unit-tested (`scripts/test_close_integrity.py`).
+- **#31 (07-10):** 5/5-conviction bear traps (2×) — entries were path-blind (couldn't tell
+  fresh breakdown from recovery hovering under the level) → `path_confirms()`: level must
+  be crossed within 10 bars AND last-3-closes net-move must agree with the signal.
 
 ## How we work (conventions the user expects)
 

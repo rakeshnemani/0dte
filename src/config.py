@@ -31,6 +31,15 @@ ADX_SLOPE_BARS = int(os.getenv("ADX_SLOPE_BARS", "10"))
 # Entry gate: price must clear the ORB level by this fraction (0.001 = 0.1%),
 # not just poke a cent above it. Filters micro-poke false breakouts.
 ORB_BREAKOUT_BUFFER_PCT = float(os.getenv("ORB_BREAKOUT_BUFFER_PCT", "0.001"))
+# Path-aware entry (#31 — the bear-trap fix). A breakout signal must be a real
+# breakout, not a hover: (1) the trigger level must have been crossed within the
+# last PATH_FRESH_BARS (else the break is stale and price is just sitting/
+# recovering near the line); (2) the net move of the last PATH_MOMENTUM_BARS
+# closes must agree with the signal direction (never fade the last 3 bars —
+# both 5/5 bear traps entered PUTs against a 3-green-bar bounce). 0 disables.
+PATH_FRESH_BARS = int(os.getenv("PATH_FRESH_BARS", "10"))
+PATH_MOMENTUM_BARS = int(os.getenv("PATH_MOMENTUM_BARS", "3"))
+
 # Exit: if price closes on the wrong side of VWAP for N consecutive 1-min bars,
 # the entry thesis is invalidated — exit instead of riding to the hard stop.
 # 0 disables.

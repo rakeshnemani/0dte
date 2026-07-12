@@ -102,6 +102,86 @@ consistently green (GO_LIVE Gate 2).
 
 ---
 
+## 📉 WEEK 1 REVIEW (07-06 → 07-10) — "where are we wrong?"
+
+**6W/17L (26%), ≈ −$729 strategy gross, ≈ −$1,450 all-in** (fees ~$180, bug losses
+~$690+). Half the damage was software (#21 orphans, #30 double-fill), half strategy.
+
+**The four-layer diagnosis (evidence-ranked):**
+1. **Regime mismatch (core).** Zero sustained trend days in 8 sessions since 06-30.
+   14 of 23 exits were failed-breakout invalidations — losses are *directionally
+   systematic* (breakouts fade), the signature of a mean-reverting tape. Chop days
+   cost ~$100–250 even with guards; one trend day pays ~+$650. Viable at 1-in-3
+   trend days; bleeding at 1-in-8.
+2. **Entries are late by construction.** ADX(14)-rising + ORB + buffer = enter after
+   30–60 min of confirmation → maximum crowd → prime fade. The two 5/5 bear traps
+   (0W/2L, −$187 + ~$58 fees, both <$0.10 past trigger) are this flaw expressed.
+3. **Condors mistimed — decided.** 1W/5L, ≈ −$245: "proven chop" at 11:00 is exactly
+   when midday ranges break into afternoon trends. Plus 86% structural breakeven WR.
+   → **Disable (#28).**
+4. **Conviction sizing pays up for the most fade-able signals.** HIGH = 0W/2L this
+   week at 13–15 lots. → Cap `CONVICTION_HIGH_MULT=1.0` until the tier earns it.
+
+**Actions:** CONDOR_ENABLED=false ✅ (applied 07-10) · HIGH mult → *user decision: KEEP
+1.5× and fix the entries it amplifies instead* → #31 path-aware entry guard ✅
+(implemented 07-10) · fix #30 before next run (still open).
+**Trigger watch:** only winners entered 10:19–10:29 ET; if next week repeats, restrict
+entries to the morning session. **If failed breakouts persist 2–3 more sessions,
+stand down rather than keep paying fees to lose** — a trend system in a no-trend
+regime should trade rarely (→ VIX1D filter #8 becomes the priority).
+**Not concluded:** strategy death, or flipping to fade-the-breakout. 23 trades is one
+regime's sample.
+
+---
+
+## 2026-07-10 — 0W/4L 🔴 + a new close-double-fill bug
+
+**Booked: 0 wins / 4 losses, −$267 gross.** True day P&L **unknown** — a close
+double-filled and left an untracked residual SPY position (IBKR `dailyPnL` shows
++$1,074 but that's an unreliable intraday mark; reconcile after settlement).
+
+### Trades
+| Trade | Conviction | Result | Note |
+|-------|-----------|--------|------|
+| IWM PUT 10:17 (15-lot) | **HIGH 5/5** | −$135 | Bear trap #2 — peaked +17%, reversed, invalidation at −31% |
+| IWM PUT 11:01 (re-entry) | MEDIUM 2/5 | −$24 | Invalidation −8% |
+| QQQ CONDOR 11:16 | — | −$60 | Hard stop — range broke into a trend |
+| SPY CONDOR 11:16 | — | −$48 (booked) | Hard stop **+ close double-filled → residual** |
+
+### Findings
+
+1. **🐛 NEW P0 — close over-execution (#30). → FIXED same evening** (fills-check on
+   dead orders, per-submission account requantification, over-close halt, real error
+   codes; 7-scenario unit test in `scripts/test_close_integrity.py`). The SPY condor close was reported
+   `Cancelled` (with a misleading `10349` "TIF set to DAY" info code), so the bot
+   reverted to ACTIVE and re-submitted — but the original had actually filled, so it
+   **bought back 12 lots instead of 6**, leaving a **net-long 6-lot residual** that's
+   now untracked. This is the "SPY untracked position again." #21 doesn't cover it
+   (not a false-drop); #26 bounded the loop but a cancelled-but-filled order still
+   double-fills. **Fix: reconcile the close against the actual account position —
+   close only the real remaining qty, and verify a `Cancelled` order truly had no
+   fill (via permId/`fills`) before resubmitting.** The `10349` red herring: capture
+   the real rejection code, not the last log line. → **ACTION: user flatten the
+   residual SPY condor manually.**
+2. **🐛 Dashboard crash — FIXED.** `parse_trades` treated the `RECONCILE` annotation
+   row as a SELL and choked on its empty Price (`could not convert '' to float`).
+   Now only `BUY`/`SELL` rows are paired.
+3. **The 5/5 bear-trap pattern is RECURRING — 2 for 2.** 07-09 QQQ PUT (5/5, $0.02
+   below buffered ORB) and 07-10 IWM PUT (5/5, $0.06 below) both entered on razor-thin
+   breakdowns and reversed. The watch-pattern logged yesterday now has two instances.
+   Promoting toward action: **cap size (or skip) when the breakout margin is thin**,
+   and/or widen `ORB_BREAKOUT_BUFFER_PCT`. Conviction sized the 07-10 loser to 15 lots
+   → −$135, the day's biggest loss.
+4. **Condors run over again** — both SPY and QQQ hard-stopped as the "range" (ADX ~21,
+   many crosses at 11am) resolved into a trend. Consistent with #28: condors are a net
+   drag; consider `CONDOR_ENABLED=false` until the debit side is green.
+
+### Regime note
+Another day where an 11am range read became a midday trend (like 07-01, 07-08). The
+condor's range thesis and the debit bear-trap both died to the same reversal.
+
+---
+
 ## 2026-07-09 — 🐛 CRITICAL BUG DAY: reconciliation orphaned live positions
 
 **Booked (bot-recorded) net: ≈ −$255** (−$189 gross + $66 fees) — but the real

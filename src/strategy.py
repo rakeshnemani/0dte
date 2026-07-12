@@ -107,6 +107,7 @@ def entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
 
         if current_close > current_vwap and current_close > call_level:
             direction = "CALL"
+            level = call_level
             reason = (
                 f"Bullish: Price ({current_close:.2f}) > VWAP ({current_vwap:.2f}) and "
                 f"ORB High+buffer ({call_level:.2f}). ADX: {current_adx:.2f}"
@@ -114,6 +115,7 @@ def entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
             )
         elif current_close < current_vwap and current_close < put_level:
             direction = "PUT"
+            level = put_level
             reason = (
                 f"Bearish: Price ({current_close:.2f}) < VWAP ({current_vwap:.2f}) and "
                 f"ORB Low−buffer ({put_level:.2f}). ADX: {current_adx:.2f}"
@@ -122,11 +124,56 @@ def entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
         else:
             return None, "", {}, lean
 
+        # ── Chop guard 3 (#31): path-aware entry — the bear-trap fix ──────────
+        ok, path_detail = path_confirms(direction, df, level)
+        if not ok:
+            logger.info(f"[{symbol}] Path guard blocked {direction}: {path_detail}")
+            return None, "", {}, lean
+        reason += f" | path✓ ({path_detail})"
+
         return direction, reason, indicators, lean
 
     except Exception as e:
         logger.error(f"Error calculating indicators for {symbol}: {e}")
         return None, "", {}, None
+
+
+def path_confirms(direction: str, df: pd.DataFrame, level: float) -> Tuple[bool, str]:
+    """#31 — path-aware entry check. A breakout must be a real breakout:
+
+    1. FRESH: the trigger level was crossed within the last PATH_FRESH_BARS —
+       i.e. at least one recent close sat on the OTHER side of the level. If
+       every recent close is already beyond it, the break is stale and price is
+       hovering/recovering at the line (`price < level` alone can't tell a fresh
+       breakdown from a bounce ticking back under it — the 07-09/07-10 traps).
+    2. MOMENTUM: the net move of the last PATH_MOMENTUM_BARS closes must agree
+       with the signal — never fade the last 3 bars. Both 5/5 bear traps entered
+       PUTs against a 3-green-bar bounce off the morning low.
+
+    Pure function; returns (ok, detail). Fails open if disabled or data-short.
+    """
+    closes = df['close']
+
+    n = config.PATH_FRESH_BARS
+    if n > 0 and len(closes) > n:
+        prior = closes.iloc[-1 - n:-1]
+        if direction == 'CALL':
+            fresh = bool((prior <= level).any())   # recently came from BELOW the level
+        else:
+            fresh = bool((prior >= level).any())   # recently came from ABOVE the level
+        if not fresh:
+            return False, f"level {level:.2f} not crossed in last {n} bars — stale break / hovering"
+
+    m = config.PATH_MOMENTUM_BARS
+    if m > 0 and len(closes) > m:
+        net = float(closes.iloc[-1] - closes.iloc[-1 - m])
+        if direction == 'CALL' and net <= 0:
+            return False, f"last {m} bars net {net:+.2f} (falling) against a CALL — fading a pullback"
+        if direction == 'PUT' and net >= 0:
+            return False, f"last {m} bars net {net:+.2f} (rising) against a PUT — fading a bounce"
+        return True, f"fresh break, {m}-bar net {net:+.2f} with signal"
+
+    return True, "path checks disabled/insufficient bars"
 
 
 # ── Iron condor (regime-matched credit side) ─────────────────────────────────

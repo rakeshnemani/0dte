@@ -140,6 +140,18 @@ def notify_closed(symbol: str, trade: dict, exit_price: float,
 
 # ── Risk / lifecycle events ──────────────────────────────────────────────────
 
+def notify_over_closed(symbol: str, direction: str, position: float):
+    send(
+        "🚨 OVER-CLOSED — INVERSE POSITION IN ACCOUNT",
+        f"**{symbol} {direction}**: the account position on the tracked leg is "
+        f"**{position:+g}** — a prior close executed MORE than the position size, "
+        f"leaving an inverse position the bot did not intend.\n"
+        f"The bot has **halted all automatic action on {symbol}** — "
+        f"**flatten it manually in IBKR now.**",
+        BRIGHT_RED
+    )
+
+
 def notify_close_failed(symbol: str, direction: str, attempts: int, code: int, msg: str):
     send(
         "🛑 CLOSE FAILED — MANUAL ACTION NEEDED",

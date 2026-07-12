@@ -71,7 +71,7 @@ def parse_trades():
                     old_ts, old_entry = open_pos[sym]
                     trades.append(orphan_row(old_ts, old_entry))
                 open_pos[sym] = (ts, row)
-            else:
+            elif action == 'SELL':   # RECONCILE / other annotation rows are skipped
                 entry_ts, entry = open_pos.pop(sym, (None, {}))
                 pnl = float(row['Dollar_PnL']) if row['Dollar_PnL'].strip() else None
                 pct = float(row['Profit_Pct'].rstrip('%')) / 100 if row['Profit_Pct'].strip() else None

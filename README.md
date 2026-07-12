@@ -215,6 +215,7 @@ Two regime-matched playbooks share the watchlist. They are mutually exclusive by
 6. **One active trade per symbol** — Cannot open a second SPY trade while one is already running
 7. **ADX rising (chop guard)** — ADX must have increased over the last `ADX_SLOPE_BARS` (default 10) bars. A level check passes on residual momentum; the slope confirms the trend is still alive. Fails open early in the session when the lookback is not yet computable
 8. **Breakout buffer (chop guard)** — Price must clear the ORB level by `ORB_BREAKOUT_BUFFER_PCT` (default 0.1%), filtering micro-poke false breakouts
+8b. **Path-aware entry (bear-trap guard)** — The breakout must be a *real* breakout: the trigger level must have been crossed within the last `PATH_FRESH_BARS` (10) — not a stale break price is hovering under — **and** the net move of the last `PATH_MOMENTUM_BARS` (3) closes must agree with the signal (never fade the last 3 bars). Added after two 5/5-conviction PUTs entered against a 3-green-bar bounce and reversed instantly
 9. **Invalidation throttle (chop guard)** — After `MAX_INVALIDATIONS_PER_SIGNAL` (default 2) thesis-invalidation exits on the same symbol+direction in one day, that signal stands down until tomorrow — the market has proven it chop. A ⛔ Discord alert fires when the throttle trips
 10. **Minimum spread cost** — Spread must cost ≥ `MIN_SPREAD_COST` (default $0.10) for liquidity
 

@@ -156,6 +156,7 @@ Two chop guards were added after the 2026-07-01 reversal day (see [RETROSPECTIVE
 
 - **ADX slope** — ADX must have *risen* over the last `ADX_SLOPE_BARS` (default 10) bars. On 07-01, ADX direction predicted all five outcomes: every hard-stop loser entered on flat/fading ADX. The level check alone passes on residual momentum. Fails open early in the session while the lookback bar is still NaN.
 - **Breakout buffer** — the close must clear the ORB level by `ORB_BREAKOUT_BUFFER_PCT` (default 0.1%), not poke a cent above it. Filters the midday micro-poke false breakouts.
+- **Path-aware entry (#31, the bear-trap fix)** — `price < level` alone can't tell a *fresh breakdown* from a *recovery hovering under the line*. Two checks: (1) **freshness** — the level must have been crossed within the last `PATH_FRESH_BARS` (10; at least one recent close on the other side of it); (2) **micro-momentum** — the net move of the last `PATH_MOMENTUM_BARS` (3) closes must agree with the signal direction. Both 5/5-conviction bear traps (07-09 QQQ, 07-10 IWM) entered PUTs *against* a 3-green-bar bounce off the morning low, on breaks <$0.10 past the trigger — backward-looking indicators (ADX-14 rising, below-VWAP) were still echoing the already-dead dump. The passing detail is appended to the signal reason (`path✓ (fresh break, 3-bar net −0.40 with signal)`) so the audit shows it.
 
 If neither condition is met, no trade. If a signal is found, the bot proceeds to Guard 8 (spread pricing), then fetches the breadth annotation before submitting.
 
@@ -335,7 +336,7 @@ Each loop, the pending exit is polled:
 | Closing order status | Action |
 |----------------------|--------|
 | `Filled` | Book the trade from the **actual `avgFillPrice`** and the **IBKR-reported commissions** (entry + exit legs, via each fill's `commissionReport`) |
-| `Cancelled` / `Inactive` | Record the IBKR error code, sweep any conflicting open orders on the underlying if it was error 201, then revert to `ACTIVE` so a retry can fire — but **gated**: attempts are spaced by a 30s cooldown and capped at 4 |
+| `Cancelled` / `Inactive` | **Check its fills first** — a "dead" order may have executed anyway (the 2026-07-10 double-fill bug): fully filled → book it; partially filled → book the slice and shrink the tracked qty. Only then record the real error code (info codes like 10349 are skipped), sweep conflicting orders on a 201, and revert to `ACTIVE` — retries are spaced 30s, capped at 4, and **requantify against the account before every submission** (close only what's actually still held; nothing → book/drop; inverse position → 🚨 halt) |
 | Still pending after **3 minutes** | Reprice: amend the limit to the current spread value (same order, no cancel race) and keep waiting |
 
 If a close is rejected **4 times**, the bot sets `close_failed`, fires a 🛑 **CLOSE FAILED** alert, and **stops auto-retrying** — the trade stays tracked (never orphaned), and you close it manually or it expires. This bounds the reject/retry loop that once fired every ~15 seconds (2026-07-09 error-201).
@@ -399,6 +400,8 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `ORB_BREAKOUT_BUFFER_PCT` | `0.001` | Entry chop guard: breakout must clear the ORB level by this fraction (0 = off) |
 | `VWAP_INVALIDATION_BARS` | `3` | Exit: leave the trade if price closes past VWAP this many bars in a row (0 = off) |
 | `MAX_INVALIDATIONS_PER_SIGNAL` | `2` | Stand down a (symbol, direction) after this many invalidation exits in a day (0 = off) |
+| `PATH_FRESH_BARS` | `10` | Breakout level must have been crossed within this many bars (0 = off) |
+| `PATH_MOMENTUM_BARS` | `3` | Net move of the last N closes must agree with the signal (0 = off) |
 | `FAST_POLL_SECONDS` | `15` | Loop cadence while an exit needs tight watching (0 = always 60s) |
 | `FAST_POLL_ARM_PCT` | `0.35` | Profit level that switches the loop to fast polling |
 | `CONVICTION_SIZING_ENABLED` | `true` | Score entries 0–5 and size the position budget by tier |

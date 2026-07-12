@@ -786,6 +786,52 @@ class TradingBot:
         except Exception as e:
             logger.error(f"[{symbol}] Error checking IBKR order status: {e}")
 
+    def _book_exit_fill(self, symbol: str, trade: dict, exit_trade):
+        """Book a close from a confirmed fill: price + commissions + permId,
+        then finalize. Shared by the Filled path and the double-fill guard."""
+        fill_price = float(exit_trade.orderStatus.avgFillPrice)
+        commission = (self.broker.order_commission(trade.get('ibkr_trade'))
+                      if trade.get('ibkr_trade') else 0.0)
+        commission += self.broker.order_commission(exit_trade)
+        trade['exit_permId'] = self.broker.order_perm_id(exit_trade)
+        self._finalize_closed_trade(symbol, trade, fill_price, commission)
+
+    def _book_partial_exit(self, symbol: str, trade: dict, exit_trade, filled_qty: int):
+        """A closing order died after PARTIALLY filling: book the filled slice
+        (audit + day record) and shrink the tracked qty so the retry closes only
+        the true remainder. Counters (throttle/breaker) are left to the final close."""
+        fill_price = float(exit_trade.orderStatus.avgFillPrice)
+        side = self._side(trade)
+        profit_pct = side * (fill_price - trade['entry_price']) / trade['entry_price']
+        dollar_pnl = side * (fill_price - trade['entry_price']) * filled_qty * 100
+        commission = self.broker.order_commission(exit_trade)
+        reason = f"{trade.get('exit_reason', '')} [PARTIAL {filled_qty}/{trade['qty']} before order died]"
+        logger.warning(f"[{symbol}] Closing order died after partial fill "
+                       f"{filled_qty}/{trade['qty']} at ${fill_price:.2f} — booking the slice.")
+        self.closed_trades_today.append({
+            'symbol': symbol, 'direction': trade['direction'],
+            'entry_price': trade['entry_price'], 'exit_price': fill_price,
+            'profit_pct': profit_pct, 'dollar_pnl': dollar_pnl, 'reason': reason,
+            'commission': commission,
+        })
+        audit.record(
+            "SELL", symbol, trade['direction'], fill_price, reason,
+            profit_pct=profit_pct, dollar_pnl=dollar_pnl,
+            peak_pct=trade.get('max_profit_pct'), commission=commission,
+            perm_id=self.broker.order_perm_id(exit_trade),
+        )
+        notifier.notify_closed(symbol, trade, fill_price, profit_pct, dollar_pnl,
+                               reason, commission=commission)
+        trade['qty'] -= filled_qty
+
+    def _remaining_qty(self, trade: dict):
+        """How much of this position the account ACTUALLY still holds, measured
+        on the always-long reference leg (debit long leg / condor wing call).
+        None = unknown (feed unavailable) → caller must defer, not act.
+        0 = gone. Negative = OVER-CLOSED (inverse position — critical)."""
+        pos = self.broker.position_qty(trade.get('long_conid'))
+        return None if pos is None else int(pos)
+
     # Reprice an unfilled closing order after this many seconds
     _EXIT_REPRICE_AFTER_S = 180
     # Break the reject/retry loop (TODO #26): space out close attempts, and
@@ -831,7 +877,45 @@ class TradingBot:
         if self._cancel_tp_order(symbol, trade):
             return
 
+        # #30 double-fill guard: never trust order status — requantify against
+        # the ACTUAL account position before submitting any close.
+        remaining = self._remaining_qty(trade)
+        if remaining is None:
+            logger.warning(f"[{symbol}] Position feed unavailable — deferring close attempt to next loop.")
+            return
+        if remaining < 0:
+            # A prior close executed MORE than the position — inverse position!
+            logger.error(f"[{symbol}] OVER-CLOSED: reference leg position {remaining} "
+                         f"(inverse). Halting all automatic action — manual flatten required.")
+            notifier.notify_over_closed(symbol, trade.get('direction', ''), remaining)
+            trade['close_failed'] = True   # halt; keep tracked for visibility
+            return
+        if remaining == 0:
+            # Position is gone. If OUR previous closing order actually filled
+            # (e.g. reported Cancelled but executed — the 2026-07-10 bug), book it.
+            prior = trade.get('exit_ibkr_trade')
+            if prior is not None and float(prior.orderStatus.filled or 0) > 0:
+                logger.warning(f"[{symbol}] Prior 'dead' closing order actually filled — booking it instead of resubmitting.")
+                self._book_exit_fill(symbol, trade, prior)
+            else:
+                logger.warning(f"[{symbol}] Nothing left to close in the account — treating as externally closed.")
+                notifier.notify_closed_externally(symbol, trade.get('direction', ''))
+                self.active_trades.pop(symbol, None)
+            return
+        if remaining < trade['qty']:
+            logger.warning(f"[{symbol}] Account holds {remaining}/{trade['qty']} — a prior close "
+                           f"partially executed. Closing only the remaining {remaining}.")
+            trade['qty'] = remaining
+
         try:
+            # Retry attempts: sweep stray open orders on these legs first so the
+            # resubmit can't be rejected with error 201 (opposite-side order)
+            if attempts >= 1:
+                swept = self.broker.cancel_open_orders_for(self.broker.option_symbol(symbol))
+                if swept:
+                    logger.warning(f"[{symbol}] Swept {swept} stray open order(s) before close retry.")
+                    self.broker.sleep(1)
+
             # Same BAG contract as entry; closing action is the opposite of
             # opening — SELL closes a debit spread, BUY closes a condor
             close_action = 'BUY' if trade.get('structure') == 'CONDOR' else 'SELL'
@@ -863,20 +947,27 @@ class TradingBot:
             status = exit_trade.orderStatus.status
 
             if status == 'Filled':
-                fill_price = float(exit_trade.orderStatus.avgFillPrice)
-                commission = (self.broker.order_commission(trade.get('ibkr_trade'))
-                              if trade.get('ibkr_trade') else 0.0)
-                commission += self.broker.order_commission(exit_trade)
-                trade['exit_permId'] = self.broker.order_perm_id(exit_trade)
-                self._finalize_closed_trade(symbol, trade, fill_price, commission)
+                self._book_exit_fill(symbol, trade, exit_trade)
 
             elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
+                # #30: a "dead" order may have EXECUTED anyway — check its fills
+                # before believing the status (2026-07-10: a Cancelled close had
+                # filled; the blind resubmit double-closed into an inverse position).
+                filled_qty = float(exit_trade.orderStatus.filled or 0)
+                if filled_qty >= trade['qty'] - 1e-9:
+                    logger.warning(f"[{symbol}] Closing order reported {status} but FULLY FILLED "
+                                   f"({filled_qty:g}/{trade['qty']}) — booking the fill.")
+                    self._book_exit_fill(symbol, trade, exit_trade)
+                    return
+                if filled_qty > 0:
+                    self._book_partial_exit(symbol, trade, exit_trade, int(filled_qty))
+                    # fall through: remainder reverts to ACTIVE for a (requantified) retry
+
                 code, msg = self.broker.last_order_error(exit_trade)
                 trade['last_close_error'] = (code, msg)
                 # Error 201 = an order already exists on the opposite side of a
                 # leg. Sweep our stray open orders on this underlying so the
-                # retry isn't rejected for the same reason (root-caused by #21,
-                # but clear it here too as a belt-and-suspenders).
+                # retry isn't rejected for the same reason.
                 if code == 201:
                     root = self.broker.option_symbol(symbol)
                     cleared = self.broker.cancel_open_orders_for(
@@ -886,7 +977,8 @@ class TradingBot:
                 logger.warning(
                     f"[{symbol}] Closing order {status} (error {code}: {msg[:100]}) — "
                     f"reverting to ACTIVE; retry gated by {self._CLOSE_RETRY_COOLDOWN_S}s cooldown "
-                    f"(attempt {trade.get('close_attempts', 0)}/{self._MAX_CLOSE_ATTEMPTS})."
+                    f"(attempt {trade.get('close_attempts', 0)}/{self._MAX_CLOSE_ATTEMPTS}); "
+                    f"retry will requantify against the account first."
                 )
                 trade['status'] = 'ACTIVE'
 

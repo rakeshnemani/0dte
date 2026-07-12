@@ -144,15 +144,37 @@ class IBKRBroker:
         self.ib.cancelOrder(order)
 
     def last_order_error(self, ibkr_trade) -> Tuple[int, str]:
-        """Most recent (errorCode, message) from a trade's log — e.g. why a
-        close was rejected. Returns (0, '') if there was no error entry."""
+        """Most recent REAL (errorCode, message) from a trade's log — skips
+        informational codes (e.g. 10349 "TIF set to DAY", which masked the real
+        201 on 2026-07-10). Falls back to the last info code, else (0, '')."""
+        fallback = (0, '')
         try:
             for entry in reversed(ibkr_trade.log):
                 if entry.errorCode:
-                    return int(entry.errorCode), str(entry.message)
+                    if entry.errorCode not in self._IBKR_INFO_CODES:
+                        return int(entry.errorCode), str(entry.message)
+                    if fallback == (0, ''):
+                        fallback = (int(entry.errorCode), str(entry.message))
         except Exception:
             pass
-        return 0, ''
+        return fallback
+
+    def position_qty(self, conid: int):
+        """Signed account position for one conId. Returns None when the answer
+        is UNKNOWN (fetch error, or the option-positions feed is empty — which is
+        indistinguishable from a glitch); callers must defer, not act, on None."""
+        try:
+            positions = self.ib.positions()
+        except Exception as e:
+            logger.warning(f"position_qty fetch failed: {e}")
+            return None
+        opts = [p for p in positions if p.contract.secType == 'OPT' and p.position != 0]
+        if not opts:
+            return None
+        for p in opts:
+            if p.contract.conId == conid:
+                return float(p.position)
+        return 0.0
 
     def cancel_open_orders_for(self, symbol_root: str, except_order_id=None) -> int:
         """Cancel every still-open order on an underlying (used to clear the
