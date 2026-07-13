@@ -33,6 +33,21 @@ hypotheses under test: watch for **entries the slope gate blocks that would have
 score separates winners from losers** (calibration pass after ~2 weeks of the
 `Conviction` audit column).
 
+**Experiment live (2026-07-10): `VWAP_INVALIDATION_BARS` 3 → 6.** User thesis: 3 bars
+is hair-triggered because entries are born just beyond VWAP. Validated by replay
+(`scripts/replay_invalidation.py`, 31 entries, underlying-proxy): **N=6 −115bp vs
+N=3 −151bp** — and a full sweep shows a clean optimum at 6, not "longer is better":
+N=3 −151 · **N=6 −115** · N=10 −144 · N=15 −206 · N=20 −190. Too little patience
+whipsaws winners; too much lets dead trades bleed toward the hard stop. ~6 minutes
+is roughly how long a benign pause near VWAP lasts. (Method note: 6 was proposed
+from the thesis *before* the sweep — hypothesis-then-test, not curve-fitting.) The advantage concentrates exactly where the thesis predicted — N=3
+whipsawed the 06-30 10:33 IWM at −33bp, a trade that *actually* won +46% via trail
+(the rule didn't exist yet that day); N=6 lets it run. Typical cost: losing
+invalidations exit ~2–5bp worse; worst penalty (07-09 trap, −17bp worse) is an entry
+#31 now blocks anyway. **Caveat: the aggregate edge hinges on that one save in a
+31-trade sample. Revert triggers: 2 invalidation exits worse than −45%, or any
+−70% hard stop that a 3-bar exit would clearly have caught.**
+
 **Watch-pattern (no action yet) — HIGH-conviction bear traps on marginal breakouts.**
 2026-07-09 QQQ PUT scored 5/5 (ADX 43 rising, SPY+IWM agree, early, calm tape) but
 entered just **$0.02** below the buffered ORB-low and V-reversed in ~1 min → invalidation
