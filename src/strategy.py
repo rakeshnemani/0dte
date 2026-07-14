@@ -88,17 +88,36 @@ def entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
             if not pd.isna(adx_prev):
                 adx_slope = float(current_adx - adx_prev)
                 if adx_slope <= 0:
-                    logger.info(
-                        f"[{symbol}] Chop guard: ADX {current_adx:.1f} but flat/falling "
-                        f"({adx_slope:+.2f} over {config.ADX_SLOPE_BARS} bars). Entry blocked."
-                    )
-                    return None, "", {}, lean
+                    # #32 override: a strong-enough trend can enter even on a flat/
+                    # falling slope. The pure rising-ADX gate blocked EVERY QQQ entry
+                    # on 2026-07-13, QQQ's biggest down day (ADX high, not rising).
+                    override = config.ADX_SLOPE_OVERRIDE_ADX
+                    if override > 0 and current_adx >= override:
+                        logger.info(
+                            f"[{symbol}] ADX slope {adx_slope:+.2f} flat/falling but ADX "
+                            f"{current_adx:.1f} >= override {override:.0f} — entry allowed (#32)."
+                        )
+                    else:
+                        logger.info(
+                            f"[{symbol}] Chop guard: ADX {current_adx:.1f} but flat/falling "
+                            f"({adx_slope:+.2f} over {config.ADX_SLOPE_BARS} bars). Entry blocked."
+                        )
+                        return None, "", {}, lean
 
         indicators = {
             'adx': current_adx, 'vwap': current_vwap,
             'orb_high': orb_high, 'orb_low': orb_low, 'current_price': current_close,
             'adx_slope': adx_slope,
         }
+
+        # Slope annotation — honest about direction (an override entry has slope ≤ 0,
+        # so don't call it "rising"; the #32 override deliberately admits those).
+        if adx_slope is None:
+            slope_txt = ""
+        elif adx_slope > 0:
+            slope_txt = f" rising {adx_slope:+.2f}"
+        else:
+            slope_txt = f" flat/falling {adx_slope:+.2f}"
 
         # ── Chop guard 2: breakout must CLEAR the ORB level, not poke it ──────
         buf = config.ORB_BREAKOUT_BUFFER_PCT
@@ -110,16 +129,14 @@ def entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
             level = call_level
             reason = (
                 f"Bullish: Price ({current_close:.2f}) > VWAP ({current_vwap:.2f}) and "
-                f"ORB High+buffer ({call_level:.2f}). ADX: {current_adx:.2f}"
-                + (f" rising {adx_slope:+.2f}" if adx_slope is not None else "")
+                f"ORB High+buffer ({call_level:.2f}). ADX: {current_adx:.2f}" + slope_txt
             )
         elif current_close < current_vwap and current_close < put_level:
             direction = "PUT"
             level = put_level
             reason = (
                 f"Bearish: Price ({current_close:.2f}) < VWAP ({current_vwap:.2f}) and "
-                f"ORB Low−buffer ({put_level:.2f}). ADX: {current_adx:.2f}"
-                + (f" rising {adx_slope:+.2f}" if adx_slope is not None else "")
+                f"ORB Low−buffer ({put_level:.2f}). ADX: {current_adx:.2f}" + slope_txt
             )
         else:
             return None, "", {}, lean
@@ -362,18 +379,48 @@ def conviction_score(symbol: str, direction: str, df: pd.DataFrame,
 
 def thesis_invalidated(direction: str, df: pd.DataFrame) -> bool:
     """True if price closed on the wrong side of VWAP for
-    VWAP_INVALIDATION_BARS consecutive 1-min bars — the entry reason is gone."""
+    VWAP_INVALIDATION_BARS consecutive 1-min bars — the entry reason is gone.
+
+    #32 regime-awareness (both default-off → identical to the pre-#32 rule):
+      • TREND HOLD — while a strong trend (ADX >= VWAP_INVALIDATION_HOLD_ADX) is
+        running IN THE TRADE'S FAVOR (DI+ > DI− for a CALL, DI− > DI+ for a PUT),
+        a VWAP pullback is trend noise, not a dead thesis; suppress the recross
+        exit (hard stop / trail still apply). Direction matters: a strong trend
+        AGAINST us must still invalidate — otherwise we'd ride an adverse trend to
+        the −70% stop (the 07-01 bleed). Fails open on any ADX error.
+      • BUFFER — a wrong-side close must clear VWAP by VWAP_INVALIDATION_BUFFER_PCT,
+        not a bare tick (entries are born just beyond VWAP; a few-cent recross is
+        usually noise — the 2026-07-13 SPY whipsaw: 751.45 vs VWAP 751.41).
+    """
     n = config.VWAP_INVALIDATION_BARS
     if n <= 0 or df.empty or len(df) < max(20, n):
         return False
+
+    hold_adx = config.VWAP_INVALIDATION_HOLD_ADX
+    if hold_adx > 0:
+        try:
+            adx_ind = ta.trend.ADXIndicator(
+                high=df['high'], low=df['low'], close=df['close'], window=14
+            )
+            adx = adx_ind.adx().iloc[-1]
+            di_pos = adx_ind.adx_pos().iloc[-1]
+            di_neg = adx_ind.adx_neg().iloc[-1]
+            if not (pd.isna(adx) or pd.isna(di_pos) or pd.isna(di_neg)) and adx >= hold_adx:
+                trend_favors = (di_pos > di_neg) if direction == 'CALL' else (di_neg > di_pos)
+                if trend_favors:            # strong trend WITH us → pullback is noise
+                    return False
+        except Exception:   # never let an indicator hiccup mask a real exit
+            pass
+
     vwap_series = ta.volume.VolumeWeightedAveragePrice(
         high=df['high'], low=df['low'], close=df['close'], volume=df['volume']
     ).volume_weighted_average_price()
     closes = df['close'].tail(n)
     vwaps = vwap_series.tail(n)
+    buf = config.VWAP_INVALIDATION_BUFFER_PCT
     if direction == 'CALL':
-        return bool((closes < vwaps).all())
-    return bool((closes > vwaps).all())
+        return bool((closes < vwaps * (1 - buf)).all())
+    return bool((closes > vwaps * (1 + buf)).all())
 
 
 def exit_decision(profit_pct: float, max_profit_pct: float,

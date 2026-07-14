@@ -149,6 +149,163 @@ regime's sample.
 
 ---
 
+## 2026-07-14 — 0W/1L 🟡 — ✅ FIRST LIVE XSP TRADE (migration works), small loss
+
+**The result is a footnote; the milestone is the headline: the bot traded XSP end-to-end
+for the first time and it executed cleanly.** One trade, a small loss, uneventful tape.
+
+### The trade
+| Field | Value |
+|---|---|
+| 11:07 XSP **CALL** 6-lot | entry $0.49 → exit $0.42 · **−14.29% / −$42 gross**, −$31 fees → **−$73 net** |
+| Conviction | **MEDIUM 2/5** — `ADX✓ slope✓ agree✗ early✗ tape✗(17x)` (scraped in at the min score) |
+| Path | peaked **+16.3%** one minute after entry, reversed, **6-bar VWAP invalidation** at −15% |
+
+### Findings
+1. **✅ XSP migration validated LIVE (#3 done).** The order routed as `BAG symbol=XSP
+   exchange=CBOE`, filled at the **$0.49 limit**, rested a take-profit at $0.78, and the
+   close filled at the **$0.42 limit**. **No assignment risk (the whole point), no orphan,
+   no untracked position, no errors** (the lone `[202] Order Canceled` is the normal
+   cancel-and-resubmit close flow). Dashboard rebuilt (49 trades / 12 days). The `broker`
+   index-option path, the SPY-signal/XSP-execution split, and the exit path all worked
+   against real IBKR.
+2. **✅ Fill quality looks fine on this sample.** The feared XSP wide-spread slippage did
+   **not** bite — both legs filled *at* our limit ($0.49 in, $0.42 out). One trade isn't a
+   sample, but the worry that XSP is untradeable at 0DTE is not supported so far. Keep
+   watching realized-vs-limit over the next few fills.
+3. **🔴 Same whipsaw, now on XSP.** Bought a breakout, +16% within a minute, then it
+   reversed and the VWAP recross ejected us at −14%. This is the exact 32/33-invalidation
+   pattern the faithful replay flagged — the rolling-14 VWAP hugs price, so the recross
+   fires on noise. Not an XSP problem; the same entry-quality / VWAP-reference problem
+   (**#33**). The trade never should have carried much conviction: `tape✗(17x)` = a choppy
+   17-cross tape, and it was a marginal 2/5.
+4. **📉 `agree✗` is now structural (expected).** XSP-only removes cross-symbol agreement,
+   so the conviction ceiling is **4/5**, and this entry scraped in at the 2/5 minimum on
+   `ADX✓ slope✓` alone. Worth deciding whether XSP-only should *raise* `MIN_CONVICTION_SCORE`
+   (a 2/5 with `agree`/`early`/`tape` all ✗ is a thin entry) — logging, not acting yet.
+
+### Net
+Green milestone, yellow P&L. **#3 is effectively proven live** — assignment risk is gone
+and XSP trades clean. The −$73 is the same marginal-entry / VWAP-whipsaw story we already
+have a plan for (#32 buffer + #33 anchored VWAP), now reproduced on the new instrument.
+*(Fixed same day: `replay_invalidation.py` now resolves the signal source in `day_bars`,
+so XSP entries replay on SPY bars — all 34 entries count. New totals: N=6 −70bp
+(invalidates 33/34) · +buf0.05% −64bp · +buf0.10% −266bp · hold ~no effect. Same story.)*
+
+---
+
+## 2026-07-13 — 0W/2L 🔴 + 🚨 ASSIGNMENT from Friday — the guards strangled a trend day
+
+**Two separate stories today, and the small one is the spreads.**
+
+### 🚨 Story 1 (the big one): assigned into stock over the weekend
+The IBKR account is holding, as of today, **400 QQQ shares** (avg 723.87) and **600 SPY
+shares** (avg 754.60) — **~$733k notional, ≈ −$9.0k unrealized**, taking **−$9,810 of
+*today's* account dailyPnL** (QQQ −$5,800, SPY −$4,010). These are **Friday 07-10
+assignments**: short option legs that expired ITM and were exercised into stock over the
+weekend. **600 SPY = the "net-long 6-lot residual" the #30 double-fill left on 07-10**
+that wasn't flattened before Friday's close; the QQQ 400 similarly traces to unclosed
+condor legs. My initial 07-13 retro said "clean execution, no orphans" — **that was wrong.**
+The bot's ledger is blind to assigned stock, so I only saw the −$207 of spread P&L and
+missed the ~$9k sitting in the account. **This is the real damage of the week, and it's
+an operational/structural failure, not a strategy one.**
+- **Root cause:** 0DTE options on **SPY/QQQ/IWM are American-style ETF options → assignable.**
+  Any short leg left open into expiry (via a failed/residual close, or a condor held to
+  the bell) can become stock. #30 is fixed, but the tail risk is inherent to assignable
+  products.
+- **Fix (user directive 07-13):** stop trading SPY and QQQ; move to **cash-settled,
+  European-style index options (XSP, etc.) that cannot be assigned.** Promotes TODO #3
+  from "at live transition" to now. (IWM is also assignable — needs a cash-settled
+  replacement too, e.g. MRUT/RUT.) **ACTION: user to flatten the 400 QQQ / 600 SPY
+  shares** — the bot can't and won't trade them; they're unmanaged directional risk.
+
+### Story 2: the spreads — 0W/2L, −$207 net, but the loss is a *false negative*
+Config: condors OFF, `VWAP_INVALIDATION_BARS=6`, path guard #31 live, #30 fixed.
+
+| Trade | Conviction | Entry→Exit (underlying) | Result | What actually happened |
+|-------|-----------|-------------------------|--------|------------------------|
+| IWM PUT 10:19 (7-lot) | MEDIUM 3/5 | 293.69 → 294.42 (6 min) | −$91 / −$113 net | shorted a breakdown, bounced to VWAP → invalidated −33% |
+| SPY PUT 12:02 (8-lot) | MEDIUM 2/5 (inv−1) | 751.06 → 751.45 (11 min) | −$64 / −$94 net | invalidated at 751.45 — **then SPY fell to ~748.2** |
+
+**The damning part: today was a DOWN day and we had the direction RIGHT on all three
+names — and the strategy's own guards turned that into a loss.**
+
+1. **🔴 The VWAP-invalidation exit whipsawed us out of correct trend trades.** We bought
+   PUTs (right), price pulled *back* through VWAP on a normal retracement, the 6-bar
+   invalidation ejected us at a small loss — **and then the downtrend resumed without us.**
+   SPY is the proof: exited at 751.45, SPY closed ~748.2 (−$6.7/sh on the day). The
+   751/750 bear put would have run from our 0.28 exit toward its $1.00 max and hit the
+   +60% take-profit (~0.576) — a ~**+$173** trade instead of −$94. The exit rule assumes
+   "VWAP recross = thesis dead," which is **false on a trend day with pullbacks** — exactly
+   the day the strategy is built to win.
+2. **🔴 The entry chop-guard blocked QQQ all day — on QQQ's biggest down day.** QQQ fell
+   **~$14.5/share (~−2%)** today, but the ADX-slope guard read "ADX high but flat/falling"
+   and blocked *every* QQQ entry from 10:07 onward. So the one name that trended cleanly,
+   we never traded. The guard meant to avoid chop-day fakeouts also vetoes real trend days
+   where ADX is elevated-but-not-rising.
+3. **⚖️ Verdict on "entry wrong / exit wrong / rewrite?" → it's the FILTER/EXIT layer,
+   not the core signal.** The direction engine was right on SPY, IWM, and QQQ. What lost
+   money was the risk scaffolding *we* bolted on over the last two weeks to survive chop
+   days (rising-ADX gate, VWAP invalidation, path guard, N tuning): it's **over-fit to
+   the chop regime and now strangles the trend regime.** Not a rewrite — a **recalibration
+   of entry gate + exit to be regime-aware** (give trend trades room; only invalidate when
+   the trend is actually dying, e.g. ADX falling, or use a structural stop at the ORB
+   level rather than a bare VWAP tick).
+4. **N=6 note:** both invalidations fired at exactly 6 bars, but that's a symptom of #1
+   (the exit fired at all), not the disease. Re-tuning N within the same VWAP-recross rule
+   won't fix a rule that shouldn't fire on trend-day pullbacks. Revert triggers still not
+   hit (−33%/−22%, no −70% stop).
+5. **💸 Fees:** $51.72 on −$155 gross (~33%) — still the standing structural drag (#20).
+
+### Net
+The spreads *look* like a −$207 no-edge day, but the truth is worse and more useful:
+**the direction was right everywhere, and the strategy's own guards + exit converted a
+winning-direction down-day into a loss** (whipsawed out of SPY/IWM, gated out of QQQ),
+**while Friday's assignment quietly cost ~$9k.** Two action items fall out: (a) migrate
+off assignable products to cash-settled index options; (b) make the entry gate and the
+invalidation exit **regime-aware** so trend days aren't strangled. See TODO.
+
+### 07-13 evening — #3 built + Gateway-validated; #32 replay tempers the exit thesis
+**#3 (XSP) validated** (`scripts/validate_xsp.py`, read-only): XSP qualifies as `IND` on
+CBOE (level 751.53 — ~0.5% above SPY, confirming strikes must come from XSP's own level);
+option chain present with `tradingClass=XSP`, mult 100, on CBOE; the real
+`broker.get_option_contract` path qualifies an ATM 0DTE PUT on CBOE. Only **live 0DTE
+bid/ask (fill quality)** remains — needs market hours.
+
+**#32 replay (33 entries, now using the REAL `thesis_invalidated` rule — I found the old
+replay used session-cumulative VWAP while the bot uses `ta` rolling-14, so the earlier
+"N=6 −115bp / optimal" was measured on the wrong line):**
+
+| scenario | total bp | outcome mix |
+|---|---|---|
+| N=6 current | **−60** | TP:1 · invalidated:**32** |
+| N=6 +buf 0.05% | **−52** | EOD:10 · TP:3 · invalidated:20 |
+| N=6 +buf 0.10% | −254 | EOD:14 · HARD-STOP:4 · TP:5 · invalidated:10 |
+| N=6 +hold ADX≥35 | −63 | TP:1 · invalidated:32 |
+| N=6 +hold ADX≥40 | −60 | TP:1 · invalidated:32 |
+| N=6 +buf 0.05% +hold35 | −52 | EOD:10 · TP:3 · invalidated:20 |
+
+Read honestly:
+1. **The current rule invalidates 32 of 33 entries.** The rolling-14 VWAP *hugs price*, so
+   a "recross" fires on almost everything within a few bars of entry. That's less an
+   exit-patience problem than a signal that **entries are chronically on the wrong side of
+   VWAP right after entry** — an entry-quality + VWAP-reference problem.
+2. **The 0.05% buffer is the only knob that helps** (−52 vs −60): it converts 12 whipsaws
+   into 10 EOD + 2 TP (3 winners vs 1), adds **no** hard stops. Modest and defensible, but
+   still net-negative — it reduces bleed, it doesn't create edge.
+3. **0.10% is too loose** (−254): 4 hard stops reappear — the 07-01 bleed. **ADX-hold does
+   ~nothing** here (ADX rarely ≥35 at the invalidation moment).
+4. **New lead:** the deeper lever is likely the **VWAP reference itself** — a rolling-14 VWAP
+   that tracks price makes both the entry breakout and the invalidation nearly meaningless.
+   An **anchored/session VWAP** (stable line) would make "beyond VWAP" and "recross" mean
+   something, and ties directly to entry quality. Candid correction to the earlier "just fix
+   the exit" framing: the exit knobs help at the margin; the entries + the VWAP line are the
+   real problem. **Recommendation:** set `VWAP_INVALIDATION_BUFFER_PCT=0.0005` (small, safe
+   win), leave ADX-hold/entry-override at 0 (no evidence yet), open an anchored-VWAP
+   investigation as the next real swing.
+
+---
+
 ## 2026-07-10 — 0W/4L 🔴 + a new close-double-fill bug
 
 **Booked: 0 wins / 4 losses, −$267 gross.** True day P&L **unknown** — a close

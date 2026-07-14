@@ -11,10 +11,14 @@ for how they map to the paper→live gates.
 | Priority | Meaning | Items |
 |----------|---------|-------|
 | **P0 — CRITICAL** | Live-money correctness bugs | ✅ **all clear** — #21/#25/#26 (07-09), #30 close-integrity + #31 path guard (07-10) all done |
-| **P0 — do next** | Directly moves the fee-adjusted edge or is a mandatory safety control; small builds | *(cleared — #13 and #15 done 2026-07-07)* |
+| **P0 — do next** | Directly moves the fee-adjusted edge or is a mandatory safety control; small builds | **#3** migrate to XSP (assignment incident 07-13) · **#32** regime-aware exit (VWAP invalidation whipsaws trend days) |
 | **P1 — soon** | Required before live or user-committed next major build | **#2** exposure cap, **#16** always-on host, **#22/#28** condor tuning *(#23 hourly summary, #24 reconcile, #9 condors, #17/#18/#19 → done)* |
 | **P2 — evidence-gated** | Good hypotheses waiting for data or a trigger day | **#20** wider spreads (fee-ratio experiment), **#5** time stop, **#6** midday tightening, **#7** expected-move anchor, **#12** 2-hour throttle |
-| **P3 — parked / live-transition** | By design not now | **#3** XSP switch, **#4** GLD/TLT, **#8** VIX1D |
+| **P3 — parked / live-transition** | By design not now | **#4** GLD/TLT, **#8** VIX1D |
+
+> **⏸️ BOT PAUSED (2026-07-13):** entries stopped after Friday 07-10 assignment
+> (400 QQQ + 600 SPY shares, ≈ −$9k) traced to assignable ETF options. Not resuming
+> until **#3** (XSP-only, cash-settled) lands. User to flatten the assigned shares.
 
 Rationale for the P0s: after fee adjustment the edge is currently negative (see
 GO_LIVE Gate 2). #13 attacks the biggest recoverable leak — winners giving back
@@ -25,7 +29,18 @@ requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
 
 ## P0 — Do next
 
-*(cleared 2026-07-07 — #13 and #15 in Done below; next up is the P1 batch)*
+3. **[P0 — active] Migrate SPY→XSP; run XSP-only (cash-settled, no assignment).** Trigger: **2026-07-10 assignment** — short legs on American-style ETF options (SPY/QQQ condor residuals, incl. the #30 leftover) expired ITM → **400 QQQ + 600 SPY shares assigned over the weekend, ≈ −$9k**. XSP is cash-settled + European → **cannot be assigned**. Decision (07-13): **XSP only** — drop QQQ and IWM (both American-style/assignable; no clean cash-settled mini validated yet). Approach (already specced): **generate signals from SPY 1-min bars** (real volume → real VWAP/ORB/ADX), **execute on XSP options**. Scaffolding exists: `broker.py:96` already builds `Index('SPX','CBOE')`; `option_symbol()` maps roots. Build:
+   - `option_symbol`/contract path for XSP (root `XSP`, exchange `CBOE`, European, multiplier 100); Index underlying for level, SPY bars for indicators.
+   - Per-symbol **strike increment** (XSP $1) + strike selection from SPY-derived levels (XSP ≈ SPY level).
+   - Drop the assignment-prone assumptions; no early-exercise path needed.
+   - **Needs live-Gateway validation** (can't test tonight): XSP option-chain qualification, IBKR paper **market-data subscription** for XSP, and **fill quality** at 0DTE (bid-ask ~$0.05–0.15 vs SPY $0.01–0.02 → validate small size first). Code + unit tests can land now; Gateway checks handed over.
+   - Do **not** trade SPY and XSP both (100% signal duplication).
+   - **STATUS 2026-07-13 — code complete + unit-tested (additive; SPY/QQQ/IWM paths untouched).** `broker.INDEX_SPECS` + `option_exchange()`; `underlying_contract`/`option_symbol`/`get_option_contract`/`make_bag_multi`/`fetch_intraday_data` are index-aware; `config.SIGNAL_SOURCE={'XSP':'SPY'}`; `bot.py` sources entry **and** exit-invalidation bars from SPY for XSP. Tests: `scripts/test_xsp_and_regime.py` (13 mapping checks pass). `.env` `SYMBOLS=XSP`. **⏸ Do NOT restart until the Gateway checklist passes:** (1) `qualifyContracts` an XSP 0DTE option (if CBOE fails, try SMART — flip `INDEX_SPECS['XSP']['option_exchange']`); (2) confirm XSP market-data subscription in paper; (3) 1-lot fill test to check slippage.
+
+32. **[P0 — active] Regime-aware exit — stop whipsawing out of trend days.** 2026-07-13 (a −2% down day) we had PUT direction **right** on SPY/IWM but the **VWAP-recross invalidation** ejected us on a normal pullback, then the downtrend paid off without us (SPY exited 751.45 → closed ~748.2; the 751/750 put would have hit +60% TP). The exit assumes "VWAP recross = thesis dead," which is **false on a trend day with pullbacks** — exactly our best regime. Options (test via `replay_invalidation.py` before committing): (a) **suppress invalidation while ADX is high/rising**, only fire when the trend is actually rolling over; (b) invalidate on a **structural level** (close back beyond the ORB line we broke) instead of a bare VWAP tick; (c) require price to close beyond VWAP by a **buffer**, not touch it. Companion: the **entry** chop-guard (rising-ADX gate) blocked *every* QQQ entry on QQQ's −2% day — same over-fit-to-chop problem on the entry side; re-evaluate the "ADX must be rising" gate for elevated-but-flat ADX trend days. **Root diagnosis: the risk/filter layer is over-fit to chop and strangles trend days — recalibrate, don't rewrite.**
+   - **STATUS 2026-07-13 — mechanisms built + unit-tested, all default-OFF (identical to pre-#32 until calibrated).** `strategy.thesis_invalidated` gained (a) `VWAP_INVALIDATION_BUFFER_PCT` (recross must clear VWAP by a margin) and (b) `VWAP_INVALIDATION_HOLD_ADX` (suppress invalidation while ADX ≥ x); `entry_signal` gained `ADX_SLOPE_OVERRIDE_ADX` (enter on flat slope when ADX ≥ x). Tests: `scripts/test_xsp_and_regime.py` (7 checks incl. buf=0/hold=0 = old rule).
+   - **CALIBRATED 2026-07-13 (evening)** via the rebuilt `replay_invalidation.py` (now calls the REAL `thesis_invalidated`; the old script used cumulative VWAP, so the prior "N=6 −115bp" was on the wrong line). 33 entries: **N=6 current −60bp (invalidates 32/33!)** · **+buf 0.05% −52bp** (best; 12 whipsaws → 10 EOD + 2 TP, no new hard stops) · +buf 0.10% −254bp (too loose, 4 hard stops) · +hold ADX35/40 ≈ no effect. **Recommend `VWAP_INVALIDATION_BUFFER_PCT=0.0005`; leave hold + override at 0.** Bigger finding: 32/33 invalidations ⇒ the exit isn't the root cause — see #33.
+33. **[P1 — new, 2026-07-13] Anchored/session VWAP instead of `ta` rolling-14.** The replay showed the current rolling-14 VWAP *hugs price*, so both the entry "beyond VWAP" breakout and the invalidation "VWAP recross" are near-meaningless (32/33 entries invalidate within bars). A standard **anchored session VWAP** (from the 09:30 open) is a stable line — "beyond VWAP" and "recross" would carry information. Touches `add_indicators` (entry) and `thesis_invalidated` (exit) together; re-run the replay after. Likely the real edge lever — entries are chronically wrong-side-of-VWAP right after entry, which is an entry-quality/reference problem, not exit patience.
 
 ## P1 — Soon
 
@@ -53,7 +68,7 @@ requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
 
 ## P3 — Parked / live-transition
 
-3. **[P3 — live transition] Replace SPY with XSP** — Same index, but 60/40 Section-1256 tax treatment + cash settlement (no assignment risk on orphans/expiry) + European exercise. Cost: much wider bid-ask than SPY (~$0.05–0.15 vs $0.01–0.02), so validate fills with small size first. Generate signals from SPY bars (real volume → real VWAP), execute on XSP options. Do **not** trade both — 100% signal duplication. Belongs to GO_LIVE Gate 6.
+*(#3 XSP promoted to P0 — active — after the 2026-07-10 assignment. See above.)*
 
 4. **[P3 — experiment] GLD/TLT on their expiry days** — Only genuine diversification available; no daily 0DTE, so verify their expiration calendar + 0DTE-day option liquidity in IBKR first, then add strike/width configs.
 

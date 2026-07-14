@@ -23,11 +23,26 @@ MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.10"))
 STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 25}
 SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}
 
+# ── Signal source vs execution symbol (#3, XSP migration) ────────────────────
+# Some tradables are illiquid as an underlying but track a liquid proxy. XSP
+# (cash-settled, European → no assignment) has thin option/where-volume, so its
+# 1-min bars make an unreliable VWAP. We therefore compute the ENTRY/EXIT
+# indicators (VWAP, ORB, ADX) from the proxy's bars (SPY — real volume) but
+# select strikes and place orders on the execution symbol itself (XSP). A symbol
+# absent from this map sources its own bars (SPY/QQQ/IWM unchanged).
+SIGNAL_SOURCE = {"XSP": "SPY"}
+
 # ── Chop guards (added after 2026-07-01 reversal-day retro) ──────────────────
 # Entry gate: require ADX to be RISING over the last N bars, not just > 25.
 # A level check passes on residual momentum; the slope says the trend is alive.
 # 0 disables. Fail-open when slope can't be computed yet (early session NaNs).
 ADX_SLOPE_BARS = int(os.getenv("ADX_SLOPE_BARS", "10"))
+# #32 (regime-aware entry): the rising-ADX gate above blocked EVERY QQQ entry on
+# 2026-07-13 — QQQ's biggest down day (ADX high but not rising). Override: when
+# ADX is at/above this level the trend is already strong enough to enter even if
+# the slope is flat/falling. 0 disables (pure rising-ADX gate, pre-#32 behavior).
+# Needs replay validation before trusting live; start conservative (e.g. 40).
+ADX_SLOPE_OVERRIDE_ADX = float(os.getenv("ADX_SLOPE_OVERRIDE_ADX", "0"))
 # Entry gate: price must clear the ORB level by this fraction (0.001 = 0.1%),
 # not just poke a cent above it. Filters micro-poke false breakouts.
 ORB_BREAKOUT_BUFFER_PCT = float(os.getenv("ORB_BREAKOUT_BUFFER_PCT", "0.001"))
@@ -44,6 +59,22 @@ PATH_MOMENTUM_BARS = int(os.getenv("PATH_MOMENTUM_BARS", "3"))
 # the entry thesis is invalidated — exit instead of riding to the hard stop.
 # 0 disables.
 VWAP_INVALIDATION_BARS = int(os.getenv("VWAP_INVALIDATION_BARS", "3"))
+# ── #32 regime-aware invalidation (added after the 2026-07-13 trend-day whipsaw) ─
+# On a −2% down day our PUTs were RIGHT, but a normal pullback ticked price back
+# across VWAP by a few cents and the recross exit ejected us right before the move
+# paid (SPY exited 751.45 → closed ~748.2). Two guards make the recross count only
+# when the thesis is really dead, not on trend-day noise. Both default OFF (0 =
+# pre-#32 behavior); calibrate with scripts/replay_invalidation.py before enabling.
+#  (a) BUFFER: a wrong-side close only counts if it clears VWAP by this fraction
+#      (0.0005 = 0.05%), not a bare tick. Symmetric to ORB_BREAKOUT_BUFFER_PCT.
+VWAP_INVALIDATION_BUFFER_PCT = float(os.getenv("VWAP_INVALIDATION_BUFFER_PCT", "0"))
+#  (b) TREND HOLD: suppress VWAP invalidation while a strong trend (ADX >= this)
+#      runs IN THE TRADE'S FAVOR (DI+>DI− for a CALL, DI−>DI+ for a PUT) — then a
+#      pullback is noise; rely on hard stop / trail. A strong trend AGAINST us still
+#      invalidates (never ride an adverse trend to the −70% stop). NB: DI(14) flips
+#      on a few counter-bars, so this rarely fires at N=6 — it's a safety gate, not
+#      a big lever. 0 disables. Start high (e.g. 35).
+VWAP_INVALIDATION_HOLD_ADX = float(os.getenv("VWAP_INVALIDATION_HOLD_ADX", "0"))
 # Entry throttle: after this many thesis-invalidation exits on the same
 # (symbol, direction) in one day, stand down on that signal until tomorrow.
 # 0 disables.

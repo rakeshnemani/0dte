@@ -397,8 +397,11 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `SIGNAL_COOLDOWN_MINUTES` | `30` | Minutes before a (symbol, direction) signal can re-trigger |
 | `MIN_SPREAD_COST` | `0.10` | Skip trade if spread mid-price is below this |
 | `ADX_SLOPE_BARS` | `10` | Entry chop guard: ADX must be rising over this many bars (0 = off) |
+| `ADX_SLOPE_OVERRIDE_ADX` | `0` | #32: allow entry on a flat/falling slope when ADX ≥ this (0 = off) |
 | `ORB_BREAKOUT_BUFFER_PCT` | `0.001` | Entry chop guard: breakout must clear the ORB level by this fraction (0 = off) |
 | `VWAP_INVALIDATION_BARS` | `3` | Exit: leave the trade if price closes past VWAP this many bars in a row (0 = off) |
+| `VWAP_INVALIDATION_BUFFER_PCT` | `0` | #32: a wrong-side close must clear VWAP by this fraction to count (0 = bare tick) |
+| `VWAP_INVALIDATION_HOLD_ADX` | `0` | #32: suppress the invalidation exit while ADX ≥ this (0 = off) |
 | `MAX_INVALIDATIONS_PER_SIGNAL` | `2` | Stand down a (symbol, direction) after this many invalidation exits in a day (0 = off) |
 | `PATH_FRESH_BARS` | `10` | Breakout level must have been crossed within this many bars (0 = off) |
 | `PATH_MOMENTUM_BARS` | `3` | Net move of the last N closes must agree with the signal (0 = off) |

@@ -278,7 +278,10 @@ class TradingBot:
         """Fetch bars, run the strategy signal, annotate breadth + conviction.
         Returns (direction, reason, indicators)."""
         now = market_time.now_et()
-        df = self.broker.fetch_intraday_data(symbol)
+        # #3: indicators come from the signal source (XSP → SPY bars for a real
+        # volume-weighted VWAP); strikes/orders still use `symbol` (XSP) below.
+        signal_symbol = config.SIGNAL_SOURCE.get(symbol, symbol)
+        df = self.broker.fetch_intraday_data(signal_symbol)
         # ADX(14) in the ta library needs ~2×window+1 bars — with fewer it raises
         # "index 14 is out of bounds" (seen every morning ~09:50–09:58 ET).
         if df.empty or len(df) < 30:
@@ -632,7 +635,9 @@ class TradingBot:
             checked_at = trade.get('_inval_checked_at')
             if checked_at is None or (market_time.now_et() - checked_at).total_seconds() >= 50:
                 try:
-                    df = self.broker.fetch_intraday_data(symbol)
+                    # #3: invalidation reads the signal source too (XSP → SPY),
+                    # so the VWAP recross is measured on real volume, not thin XSP.
+                    df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(symbol, symbol))
                     if is_condor:
                         invalidated = strategy.condor_breached(
                             df, trade['short_call'], trade['short_put'])
@@ -1064,8 +1069,10 @@ class TradingBot:
         notifier.notify_closed(symbol, trade, fill_price, profit_pct, dollar_pnl,
                                reason, commission=commission)
 
-        # Capture exit-time indicators for the audit log
-        df = self.broker.fetch_intraday_data(symbol)
+        # Capture exit-time indicators for the audit log — from the signal source
+        # (#3: XSP → SPY), so exit indicators are comparable to the entry ones and
+        # aren't computed from thin XSP index bars.
+        df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(symbol, symbol))
         exit_indicators = trade.get('entry_indicators', {}).copy()
         # >= 30 bars: ADX(14) raises "index out of bounds" below ~29 bars
         if not df.empty and len(df) >= 30:

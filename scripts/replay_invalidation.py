@@ -29,14 +29,15 @@ import pytz
 from ib_insync import IB, Stock, util
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, 'src'))
+import config       # noqa: E402  — the real bot config (knobs mutated per scenario)
+import strategy     # noqa: E402  — replay uses the REAL thesis_invalidated rule
 ET = pytz.timezone('America/New_York')
 ERA_START = '2026-06-30'
 ET_CUTOVER = datetime.datetime(2026, 7, 5)   # audit rows before this are CDT (+1h -> ET)
 
 TP_BP = 40      # favorable underlying move ≈ +60% spread (proxy)
 STOP_BP = -55   # adverse underlying move ≈ -70% spread (proxy)
-
-Ns = [int(a) for a in sys.argv[1:]] or [3, 6]
 
 # ── entries from the audit ────────────────────────────────────────────────────
 entries = []
@@ -52,7 +53,6 @@ with open(os.path.join(ROOT, 'audit.csv')) as fh:
         entries.append({'symbol': r['Symbol'], 'direction': r['Direction'],
                         'ts': ET.localize(ts), 'day': ts.date().isoformat()})
 
-print(f"Replaying {len(entries)} debit entries under N={Ns} ...")
 
 # ── bars from IBKR, one fetch per (symbol, day) ──────────────────────────────
 ib = IB()
@@ -63,6 +63,11 @@ except Exception as e:
 
 bars_cache = {}
 def day_bars(symbol, day):
+    # Faithful to production: indicators come from the signal source, so XSP
+    # entries replay on SPY bars (real volume for VWAP; XSP itself is an index
+    # with no TRADES volume and would fail a Stock() fetch). SPY/QQQ/IWM map to
+    # themselves. Caching on the resolved symbol also de-dups XSP↔SPY fetches.
+    symbol = config.SIGNAL_SOURCE.get(symbol, symbol)
     key = (symbol, day)
     if key in bars_cache:
         return bars_cache[key]
@@ -84,8 +89,11 @@ def day_bars(symbol, day):
     bars_cache[key] = df
     return df
 
-def simulate(e, n):
-    """Exit under N consecutive wrong-side closes. Returns (label, bp, minutes)."""
+def simulate(e, n, buffer=0.0, hold_adx=0.0):
+    """Walk forward from entry; exit on the TP/STOP proxy or the REAL bot
+    invalidation rule (strategy.thesis_invalidated) under this scenario's #32
+    knobs. Faithful to production: the rule sees the full session bars up to the
+    current minute and uses ta rolling-VWAP (+ ADX for the hold). (label, bp, m)."""
     df = day_bars(e['symbol'], e['day'])
     if df is None:
         return None
@@ -94,44 +102,55 @@ def simulate(e, n):
         return None
     entry_px = float(fwd['close'].iloc[0])
     sign = 1 if e['direction'] == 'CALL' else -1
-    streak, best = 0, 0.0
+    config.VWAP_INVALIDATION_BARS = n
+    config.VWAP_INVALIDATION_BUFFER_PCT = buffer
+    config.VWAP_INVALIDATION_HOLD_ADX = hold_adx
     for i in range(1, len(fwd)):
-        bar = fwd.iloc[i]
         t = fwd.index[i]
-        move_bp = sign * (float(bar['close']) - entry_px) / entry_px * 1e4
-        best = max(best, move_bp)
+        mins = (t - e['ts']).total_seconds() / 60
+        move_bp = sign * (float(fwd['close'].iloc[i]) - entry_px) / entry_px * 1e4
         if move_bp >= TP_BP:
-            return ('TP-likely', TP_BP, (t - e['ts']).total_seconds() / 60)
+            return ('TP-likely', TP_BP, mins)
         if move_bp <= STOP_BP:
-            return ('HARD-STOP', STOP_BP, (t - e['ts']).total_seconds() / 60)
-        wrong = (float(bar['close']) < float(bar['VWAP'])) if sign == 1 \
-            else (float(bar['close']) > float(bar['VWAP']))
-        streak = streak + 1 if wrong else 0
-        if streak >= n:
-            return ('invalidated', move_bp, (t - e['ts']).total_seconds() / 60)
+            return ('HARD-STOP', STOP_BP, mins)
+        if strategy.thesis_invalidated(e['direction'], df[df.index <= t]):
+            return ('invalidated', move_bp, mins)
         if t.hour == 15 and t.minute >= 55:
-            return ('EOD', move_bp, (t - e['ts']).total_seconds() / 60)
+            return ('EOD', move_bp, mins)
     last_bp = sign * (float(fwd['close'].iloc[-1]) - entry_px) / entry_px * 1e4
     return ('EOD', last_bp, (fwd.index[-1] - e['ts']).total_seconds() / 60)
 
-# ── run + report ──────────────────────────────────────────────────────────────
-totals = {n: 0.0 for n in Ns}
-print(f"\n{'entry':<22}{'dir':<5}", *[f"N={n}: outcome  bp   held".ljust(30) for n in Ns])
-for e in entries:
-    cells = []
-    for n in Ns:
-        r = simulate(e, n)
-        if r is None:
-            cells.append('no data'.ljust(30))
-            continue
-        label, bp, mins = r
-        totals[n] += bp
-        cells.append(f"{label:<12}{bp:+6.0f}  {mins:4.0f}m".ljust(30))
-    print(f"{e['day']} {e['ts'].strftime('%H:%M')}  {e['symbol']:<5}{e['direction']:<5}", *cells)
 
-print("\n--- direction-adjusted underlying totals (bp; TP/STOP capped at proxies) ---")
-for n in Ns:
-    print(f"  N={n}: {totals[n]:+.0f} bp across {len(entries)} entries")
-print("\nProxies: TP-likely = +40bp favorable (~+60% spread); HARD-STOP = -55bp (~-70%).")
-print("Interpretation: higher total bp = that N setting left trades in better spots.")
+# ── scenarios: current rule vs #32 variants (same bp metric as the N sweep) ──
+SCENARIOS = [
+    ("N=6 current",             dict(n=6)),
+    ("N=6 +buf0.05%",           dict(n=6, buffer=0.0005)),
+    ("N=6 +buf0.10%",           dict(n=6, buffer=0.0010)),
+    ("N=6 +holdADX35",          dict(n=6, hold_adx=35.0)),
+    ("N=6 +holdADX40",          dict(n=6, hold_adx=40.0)),
+    ("N=6 +buf0.05%+holdADX35", dict(n=6, buffer=0.0005, hold_adx=35.0)),
+]
+
+print(f"\nReplaying {len(entries)} entries × {len(SCENARIOS)} scenarios "
+      f"(real thesis_invalidated rule)...\n")
+
+results = {name: {'bp': 0.0, 'labels': {}} for name, _ in SCENARIOS}
+for e in entries:
+    for name, kw in SCENARIOS:
+        r = simulate(e, **kw)
+        if r is None:
+            continue
+        results[name]['bp'] += r[1]
+        results[name]['labels'][r[0]] = results[name]['labels'].get(r[0], 0) + 1
+
+print(f"{'scenario':<26}{'total bp':>9}   outcome mix")
+print("-" * 68)
+for name, _ in SCENARIOS:
+    R = results[name]
+    mix = ' '.join(f"{k}:{v}" for k, v in sorted(R['labels'].items()))
+    print(f"{name:<26}{R['bp']:>+9.0f}   {mix}")
+
+print("\nProxies: TP-likely=+40bp (~+60% spread); HARD-STOP=-55bp (~-70%).")
+print("Higher total bp = that rule left trades in better spots (same metric as the N sweep).")
+print("Revert-trigger discipline still applies before enabling any knob live.")
 ib.disconnect()

@@ -17,6 +17,19 @@ import market_time
 logger = logging.getLogger(__name__)
 
 
+# Cash-settled index underlyings (European exercise → NOT assignable). Anything not
+# listed here is treated as a SMART-routed equity/ETF (SPY/QQQ/IWM unchanged).
+#   exchange        — where the underlying INDEX prices
+#   option_root     — the option trading class / symbol root
+#   option_exchange — where the options + combos route (SMART can misqualify these)
+# SPX preserved exactly as before (options via SMART). XSP added 2026-07-13 (#3):
+# if CBOE qualification fails in paper, SMART is the fallback to try.
+INDEX_SPECS = {
+    'SPX': {'exchange': 'CBOE', 'option_root': 'SPXW', 'option_exchange': 'SMART'},
+    'XSP': {'exchange': 'CBOE', 'option_root': 'XSP',  'option_exchange': 'CBOE'},
+}
+
+
 class IBKRBroker:
     # Error codes that are routine/informational and should not be logged as errors
     _IBKR_INFO_CODES = {
@@ -92,21 +105,36 @@ class IBKRBroker:
 
     def underlying_contract(self, symbol: str):
         """Return the correct IBKR contract type for an underlying symbol."""
-        if symbol == 'SPX':
-            return Index('SPX', 'CBOE', 'USD')
+        spec = INDEX_SPECS.get(symbol)
+        if spec:
+            return Index(symbol, spec['exchange'], 'USD')
         return Stock(symbol, 'SMART', 'USD')
 
     def option_symbol(self, symbol: str) -> str:
         """Map 0DTE underlying symbol to the correct IBKR option root (SPX → SPXW)."""
-        return 'SPXW' if symbol == 'SPX' else symbol
+        spec = INDEX_SPECS.get(symbol)
+        return spec['option_root'] if spec else symbol
+
+    def option_exchange(self, symbol: str) -> str:
+        """Exchange the options + combos route on ('SMART' for equities/ETFs;
+        the listing exchange for cash-settled index options like XSP)."""
+        spec = INDEX_SPECS.get(symbol)
+        return spec['option_exchange'] if spec else 'SMART'
 
     def get_option_contract(self, symbol: str, direction: str, strike: float) -> Option:
         today_str = market_time.now_et().strftime('%Y%m%d')
         right = 'C' if direction == 'CALL' else 'P'
-        contract = Option(self.option_symbol(symbol), today_str, strike, right, 'SMART')
+        root = self.option_symbol(symbol)
+        if symbol in INDEX_SPECS:
+            # Cash-settled index options need an explicit exchange + trading class;
+            # SMART routing can pick the wrong (or no) contract.
+            contract = Option(root, today_str, strike, right, self.option_exchange(symbol),
+                              tradingClass=root, multiplier='100', currency='USD')
+        else:
+            contract = Option(root, today_str, strike, right, 'SMART')
         qualified = self.ib.qualifyContracts(contract)
         if not qualified:
-            raise ValueError(f"Cannot qualify option: {self.option_symbol(symbol)} {today_str} {right} {strike}")
+            raise ValueError(f"Cannot qualify option: {root} {today_str} {right} {strike}")
         return qualified[0]
 
     def make_bag(self, symbol: str, long_conid: int, short_conid: int) -> Contract:
@@ -120,12 +148,13 @@ class IBKRBroker:
         vertical's expensive leg gets the BUY action). Then a BUY order opens a
         debit position and a SELL order opens a credit position (e.g. an iron
         condor), and limit prices stay plain positive numbers either way."""
+        exch = self.option_exchange(symbol)
         bag = Contract()
         bag.symbol = self.option_symbol(symbol)
         bag.secType = 'BAG'
         bag.currency = 'USD'
-        bag.exchange = 'SMART'
-        bag.comboLegs = [ComboLeg(conId=cid, ratio=1, action=action, exchange='SMART')
+        bag.exchange = exch
+        bag.comboLegs = [ComboLeg(conId=cid, ratio=1, action=action, exchange=exch)
                          for cid, action in legs]
         return bag
 
@@ -255,8 +284,8 @@ class IBKRBroker:
             contract = self.underlying_contract(symbol)
             self.ib.qualifyContracts(contract)
 
-            # SPX is a cash index — use MIDPOINT since it has no "trade" volume
-            what_to_show = 'MIDPOINT' if symbol == 'SPX' else 'TRADES'
+            # Cash indices (SPX/XSP) have no "trade" volume — use MIDPOINT bars.
+            what_to_show = 'MIDPOINT' if symbol in INDEX_SPECS else 'TRADES'
             bars = self.ib.reqHistoricalData(
                 contract,
                 endDateTime='',

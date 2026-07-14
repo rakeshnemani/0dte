@@ -10,9 +10,12 @@ A Python **0DTE options-spread trading bot** on **Interactive Brokers paper trad
 - **Iron condors** (sell premium) on range/chop days.
 
 **Goal:** reach consistent, *fee-adjusted* profitability on paper, then go live.
-**Status (2026-07-09): NOT live-ready.** The strategy is a thin-edge coin-flip
-(~45% win rate, debit spreads roughly break-even on *gross*) that is currently
-**net-negative because of commissions** (~$100/day). See `docs/GO_LIVE.md` (~20% ready).
+**Status (2026-07-14): NOT profitable, but now running on XSP-only.** Thin-edge coin-flip
+(~45% WR, ~break-even gross, net-negative on ~$100/day commissions). **#3 done + validated
+live 07-14** — migrated to **XSP-only** (cash-settled European index options → *no
+assignment*, unlike the 07-10 SPY/QQQ debacle); first live XSP trade executed clean on
+CBOE. Still losing on the **entry-quality / VWAP-whipsaw** problem (#32 buffer + #33
+anchored VWAP are the open levers). See `docs/GO_LIVE.md` (~20% ready).
 
 ## Architecture (modular — refactored from one monolith)
 
@@ -94,7 +97,21 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 7. **The bot runs on a laptop** — needs an always-on host before live (TODO #16); laptop
    sleep has orphaned/killed it before.
 8. **Condors are a net drag so far** (1W/2L, structural 86% breakeven WR) — TODO #28 says
-   consider `CONDOR_ENABLED=false` until the debit side is fee-adjusted-green.
+   consider `CONDOR_ENABLED=false` until the debit side is fee-adjusted-green. (Disabled 07-10.)
+9. **Assignment is real and the bot is blind to it (07-10 → 07-13, ≈ −$9k).** SPY/QQQ/IWM
+   are **American-style ETF options → assignable.** A short leg left open into expiry (a
+   failed/residual close like the #30 leftover, or a condor held to the bell) expires ITM
+   and becomes **stock** over the weekend. On 07-13 the account held 400 QQQ + 600 SPY
+   assigned shares (≈ −$9k) that dwarfed the −$207 of spread P&L — and `audit.csv`/`bot.log`
+   never saw them (ledger tracks options only). **Lesson: reconcile the IBKR *account
+   positions* (stock too), not just the bot ledger; and move to cash-settled European index
+   options (XSP) that can't be assigned (TODO #3, now P0).**
+10. **The risk/filter layer is over-fit to chop and strangles trend days (07-13).** The
+    guards we added over two weeks to survive chop (rising-ADX entry gate, VWAP-recross
+    invalidation exit) turned a −2% *down day where our PUT direction was right* into a
+    loss: invalidation whipsawed us out of SPY/IWM before the move paid, and the ADX-slope
+    gate blocked every QQQ entry on QQQ's biggest down day. Fix = **regime-aware** exit/gate
+    (TODO #32), not a rewrite — the direction engine was right.
 
 ## Bug history (the big ones, all fixed)
 
@@ -131,12 +148,21 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 
 ## Current priorities (see TODO.md for detail)
 
-- **P1:** #2 total-exposure cap · #16 always-on host · #23 hourly Discord health summary ·
-  #22 condor breach exit fires too late · #28 reconsider/disable condors.
-- **P2 (the one that matters for viability):** #20 wider spreads to cut the fee ratio;
-  also #5 time stop, #6 midday tightening, #7 expected-move anchor, #12 2-hour throttle.
-- **P3:** #3 SPY→XSP at live transition, #4 GLD/TLT, #8 VIX1D.
+**▶️ RUNNING on XSP-only (2026-07-14).** #3 landed + validated live (clean CBOE fill, no
+assignment). Reminder: to pause a *running* bot you must **stop the process** — a `.env`
+edit won't affect the live process (config is in memory).
 
-**The single most important open question:** can the debit strategy clear its fees?
-It's ~break-even on gross; halving the fee line (#20 + fewer/bigger trades) is the path
-to viability. Everything else is secondary until that's answered.
+- **P0 — active:** **#33** anchored/session VWAP (rolling-14 hugs price → 32/33 entries
+  invalidate; the real edge lever) · **#32** regime-aware exit — mechanisms built + default-
+  off; replay says `VWAP_INVALIDATION_BUFFER_PCT=0.0005` is the one small win (hold/override
+  showed nothing). **#3 XSP migration: DONE (validated live 07-14).**
+- **P1:** #2 total-exposure cap · #16 always-on host · #22/#28 condor tuning.
+- **P2 (fee viability):** #20 wider spreads to cut the fee ratio; #5 time stop, #6 midday
+  tightening, #7 expected-move anchor, #12 2-hour throttle.
+- **P3:** #4 GLD/TLT, #8 VIX1D.
+
+**Two open questions now:** (1) can the debit strategy clear its fees? (~break-even gross;
+#20 is the lever). (2) Does making the exit/gate **regime-aware** (#32) recover the
+trend days we're currently strangling? 07-13 says the direction engine is right — the
+scaffolding around it is what's losing. XSP migration (#3) is the mandatory safety gate
+before any of that matters.
