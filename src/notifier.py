@@ -201,6 +201,19 @@ def notify_closed_externally(symbol: str, direction: str):
     )
 
 
+def notify_entry_expired(symbol: str, trade: dict, waited_s: float):
+    send(
+        "⌛ ENTRY ORDER EXPIRED (stale signal)",
+        f"**{symbol} {trade.get('direction')} Spread** limit @ "
+        f"${trade.get('target_entry_price', 0):.2f} went unfilled for "
+        f"{waited_s/60:.1f} min and was cancelled — no position opened.\n"
+        f"A resting limit only fills once the spread decays to our bid, i.e. once "
+        f"the market has moved *against* the thesis. The signal is stale; the bot "
+        f"will re-evaluate fresh rather than buy a dead setup (#34).",
+        ORANGE
+    )
+
+
 def notify_adopted(lines: list):
     send(
         "🔁 ADOPTED ORPHANED POSITIONS",

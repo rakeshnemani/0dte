@@ -19,7 +19,18 @@ MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", "200.0"))
 # With 3 symbols × 2 directions and a 30-min cooldown in a 5.5-hr window: ~12 is realistic.
 MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", "12"))
 SIGNAL_COOLDOWN_MINUTES = int(os.getenv("SIGNAL_COOLDOWN_MINUTES", "30"))
-MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.10"))
+# Skip a trade if the spread's mid is below this. NOT a risk knob — a FEE knob:
+# fees are per-contract, so a cheap spread buys the MOST contracts and therefore
+# the most fees. 2026-07-15: a $0.14 spread at a $300 budget = 21 lots = 42 legs =
+# $95 in fees on an $80 loss — and only ~$81 net even if the +60% target had hit.
+# Raised 0.10 → 0.30 on 2026-07-15 (TODO #35).
+MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.30"))
+# #34 (2026-07-15): an entry limit has a shelf life measured in bars, not hours.
+# A resting limit only fills once the spread decays to our bid — i.e. once the
+# market has moved AGAINST the thesis (adverse selection). On 07-15 an order sat
+# 1h42m, filled, and invalidated 65s later. Cancel an unfilled entry after this
+# many seconds and let the signal be re-evaluated fresh. 0 disables (wait forever).
+ENTRY_ORDER_TIMEOUT_SECONDS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECONDS", "120"))
 STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 25}
 SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}
 

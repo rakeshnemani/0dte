@@ -149,6 +149,69 @@ regime's sample.
 
 ---
 
+## 2026-07-15 — 0W/1L 🔴 — a 103-minute stale fill + fees > the loss. **8 straight losers.**
+
+**This looks like "one small loss." It isn't — it's the most diagnostic day we've had.**
+One XSP PUT: **−$80 gross, −$95.43 commissions → −$175 net.** The fees were **bigger than
+the loss**.
+
+### 🚨 The streak (user called it, ledger confirms)
+Last winning trade: **2026-07-09**, IWM condor, **+$12**. Last win of any size: **07-07,
++$51**. Since then: **8 consecutive losses, −$544 gross** (07-10 ×4, 07-13 ×2, 07-14 ×1,
+07-15 ×1). We are not "thin-edge coin-flip" anymore — we're 0-for-8.
+
+### What actually happened today (the timeline is the story)
+| time | event |
+|---|---|
+| 12:04:36 | Signal: XSP PUT, **MEDIUM 2/5** (`ADX✓ slope✓ agree✗ early✗ tape✗(20x)` — a 20-cross chop tape) |
+| 12:04:42 | Limit BUY submitted @ **$0.14** (the quoted mid), 21 lots |
+| 12:04→13:47 | **Order sits UNFILLED for 1h 42m** — 98 "still pending" polls |
+| **13:47:15** | **FILLED at $0.14** — 103 minutes after the signal |
+| 13:48:20 | **Invalidated 65 seconds later** — "wrong side of VWAP for 6 bars" |
+| 13:49:21 | Closed @ $0.10. −28.57% / −$80 gross, **$95.43 fees → −$175 net** |
+
+### Findings
+1. **🐛 NEW P0 — no order timeout ⇒ adverse-selection fills.** A working entry limit has
+   **no shelf life**. This one rested 103 minutes and only filled *when the spread decayed
+   to our bid* — i.e. we get filled precisely when the market has moved against the thesis.
+   That's textbook adverse selection: a resting limit fills when it's about to be wrong.
+   The 6-bar invalidation firing **65 seconds after fill** isn't a whipsaw — the thesis had
+   been dead for an hour before we were even in. **Fix: cancel an unfilled entry order after
+   ~2–3 minutes; the signal has a shelf life measured in bars, not hours.**
+2. **💸 Cheap spreads are a fee bomb — this is #20 in its sharpest form.** A **$0.14** spread
+   at a $300 budget ⇒ **21 contracts ⇒ 42 legs ⇒ $95.43 in fees**. Do the math on the *win*
+   case: at the +60% TP ($0.224) the gross gain is ~$176 — **minus ~$95 fees ≈ $81 net**.
+   We were risking a guaranteed ~$95 fee bill to maybe make ~$81. **`MIN_SPREAD_COST=0.10`
+   is far too low**: a cheap spread doesn't reduce risk, it maximizes contract count and
+   therefore fees. Raise the floor (~$0.30–0.40) and/or cap contracts.
+3. **⚠️ The circuit breaker structurally cannot fire.** `MAX_CONSECUTIVE_LOSSES=5`, but
+   `consecutive_losses` **resets every day** (`check_and_reset_daily_trade_count`). At
+   1–2 trades/day it can never reach 5 — so **8 straight losses across 6 days tripped
+   nothing**. The breaker only sees intraday streaks; it's blind to exactly the slow bleed
+   we're in. Needs to span days (or a rolling last-N-trades guard).
+4. **📉 Correction to my 07-14 call.** I wrote "fill quality looks fine" off a single 65-second
+   fill. **That was premature (n=1).** Today is the counter-example: XSP's thin/wide quotes
+   mean a mid-based limit often *doesn't* fill, and when it does, it's adverse. The XSP
+   fill-quality risk is real — it just took 2 days to show up.
+5. **🔴 The entry was marginal again.** 2/5, `tape✗(20x)`, `early✗`, `agree✗` — a chop tape,
+   scraped in at the minimum score. Every recent entry is a 2/5 that scrapes the floor.
+   With `agree` now structurally unreachable (XSP-only), **`MIN_CONVICTION_SCORE=2` is
+   effectively "take almost anything with ADX rising."**
+
+### Audit-integrity note
+The BUY row timestamps the **fill** (13:47:15) but carries the **12:04 signal's** indicators
+(px 752.03, VWAP 752.35, ADX 31.82) — 103 minutes stale. At the real fill the underlying was
+~753.9. Any retro reading that row will misjudge the entry. Same root cause as #1.
+
+### Net
+Not a quiet day — a day that named the two things actually killing us:
+**(a) we get filled on dead signals** (no order timeout), and **(b) our cheapest spreads
+buy the most fees** (fees > the entire loss today; fees > the profit even on a winner).
+Both are mechanical and fixable, and neither is the "edge" problem — they're **taxes on top
+of** the edge problem (#33). **0-for-8 says stop tuning and fix the mechanics.**
+
+---
+
 ## 2026-07-14 — 0W/1L 🟡 — ✅ FIRST LIVE XSP TRADE (migration works), small loss
 
 **The result is a footnote; the milestone is the headline: the bot traded XSP end-to-end

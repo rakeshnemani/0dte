@@ -427,6 +427,7 @@ class TradingBot:
                 'direction': direction,
                 'target_entry_price': spread_cost,
                 'status': 'PENDING_ENTRY',
+                'submitted_at': market_time.now_et(),   # #34 entry-timeout anchor
                 'ibkr_trade': ibkr_trade,
                 'bag_contract': bag,
                 'qty': qty_to_buy,
@@ -520,6 +521,7 @@ class TradingBot:
                 'direction': 'CONDOR',
                 'target_entry_price': credit,
                 'status': 'PENDING_ENTRY',
+                'submitted_at': market_time.now_et(),   # #34 entry-timeout anchor
                 'ibkr_trade': ibkr_trade,
                 'bag_contract': bag,
                 'qty': qty,
@@ -726,70 +728,138 @@ class TradingBot:
             logger.warning(f"[{symbol}] Error cancelling take-profit order: {e}")
         return False
 
+    @staticmethod
+    def _filled_qty(ibkr_trade) -> int:
+        """Contracts actually filled on an order (0 when unknown/none)."""
+        try:
+            return int(float(ibkr_trade.orderStatus.filled or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    def _expire_stale_entry(self, symbol: str, trade: dict, ibkr_trade) -> bool:
+        """#34 — an entry limit outlives its signal.
+
+        A resting limit only fills once the spread decays to our bid — i.e. once the
+        market has already moved AGAINST the thesis (adverse selection). 2026-07-15:
+        an order sat 1h42m, filled, and invalidated 65s later for −$175. The signal's
+        shelf life is bars, not hours: cancel and let it be re-evaluated fresh.
+
+        Returns True if the order was expired (caller must stop). A partial fill is a
+        REAL position — promote it, never orphan it (#21/#30).
+        """
+        timeout = config.ENTRY_ORDER_TIMEOUT_SECONDS
+        submitted = trade.get('submitted_at')
+        if timeout <= 0 or submitted is None:
+            return False
+        waited = (market_time.now_et() - submitted).total_seconds()
+        if waited < timeout:
+            return False
+
+        logger.warning(f"[{symbol}] Entry order unfilled after {waited:.0f}s "
+                       f"(limit {timeout}s) — signal is stale; cancelling.")
+        try:
+            if not ibkr_trade.isDone():
+                self.broker.cancel_order(ibkr_trade.order)
+                self.broker.sleep(1)   # let the cancel/fill race resolve (#30)
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not cancel stale entry order: {e}")
+
+        filled_qty = self._filled_qty(ibkr_trade)
+        if filled_qty > 0:
+            logger.warning(f"[{symbol}] Stale entry PARTIALLY filled {filled_qty}/"
+                           f"{trade.get('qty')} before the cancel landed — tracking "
+                           f"the live slice rather than orphaning it.")
+            trade['qty'] = filled_qty
+            self._activate_entry(symbol, trade, ibkr_trade)
+            return True
+
+        self.active_trades.pop(symbol, None)
+        notifier.notify_entry_expired(symbol, trade, waited)
+        return True
+
     def _check_pending_fill(self, symbol: str, trade: dict):
-        """Poll a PENDING_ENTRY order: promote to ACTIVE on fill, drop on cancel."""
+        """Poll a PENDING_ENTRY order: promote to ACTIVE on fill, drop on cancel,
+        expire it once the signal has gone stale (#34)."""
         try:
             self.broker.sleep(0)  # flush event loop so orderStatus is current
             ibkr_trade = trade['ibkr_trade']
             status = ibkr_trade.orderStatus.status
 
             if status == 'Filled':
-                filled_price = float(ibkr_trade.orderStatus.avgFillPrice)
-                logger.info(f"[{symbol}] IBKR ORDER FILLED at ${filled_price:.2f}")
-                trade['status'] = 'ACTIVE'
-                trade['entry_price'] = filled_price
-                # Fill time — reconciliation grace period anchor
-                trade['activated_at'] = market_time.now_et()
-                # permId — the permanent, account-wide key for this trade
-                trade['entry_permId'] = self.broker.order_perm_id(ibkr_trade)
-
-                # Park a resting take-profit limit. Debit: SELL at entry×(1+target).
-                # Condor: BUY back at credit×(1−CONDOR_TP_PCT). Fills between
-                # heartbeats (no sampling loss) and trades with the move, not
-                # against it. Every other exit path cancels it first.
-                if trade.get('structure') == 'CONDOR':
-                    tp_price = (round(filled_price * (1 - config.CONDOR_TP_PCT), 2)
-                                if config.CONDOR_TP_PCT > 0 else None)
-                    tp_action = 'BUY'
-                else:
-                    tp_price = (round(filled_price * (1 + config.TAKE_PROFIT_TARGET_PCT), 2)
-                                if config.TAKE_PROFIT_TARGET_PCT > 0 else None)
-                    tp_action = 'SELL'
-                if tp_price and tp_price > 0:
-                    try:
-                        trade['tp_ibkr_trade'] = self.broker.place_limit(
-                            trade['bag_contract'], tp_action, trade['qty'], tp_price
-                        )
-                        trade['tp_price'] = tp_price
-                        logger.info(f"[{symbol}] Take-profit limit ({tp_action}) resting at ${tp_price:.2f}.")
-                    except Exception as e:
-                        logger.warning(f"[{symbol}] Could not place take-profit order: {e}")
-
-                ind = trade['entry_indicators']
-                entry_commission = self.broker.order_commission(ibkr_trade)
-                audit.record(
-                    "BUY", symbol, trade['direction'], filled_price, trade.get('reason', ''),
-                    adx=ind.get('adx'), vwap=ind.get('vwap'),
-                    orb_high=ind.get('orb_high'), orb_low=ind.get('orb_low'),
-                    underlying_price=ind.get('current_price'),
-                    breadth=ind.get('breadth'),
-                    adx_slope=ind.get('adx_slope'),
-                    conviction=ind.get('conviction_str'),
-                    commission=entry_commission,
-                    perm_id=trade.get('entry_permId'),
-                )
-                if trade.get('structure') == 'CONDOR':
-                    notifier.notify_condor_filled(symbol, trade, filled_price)
-                else:
-                    notifier.notify_filled(symbol, trade, filled_price)
+                self._activate_entry(symbol, trade, ibkr_trade)
 
             elif status in ('Cancelled', 'ApiCancelled', 'Inactive'):
+                # A cancel can race a fill (#30) — never drop without checking fills.
+                filled_qty = self._filled_qty(ibkr_trade)
+                if filled_qty > 0:
+                    logger.warning(f"[{symbol}] Entry order {status} but {filled_qty} "
+                                   f"contract(s) FILLED — keeping the live slice tracked.")
+                    trade['qty'] = filled_qty
+                    self._activate_entry(symbol, trade, ibkr_trade)
+                    return
                 logger.warning(f"[{symbol}] IBKR order {status}. Removing from tracking.")
                 self.active_trades.pop(symbol, None)
             else:
+                if self._expire_stale_entry(symbol, trade, ibkr_trade):
+                    return
                 logger.info(f"[{symbol}] IBKR order still pending (Status: {status}).")
         except Exception as e:
             logger.error(f"[{symbol}] Error checking IBKR order status: {e}")
+
+    def _activate_entry(self, symbol: str, trade: dict, ibkr_trade):
+        """Promote a filled entry to ACTIVE: park the take-profit, audit, notify.
+        Shared by the clean-fill path and the partial-fill rescues."""
+        try:
+            filled_price = float(ibkr_trade.orderStatus.avgFillPrice)
+            logger.info(f"[{symbol}] IBKR ORDER FILLED at ${filled_price:.2f}")
+            trade['status'] = 'ACTIVE'
+            trade['entry_price'] = filled_price
+            # Fill time — reconciliation grace period anchor
+            trade['activated_at'] = market_time.now_et()
+            # permId — the permanent, account-wide key for this trade
+            trade['entry_permId'] = self.broker.order_perm_id(ibkr_trade)
+
+            # Park a resting take-profit limit. Debit: SELL at entry×(1+target).
+            # Condor: BUY back at credit×(1−CONDOR_TP_PCT). Fills between
+            # heartbeats (no sampling loss) and trades with the move, not
+            # against it. Every other exit path cancels it first.
+            if trade.get('structure') == 'CONDOR':
+                tp_price = (round(filled_price * (1 - config.CONDOR_TP_PCT), 2)
+                            if config.CONDOR_TP_PCT > 0 else None)
+                tp_action = 'BUY'
+            else:
+                tp_price = (round(filled_price * (1 + config.TAKE_PROFIT_TARGET_PCT), 2)
+                            if config.TAKE_PROFIT_TARGET_PCT > 0 else None)
+                tp_action = 'SELL'
+            if tp_price and tp_price > 0:
+                try:
+                    trade['tp_ibkr_trade'] = self.broker.place_limit(
+                        trade['bag_contract'], tp_action, trade['qty'], tp_price
+                    )
+                    trade['tp_price'] = tp_price
+                    logger.info(f"[{symbol}] Take-profit limit ({tp_action}) resting at ${tp_price:.2f}.")
+                except Exception as e:
+                    logger.warning(f"[{symbol}] Could not place take-profit order: {e}")
+
+            ind = trade['entry_indicators']
+            entry_commission = self.broker.order_commission(ibkr_trade)
+            audit.record(
+                "BUY", symbol, trade['direction'], filled_price, trade.get('reason', ''),
+                adx=ind.get('adx'), vwap=ind.get('vwap'),
+                orb_high=ind.get('orb_high'), orb_low=ind.get('orb_low'),
+                underlying_price=ind.get('current_price'),
+                breadth=ind.get('breadth'),
+                adx_slope=ind.get('adx_slope'),
+                conviction=ind.get('conviction_str'),
+                commission=entry_commission,
+                perm_id=trade.get('entry_permId'),
+            )
+            if trade.get('structure') == 'CONDOR':
+                notifier.notify_condor_filled(symbol, trade, filled_price)
+            else:
+                notifier.notify_filled(symbol, trade, filled_price)
+        except Exception as e:
+            logger.error(f"[{symbol}] Error activating filled entry: {e}")
 
     def _book_exit_fill(self, symbol: str, trade: dict, exit_trade):
         """Book a close from a confirmed fill: price + commissions + permId,

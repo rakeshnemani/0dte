@@ -395,7 +395,8 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `MAX_POSITION_SIZE` | `300.0` | Max dollars risked per spread |
 | `MAX_TRADES_PER_DAY` | `12` | Hard daily cap across all symbols |
 | `SIGNAL_COOLDOWN_MINUTES` | `30` | Minutes before a (symbol, direction) signal can re-trigger |
-| `MIN_SPREAD_COST` | `0.10` | Skip trade if spread mid-price is below this |
+| `MIN_SPREAD_COST` | `0.30` | Skip trade if spread mid is below this. A **fee** floor, not a risk floor: cheap spreads buy the most contracts → the most fees (raised from `0.10` on 07-15, TODO #35) |
+| `ENTRY_ORDER_TIMEOUT_SECONDS` | `120` | #34: cancel an entry limit unfilled for this long — a late fill is adverse selection (0 = wait forever) |
 | `ADX_SLOPE_BARS` | `10` | Entry chop guard: ADX must be rising over this many bars (0 = off) |
 | `ADX_SLOPE_OVERRIDE_ADX` | `0` | #32: allow entry on a flat/falling slope when ADX ≥ this (0 = off) |
 | `ORB_BREAKOUT_BUFFER_PCT` | `0.001` | Entry chop guard: breakout must clear the ORB level by this fraction (0 = off) |
