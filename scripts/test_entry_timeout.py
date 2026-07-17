@@ -21,6 +21,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import config
 import market_time
 
+# CRITICAL: stub all real-world side effects. _activate_entry() writes to the live
+# audit.csv and posts to Discord — a test must never touch either (it polluted the
+# ledger on the first run). Neutralise them before importing bot.
+import audit
+import notifier
+audit.record = lambda *a, **k: None
+for _fn in ('notify_filled', 'notify_condor_filled', 'notify_entry_expired'):
+    setattr(notifier, _fn, lambda *a, **k: None)
+
 _fails = []
 
 

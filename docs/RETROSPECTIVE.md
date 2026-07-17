@@ -149,6 +149,67 @@ regime's sample.
 
 ---
 
+## 2026-07-17 (Fri) — NO TRADE ✅ #34 fired · Friday check-in · 🔄 the flip test
+
+**No loss today — for a good reason.** The one signal (10:05, XSP CALL, **HIGH 4/5** — the
+best conviction in two weeks: `ADX✓ slope✓ early✓ tape✓(1x)`) submitted at $0.48, **didn't
+fill, and #34 auto-cancelled it at 129s** ("signal is stale; cancelling"), then cooldown
+kept us out. Counterfactual: after 10:05 SPY went +0.26% then **−0.43% (close −0.29%)** —
+the CALL would have **lost**. **The timeout fix saved a losing trade on its first live day.**
+(And note: even our best-conviction CALL was on the wrong side again — a PUT would have won.)
+
+### Friday check-in — the week (07-13 → 07-17)
+| Day | Result |
+|---|---|
+| 07-13 | 0W/2L (IWM+SPY PUT) −$155 · + assignment cleanup |
+| 07-14 | 0W/1L (XSP CALL) −$42 · **first live XSP trade — migration works** |
+| 07-15 | 0W/1L (XSP PUT) −$80 net −$175 · stale-fill + fee-bomb day |
+| 07-16 | 0W/1L (XSP CALL) −$77 |
+| 07-17 | **0 trades** — #34 cancelled a would-be loser |
+**Week: 0W/5L. Losing streak since the last win (07-09): 9 trades. Era net: −$1,752.**
+But the *machinery* got materially better: condors off, XSP-only (no assignment), #30/#31
+fixed, **#34 timeout fired and worked**, **#35 fee floor raised** (`MIN_SPREAD_COST` 0.10→0.30).
+We're plugging the leaks; the edge is still missing.
+
+### 🔄 The flip test — "buy PUT when logic says CALL, and vice versa"
+Ran it honestly (`scripts/flip_analysis.py`): every real debit entry, re-simulated under the
+**real exit rule**, as-taken vs direction-flipped (not a naive sign-negation — a call spread
+flipped to a put spread has different fills *and* a different invalidation hold time; this
+re-simulates both). Underlying-move proxy, **fees excluded**:
+
+| window | NORMAL (as-taken) | FLIPPED (CALL↔PUT) |
+|---|---|---|
+| Full era (06-30+, 36) | −82 bp · 31% | +104 bp · 47% |
+| **Last 2 wk (07-03+, 24)** | −77 bp · **25%** | **+110 bp · 54%** |
+| Last week (07-13+, 5) | −44 bp · **0% (0W/5L)** | +30 bp · **80% (4W/1L)** |
+
+*The flip edge intensifies the more recent the window — direction accuracy fell to **25%**
+over the last two weeks (right 1 in 4). Still not "profit": 54% < the ~58% gross breakeven
+(worse after XSP's ~7%-of-position fees), and it's a regime bet — a trending week flips it
+back. Run `scripts/flip_analysis.py [YYYY-MM-DD]` to re-window.*
+
+**What it means (and doesn't):**
+- ✅ **Real finding: our direction engine is net anti-predictive on this sample.** 31% → 47%
+  win and −82 → +104 bp just by flipping. We are a **breakout-momentum** system running in a
+  **mean-reverting tape** — we buy the breakout, it reverts, we're systematically on the
+  wrong side. Today's HIGH-4/5 CALL that a PUT would've won is the same story.
+- ❌ **NOT "flip it and we're rich."** 47% win at a +40/−55 payoff is still **below the ~58%
+  gross breakeven** for that payoff, so +104 bp is barely above water — and **fees (~$380
+  era, identical for both books) would eat it**. The flip roughly *neutralizes the directional
+  bleed* (turns a clearly-losing book into a coin-flip); it does not clear the fee/whipsaw
+  wall. That wall is the moat, and it's why "just invert a loser" is a classic trap.
+- ⚠️ **Regime-specific.** The flip wins *because* the recent tape mean-reverts; in a trending
+  tape the same flip (= fade the breakout) would lose. So the lesson isn't "reverse the sign,"
+  it's **"we don't know whether to follow or fade — we need regime detection"** (loops back to
+  #33 entry quality / anchored VWAP). Logged as a hypothesis, not a change.
+
+### Housekeeping
+🐛 Fixed: `scripts/test_entry_timeout.py` was calling `_activate_entry` for real → it wrote 2
+junk rows to `audit.csv` and fired Discord. Now stubs `audit.record`/notifier; the 2 rows were
+removed from the ledger (98 rows, clean).
+
+---
+
 ## 2026-07-15 — 0W/1L 🔴 — a 103-minute stale fill + fees > the loss. **8 straight losers.**
 
 **This looks like "one small loss." It isn't — it's the most diagnostic day we've had.**
