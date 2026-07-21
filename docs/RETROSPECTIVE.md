@@ -149,6 +149,55 @@ regime's sample.
 
 ---
 
+## 2026-07-20 (Mon) — 1W/0L 🟢 **STREAK BROKEN** (first win since 07-09) + #34 partial-fill fired live
+
+**First green close in 9 trades.** XSP PUT, **+17.14% / +$24 gross → +$3 net.** Tiny, but
+it's a win, it was clean, and it live-validated the riskiest code we shipped.
+
+### The trade
+| | |
+|---|---|
+| 13:03:56 | XSP PUT signal, MEDIUM 2/5 (`ADX✓ slope✓ agree✗ early✗ tape✗(28x)`), 8 lots @ $0.35 (≥ the new $0.30 floor) |
+| 13:06:05 | **#34 timeout fired at 129s** — order unfilled, cancelling… |
+| 13:06:06 | **…but 4/8 lots filled as the cancel landed → partial-fill RESCUE tracked the live 4-lot slice** (not orphaned) |
+| 13:07–13:15 | ran to **+48.57% peak** |
+| 13:23 | invalidated (6-bar VWAP recross) → closed +17.14% / **+$24 gross**, $13.92 fee |
+
+### Findings
+1. **⭐ The #34 partial-fill rescue path worked in production.** The exact edge case I unit-
+   tested (`test_entry_timeout.py`): the timeout cancel raced a fill, 4 of 8 lots filled, and
+   `_expire_stale_entry` requantified to the real 4 lots, promoted to ACTIVE, parked the TP,
+   and managed it to a clean profitable close — **no orphan, no over-close** (the #21/#30
+   failure class). First live proof that path is correct. That it produced our first win is
+   a nice coincidence, not the point.
+2. **💸 Fees ate 87% of the gross — on a WINNER.** $20.88 commission ($6.96+$13.92) vs $24
+   gross → **+$3 net**, i.e. **~$0.78/lot** on a +17% winning spread. XSP fees run ~$5/lot
+   round-trip, so a +17% win barely clears them. **Even when we're right, fees eat almost
+   all of it.** This is the fee wall (#20/#35) in its sharpest form yet: we need *bigger* %
+   wins (wider spreads → fewer contracts) or the math never works. (Note: the partial fill
+   halved the trade — full 8 lots would've been ~+$6 net, still a rounding error.)
+3. **✂️ The invalidation capped a real winner.** Peaked **+48.57%**, but the trailing stop
+   only arms at **+50%** — missed by **1.4 points** — so it got no trail protection and the
+   VWAP recross booked it at +17% on the giveback. **Consider lowering
+   `TAKE_PROFIT_TRAIL_TRIGGER` to ~0.40–0.45**: our winners peak and revert fast (the replay/
+   flip work says the same), and a +48% peak deserves better than a +17% exit. New TODO.
+4. **🖥️ Bot was DOWN all morning (#16).** Startup failed at 10:05 (`ConnectionRefused` on
+   4002 — Gateway wasn't up) and only came online ~13:00, so we missed the entire morning
+   session and took just this one afternoon trade. The always-on-host gap keeps costing
+   sessions; still the top operational debt.
+5. **Same marginal 2/5 entry — but this time the tape followed through.** `tape✗(28x)`,
+   `agree✗`, `early✗` — indistinguishable from the losers; for once the PUT's down-move
+   didn't immediately revert. One right call inside a stretch of wrong ones; doesn't move
+   the flip-test conclusion (we're still directionally poor), but the streak is snapped.
+
+### Net
+A genuine win (+$3), a **live validation of the partial-fill rescue**, and a razor-sharp
+fee lesson: **+17% gross netted $0.78/lot.** The mechanics are working now; the economics
+(fees) and the entry direction are still the two walls. **Next levers:** lower the trail
+trigger (new #38), and the fee ratio (#20 wider spreads).
+
+---
+
 ## 2026-07-17 (Fri) — NO TRADE ✅ #34 fired · Friday check-in · 🔄 the flip test
 
 **No loss today — for a good reason.** The one signal (10:05, XSP CALL, **HIGH 4/5** — the
