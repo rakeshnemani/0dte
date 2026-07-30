@@ -1,130 +1,204 @@
 # 0DTE Bot — Improvement Backlog
 
-Items to validate or implement once the core strategy has enough paper-trade history.
+Companion docs: [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) (daily journal + evidence),
+[docs/BACKTESTING.md](docs/BACKTESTING.md) (the analysis tooling + how to reproduce every
+number below), [docs/GO_LIVE.md](docs/GO_LIVE.md) (paper→live gates).
 
-See [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) for the daily trade journal and
-evidence-backed hypotheses behind these items, and [docs/GO_LIVE.md](docs/GO_LIVE.md)
-for how they map to the paper→live gates.
+## Where we are (2026-07-28)
+
+▶️ **RUNNING on SPX, BASELINE-flipped** (`FLIP_DIRECTION=true`; #41 fixed). After a month of
+losses, **fading our own breakout signals is the first positive-*gross* signal we've found**
+(#42). Not profitable yet — a paper experiment, watched daily. The whole game now: does the
+flip's thin (~+2 bp/trade) gross edge survive real SPX fees? SPX (10× notional/contract, tight
+$0.10 fills) is what makes that even plausible.
 
 ## Priority queue
 
-| Priority | Meaning | Items |
-|----------|---------|-------|
-| **P0 — CRITICAL** | Live-money correctness bugs | ✅ **all clear** — #21/#25/#26 (07-09), #30 close-integrity + #31 path guard (07-10) all done |
-| **P0 — do next** | Directly moves the fee-adjusted edge or is a mandatory safety control; small builds | **#3** migrate to XSP (assignment incident 07-13) · **#32** regime-aware exit (VWAP invalidation whipsaws trend days) |
-| **P1 — soon** | Required before live or user-committed next major build | **#2** exposure cap, **#16** always-on host, **#22/#28** condor tuning *(#23 hourly summary, #24 reconcile, #9 condors, #17/#18/#19 → done)* |
-| **P2 — evidence-gated** | Good hypotheses waiting for data or a trigger day | **#20** wider spreads (fee-ratio experiment), **#5** time stop, **#6** midday tightening, **#7** expected-move anchor, **#12** 2-hour throttle |
-| **P3 — parked / live-transition** | By design not now | **#4** GLD/TLT, **#8** VIX1D |
-
-> **⏸️ BOT PAUSED (2026-07-13):** entries stopped after Friday 07-10 assignment
-> (400 QQQ + 600 SPY shares, ≈ −$9k) traced to assignable ETF options. Not resuming
-> until **#3** (XSP-only, cash-settled) lands. User to flatten the assigned shares.
-
-Rationale for the P0s: after fee adjustment the edge is currently negative (see
-GO_LIVE Gate 2). #13 attacks the biggest recoverable leak — winners giving back
-10–16 pts to 60-second exit sampling — and doubles as the Gate-4 restart-safety
-requirement (native stops). #15 is ~20 lines and caps the day a guard fails.
+| Priority | Items |
+|---|---|
+| **P0 — live experiment** | **#42** flip — capture real SPX fill costs (the fee-edge gate); watch for trend-day bleed |
+| **P1 — soon** | **#36** cross-day circuit breaker · **#38** trail-trigger 0.50→0.45 · **#20/#35** fee ratio (wider spreads / contract cap) · **#2** total-exposure cap · **#16** always-on host |
+| **P2 — evidence-gated** | **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
+| **P3 — parked** | **#4** GLD/TLT · **#8** VIX1D |
+| **Resolved by evidence — do not reopen** | **#39** (filters aren't the bottleneck) · **#37** (→ #42) · **regime-router** (tested 07-28, not justified) |
 
 ---
 
-## P0 — Do next
+## P0 — Live experiment
 
-34. **[P0 — NEW 2026-07-15] Entry-order timeout — we get filled on dead signals.** 07-15: a limit BUY submitted at **12:04:42** rested unfilled for **1h 42m** (98 polls) and filled at **13:47:15**, then invalidated **65 seconds later**. A resting limit only fills *when the spread decays to our bid* — i.e. when the market has already moved against the thesis (**adverse selection**). The signal's shelf life is bars, not hours. **Fix: cancel an unfilled entry order after ~2–3 min** (config `ENTRY_ORDER_TIMEOUT_SECONDS`), and re-evaluate rather than resubmit. Also fixes the audit lie: the BUY row stamps the fill time but carries the *signal-time* indicators (103 min stale). Cheap + high value — this alone converts a guaranteed loser into a no-trade.
-   - ✅ **DONE 2026-07-15 · VALIDATED LIVE 07-17** (cancelled a HIGH-4/5 XSP CALL at 129s that the counterfactual confirms would have lost). `ENTRY_ORDER_TIMEOUT_SECONDS=120`; `bot._expire_stale_entry()` cancels a stale entry limit and drops it (no position). Fill path extracted to `_activate_entry()` and reused, so a **partial fill is promoted with the real qty, never orphaned** (#21/#30) — including the cancel-races-a-fill case, which the old `Cancelled → pop` branch would have dropped (latent pre-existing bug, now fixed too). Discord alert `notify_entry_expired`. Tests: `scripts/test_entry_timeout.py` (15 checks incl. partial-fill rescue + `timeout=0` = old behavior). Note: the 30-min signal cooldown still applies after an expiry, so it won't churn-resubmit.
+**42. Fade-the-breakout (flip) — the one live experiment.** `backtest_39.py` (signal-replay,
+20 days, proxy, fees excluded): flipping every signal goes POSITIVE — **BASELINE-flipped 61%
+win / +50 bp / 23 trades** (as-taken is 39% / −9 bp). Live via `FLIP_DIRECTION=true` (config
+flag, `bot._maybe_flip`, unit-tested; keeps all filters, inverts only the executed CALL/PUT).
+**Needs a bot restart on the #41-fixed code to activate.** Two open gates:
+- **(a) fee knife-edge — MEASURED 07-28: $6.52 round-trip** (1-contract 5-wide SPX; ~2.8% of a
+  $230 debit, ~4× cheaper than XSP). In backtest units ≈ **1.9 bp/trade** vs the flip's ~2.2 bp
+  gross edge → **net ≈ +0.3 bp/trade = breakeven** before slippage. So the flip is *not dead but
+  not a clear winner* — **need a real sample to see if the +2.2 bp gross even holds live.** First
+  live flip trade (07-28) was a −$46.52 loss (n=1, the flip's regime risk: the CALL signal was right).
+- **(b) trend-day bleed** — flipping = fading breakouts, which theory says dies in a trend. The
+  07-28 regime split *tempered* this (flip was +33 bp even on trend-labeled bars), so a stand-
+  down guard is **not urgent** — but the sample is tiny; **watch live and flip back to false if
+  a trending stretch bleeds it.**
+- **(c) NEW watch (07-29): SPX fill rate.** 07-29 = 0 trades: 2 orders submitted, both timed out
+  unfilled (#34). Despite tight $0.10/leg SPX spreads, mid-limits may not be filling. If it
+  persists we starve for trades — check whether it's the flipped-limit pricing or slow tape.
 
-35. **[P0 — NEW 2026-07-15] Raise `MIN_SPREAD_COST` / cap contracts — cheap spreads are a fee bomb.** 07-15: a **$0.14** spread at a $300 budget ⇒ **21 contracts ⇒ 42 legs ⇒ $95.43 fees** on an $80 gross loss (**fees > the loss**). Worse, the *win* case: +60% TP ⇒ ~$176 gross − ~$95 fees ≈ **$81 net** — risking a certain $95 fee bill to maybe make $81. A cheap spread doesn't cut risk, it **maximizes contract count and therefore fees**. `MIN_SPREAD_COST=0.10` is far too low → try **0.30–0.40**, and/or cap contracts per trade. This is the concrete, actionable face of #20.
-   - ✅ **PARTLY DONE 2026-07-15: `MIN_SPREAD_COST` 0.10 → 0.30** (`.env` + config default, with the fee rationale in-comment). At $0.30 a $300 budget buys ~10 lots instead of 21 — roughly **halves the fee bill per trade**. **Still open:** an explicit contracts-per-trade cap, and the wider-spread ($2-wide) experiment (#20) — raising the floor limits the damage but doesn't fix the structural fee ratio.
-
-38. **[P1 — 2026-07-20] Lower `TAKE_PROFIT_TRAIL_TRIGGER` (0.50 → ~0.40–0.45).** 07-20's winner peaked **+48.57%** but the trail arms only at **+50%** — missed by 1.4 pts, got no trail protection, and the VWAP invalidation booked it at **+17%** on the giveback. Our winners peak and revert fast (the replay + flip work agree). Arming the trail sooner would have locked ~+43% (90% of a +48% peak) instead of +17%. Low-risk (trail never exits at a loss — it only arms above its trigger). Validate with a quick replay of the ~11 proxy-winners before committing. Ties to the fee wall: bigger realized wins are the only way +17% gross stops netting $0.78/lot.
-
-37. **[P1 — hypothesis, 2026-07-17] Follow-vs-fade regime detection (from the flip test).** `scripts/flip_analysis.py`: flipping every signal (CALL↔PUT) moved the underlying-move proxy from −82bp/31%W to **+104bp/47%W** — our breakout-momentum entries are **net anti-predictive in the current mean-reverting tape** (we buy breakouts that revert). NOT a "reverse the sign" fix: 47%W at a +40/−55 payoff is below the ~58% breakeven and fees eat it, and a fade strategy dies in a trend. The real need is **regime detection** — know when to follow vs fade. Ties to #33 (anchored VWAP / entry quality). Re-run `flip_analysis.py` periodically; if the flip advantage *persists across a trending week too*, that's a deeper signal that our breakout trigger is just bad. Hypothesis only — do not invert live.
-
-36. **[P0 — NEW 2026-07-15] Circuit breaker can't fire — it resets daily.** `MAX_CONSECUTIVE_LOSSES=5` but `consecutive_losses` is zeroed in `check_and_reset_daily_trade_count` every day. At 1–2 trades/day it can never reach 5, so **8 consecutive losses across 6 days (−$544) tripped nothing**. It only sees intraday streaks and is blind to the slow bleed we're actually in. **Fix: persist the streak across days, or add a rolling last-N-trades / N-day drawdown guard.**
-
-3. **[P0 — active] Migrate SPY→XSP; run XSP-only (cash-settled, no assignment).** Trigger: **2026-07-10 assignment** — short legs on American-style ETF options (SPY/QQQ condor residuals, incl. the #30 leftover) expired ITM → **400 QQQ + 600 SPY shares assigned over the weekend, ≈ −$9k**. XSP is cash-settled + European → **cannot be assigned**. Decision (07-13): **XSP only** — drop QQQ and IWM (both American-style/assignable; no clean cash-settled mini validated yet). Approach (already specced): **generate signals from SPY 1-min bars** (real volume → real VWAP/ORB/ADX), **execute on XSP options**. Scaffolding exists: `broker.py:96` already builds `Index('SPX','CBOE')`; `option_symbol()` maps roots. Build:
-   - `option_symbol`/contract path for XSP (root `XSP`, exchange `CBOE`, European, multiplier 100); Index underlying for level, SPY bars for indicators.
-   - Per-symbol **strike increment** (XSP $1) + strike selection from SPY-derived levels (XSP ≈ SPY level).
-   - Drop the assignment-prone assumptions; no early-exercise path needed.
-   - **Needs live-Gateway validation** (can't test tonight): XSP option-chain qualification, IBKR paper **market-data subscription** for XSP, and **fill quality** at 0DTE (bid-ask ~$0.05–0.15 vs SPY $0.01–0.02 → validate small size first). Code + unit tests can land now; Gateway checks handed over.
-   - Do **not** trade SPY and XSP both (100% signal duplication).
-   - **STATUS 2026-07-13 — code complete + unit-tested (additive; SPY/QQQ/IWM paths untouched).** `broker.INDEX_SPECS` + `option_exchange()`; `underlying_contract`/`option_symbol`/`get_option_contract`/`make_bag_multi`/`fetch_intraday_data` are index-aware; `config.SIGNAL_SOURCE={'XSP':'SPY'}`; `bot.py` sources entry **and** exit-invalidation bars from SPY for XSP. Tests: `scripts/test_xsp_and_regime.py` (13 mapping checks pass). `.env` `SYMBOLS=XSP`. **⏸ Do NOT restart until the Gateway checklist passes:** (1) `qualifyContracts` an XSP 0DTE option (if CBOE fails, try SMART — flip `INDEX_SPECS['XSP']['option_exchange']`); (2) confirm XSP market-data subscription in paper; (3) 1-lot fill test to check slippage.
-
-32. **[P0 — active] Regime-aware exit — stop whipsawing out of trend days.** 2026-07-13 (a −2% down day) we had PUT direction **right** on SPY/IWM but the **VWAP-recross invalidation** ejected us on a normal pullback, then the downtrend paid off without us (SPY exited 751.45 → closed ~748.2; the 751/750 put would have hit +60% TP). The exit assumes "VWAP recross = thesis dead," which is **false on a trend day with pullbacks** — exactly our best regime. Options (test via `replay_invalidation.py` before committing): (a) **suppress invalidation while ADX is high/rising**, only fire when the trend is actually rolling over; (b) invalidate on a **structural level** (close back beyond the ORB line we broke) instead of a bare VWAP tick; (c) require price to close beyond VWAP by a **buffer**, not touch it. Companion: the **entry** chop-guard (rising-ADX gate) blocked *every* QQQ entry on QQQ's −2% day — same over-fit-to-chop problem on the entry side; re-evaluate the "ADX must be rising" gate for elevated-but-flat ADX trend days. **Root diagnosis: the risk/filter layer is over-fit to chop and strangles trend days — recalibrate, don't rewrite.**
-   - **STATUS 2026-07-13 — mechanisms built + unit-tested, all default-OFF (identical to pre-#32 until calibrated).** `strategy.thesis_invalidated` gained (a) `VWAP_INVALIDATION_BUFFER_PCT` (recross must clear VWAP by a margin) and (b) `VWAP_INVALIDATION_HOLD_ADX` (suppress invalidation while ADX ≥ x); `entry_signal` gained `ADX_SLOPE_OVERRIDE_ADX` (enter on flat slope when ADX ≥ x). Tests: `scripts/test_xsp_and_regime.py` (7 checks incl. buf=0/hold=0 = old rule).
-   - **CALIBRATED 2026-07-13 (evening)** via the rebuilt `replay_invalidation.py` (now calls the REAL `thesis_invalidated`; the old script used cumulative VWAP, so the prior "N=6 −115bp" was on the wrong line). 33 entries: **N=6 current −60bp (invalidates 32/33!)** · **+buf 0.05% −52bp** (best; 12 whipsaws → 10 EOD + 2 TP, no new hard stops) · +buf 0.10% −254bp (too loose, 4 hard stops) · +hold ADX35/40 ≈ no effect. **Recommend `VWAP_INVALIDATION_BUFFER_PCT=0.0005`; leave hold + override at 0.** Bigger finding: 32/33 invalidations ⇒ the exit isn't the root cause — see #33.
-33. **[P1 — new, 2026-07-13] Anchored/session VWAP instead of `ta` rolling-14.** The replay showed the current rolling-14 VWAP *hugs price*, so both the entry "beyond VWAP" breakout and the invalidation "VWAP recross" are near-meaningless (32/33 entries invalidate within bars). A standard **anchored session VWAP** (from the 09:30 open) is a stable line — "beyond VWAP" and "recross" would carry information. Touches `add_indicators` (entry) and `thesis_invalidated` (exit) together; re-run the replay after. Likely the real edge lever — entries are chronically wrong-side-of-VWAP right after entry, which is an entry-quality/reference problem, not exit patience.
+---
 
 ## P1 — Soon
 
-2. **[P1] Total-exposure cap** — The 3 symbols are one correlated equity-beta bet (07-01: three same-direction positions, three simultaneous hard stops). Cap concurrent positions (e.g. max 2) or same-direction dollar exposure. Required for GO_LIVE Gate 5; small risk-control guard in `execute_trade`, same shape as the daily loss limit (#15, done).
+**36. Circuit breaker can't fire — it resets daily.** `MAX_CONSECUTIVE_LOSSES=5` but
+`consecutive_losses` is zeroed in `check_and_reset_daily_trade_count` every day. At 1–2
+trades/day it never reaches 5, so **8 straight losses across 6 days (−$544) tripped nothing**.
+Fix: persist the streak across days, or add a rolling last-N-trades / N-day drawdown guard.
 
-16. **[P1] Always-on host** — Move the bot off the laptop (VPS or dedicated machine; interim: tmux + caffeinate). Two Ctrl+C/sleep incidents already; GO_LIVE Gate 4's "20 clean sessions" clock can't start until this is done. Operational task, not code. *(Imported from the go-live checklist.)*
+**38. Lower `TAKE_PROFIT_TRAIL_TRIGGER` 0.50 → ~0.40–0.45.** 07-20's winner peaked **+48.57%**
+but the trail arms only at +50% — missed by 1.4 pts, so the invalidation booked it at +17% on
+the giveback. Winners peak and revert fast. Low-risk (trail never exits at a loss). Validate
+with a quick replay of the proxy-winners first.
 
+**20 / 35. Fee ratio — wider spreads / contract cap.** `MIN_SPREAD_COST` already 0.10→0.30
+(07-15). Still open: an explicit **contracts-per-trade cap**, and testing **wider spreads**
+(more premium/contract → fewer contracts → lower fee ratio). On SPX this is less acute (already
+~4× cheaper than XSP) but the flip's edge is thin, so every bp of fee matters. Gated on the
+#42 real-fee number.
 
-## P1 / P2 — Queued & evidence-gated
+**2. Total-exposure cap.** Cap concurrent positions / same-direction dollar exposure (07-01:
+three same-direction positions, three simultaneous hard stops). Small guard in `execute_trade`,
+same shape as the daily-loss limit. GO_LIVE Gate 5.
 
+**16. Always-on host.** Move the bot off the laptop (VPS / dedicated box; interim tmux +
+caffeinate). Repeated down-days (07-20 missed the morning; 07-23/24 down). GO_LIVE Gate 4's
+"20 clean sessions" clock can't start until this lands. Operational, not code.
 
-28. **[P1 — reconsider] Condors may be a net-negative structure** — Cumulative through 07-09: condors 1W/2L, −$137 gross, and the $1-wide structure needs an **86% win rate** to break even (collect ~$0.30, risk $0.70). Options: (a) require much higher `MIN_CONDOR_CREDIT` / wider wings so R:R isn't so lopsided; (b) tighten the breach exit (#22) so run-overs cost less; (c) **shelve condors entirely (`CONDOR_ENABLED=false`) until the debit side is fee-adjusted-green** — don't let a second unproven structure add fee drag while the core isn't paying for itself. Decide after ~5 more condor days OR just disable now to reduce noise. Small sample — but the structural math is a red flag.
+---
 
-22. **[P1] Condor breach exit fires too late** — 2026-07-09 QQQ condor exited at −67% (near the hard stop), not the intended ~−25%: the "2 consecutive 1-min *closes* beyond a short strike" rule lags a fast breakout by minutes. Consider an intrabar trigger (price *touches* beyond the short strike), or reduce to 1 close, or add a tighter condor-specific stop (e.g. −40%). Needs a couple more condor days to calibrate vs. false breaches.
+## P2 — Evidence-gated
 
-20. **[P2] Wider spreads to cut the fee ratio** — Fees are per contract, so raising `MAX_POSITION_SIZE` does NOT improve the commission ratio (1.67× budget = 1.67× contracts = 1.67× fees). What does: $2-wide spreads on SPY/QQQ — roughly double the premium per contract → half the contracts → **half the fees per dollar of exposure** (~4.4% → ~2.2%). Needs analysis first: liquidity at $2 widths, and whether the deeper spread's % P&L behavior changes exit-rule calibration. Run as an experiment on one symbol after #17/#19 have a week of data.
+**33. Anchored/session VWAP instead of `ta` rolling-14.** The rolling-14 VWAP *hugs price*, so
+both the entry "beyond VWAP" and the "recross" invalidation are near-meaningless (they fire on
+almost everything). A stable **session-anchored VWAP** would make those signals carry
+information. Touches `add_indicators` (entry) + `thesis_invalidated` (exit); re-run the replay
+after. *Note: the flip (#42) may make this moot — if we're just fading a noisy line, a better
+line might not help. Revisit only if #42 stalls.*
 
-5. **[P2] Time stop** — Debit spreads bleed theta; if a trade isn't at ~+15% within 45–60 min, it's failing even if price is flat. All three 2026-07-01 losers were held 90–115 min. *Downgraded from "next batch": the invalidation exit now cuts thesis-dead trades in 3–22 min; the remaining case (thesis alive but going nowhere while theta bleeds) needs evidence it still occurs.*
+**5. Time stop** — exit if not at ~+15% within 45–60 min (theta bleed). *Invalidation already
+cuts most; needs evidence the slow-bleed case still occurs.*
+**6. Midday tightening** — require ADX>30 for 11:30–13:30 entries. *Partly covered by conviction `early✗`.*
+**7. Expected-move anchor** — price the ATM straddle ~10:00 ET; skip breakouts once the day has
+moved >80% of it (exhaustion). Also usable for strike/target selection.
+**12. Throttle stand-down 2h instead of all-day** — implement when a real morning-chop→afternoon-trend day shows the cost.
+**22 / 28. Condor tuning** — condors are **OFF** (`CONDOR_ENABLED=false`, net drag 1W/2L). If ever
+re-enabled: breach exit fires too late (#22, exited −67% not −25%), and the R:R needs an 86% WR
+(#28). Also latent: condor strikes are computed from SPY (signal) levels but placed on the
+execution symbol — broken for index symbols until fixed. Leave off.
 
-6. **[P2] Midday tightening** — Require ADX > 30 (vs 25) for entries between 11:30–13:30 ET. All three 07-01 losers entered midday at ADX ~25.5. *Partially covered now: conviction sizing already down-weights midday entries (`early✗`); promote to a hard gate only if midday MEDIUM entries keep losing.*
+---
 
-7. **[P2] Expected-move anchor** — Price the ATM straddle at ~10:00 ET to get the day's expected move (broker helpers exist). Skip breakout entries once the day has moved >~80% of it (exhaustion filter); later, use for strike/target selection.
+## P3 — Parked
 
-12. **[P2] Soften the invalidation throttle: 2-hour stand-down instead of all day** — Requested 2026-07-07; the same day's counterfactual showed no urgency (blocked signal never re-fired anyway). Implement when a real "morning chop → afternoon trend" day demonstrates the cost. `THROTTLE_STANDDOWN_HOURS=2`, `0` = rest of day; consider requiring HIGH conviction for the first re-entry after expiry.
+**4. GLD/TLT on their expiry days** — only genuine diversification; verify their 0DTE calendar +
+liquidity first. **8. VIX1D regime filter** — `Index('VIX1D','CBOE')`; downsize/block when 1-day
+vol spikes against the trade. Cheap fetch, another threshold to calibrate.
 
-## P3 — Parked / live-transition
+---
 
-*(#3 XSP promoted to P0 — active — after the 2026-07-10 assignment. See above.)*
+## Resolved by evidence — do not reopen
 
-4. **[P3 — experiment] GLD/TLT on their expiry days** — Only genuine diversification available; no daily 0DTE, so verify their expiration calendar + 0DTE-day option liquidity in IBKR first, then add strike/width configs.
+**39. "The entry filters strangle trend days."** WRONG (07-27 backtest). Un-blocking entries
+(override + freshness-off) made it *worse* — 39%→35% win, −9→−134 bp; the added trades are 31%
+win, net-negative, and bad even with the invalidation exit off. The guards are **net-helpful**;
+the invalidation exit is **net-protective** (−9 with it vs −63 without). No cheap entry-filter
+fix exists — the problem is the breakout premise + fees, not the filters. **Keep guards as-is.**
 
-8. **[P3] VIX1D regime filter** — Fetch `Index('VIX1D', 'CBOE')`; block or downsize entries when 1-day vol is spiking against the trade direction. Cheap fetch, but another threshold to calibrate — revisit after the conviction score's calibration pass proves the current regime signals out.
+**37. Follow-vs-fade regime detection.** Superseded by #42 — the flip *is* the concrete form of
+"we're systematically on the wrong side." The detection question is answered by the regime
+split below.
+
+**Regime-router (chop→flip, trend→follow) — tested 07-28, NOT justified.** The premise test
+(`backtest_39.py regime_split`, baseline entries by entry-bar regime):
+`CHOP: follow 20% / −42bp · flip 60% / +17bp` — **flip wins in chop ✓**;
+`TREND: follow 54% / +33bp · flip 62% / +33bp` — **follow does NOT beat flip; a wash ✗**.
+So there's no regime where following wins → routing adds a fragile lagging classifier for zero
+measured gain, and would switch to *follow* exactly where *flip* was equal-or-better. **Keep
+plain BASELINE-flipped (#42); don't build the router.** Small sample (10 chop + 13 trend) and a
+crude classifier — if a much bigger live sample later shows a clean "follow wins in strong
+trends" pocket, revisit; let *data* trigger that, not intuition.
 
 ---
 
 ## ✅ Done
 
-21. ~~**Reconciliation false-positives orphan live positions**~~ — ✅ **2026-07-09**. `_position_still_open()` rewritten: **fails open on an empty positions feed** (an account with an open 0DTE spread always shows ≥2 legs, so empty = feed-not-ready, not closed — the actual bug), checks whether **any** leg is held (all leg conIds now stored per trade, incl. all 4 condor legs), and the drop decision is **time-based (180s of consistent absence)** not loop-count so 15s fast-poll can't drop a live trade in 30s. Added an **anti-cascade entry guard**: `execute_trade`/`execute_condor` refuse to open while the account holds untracked legs for that symbol (⚠️ alert once/day), so a phantom-close can't spawn a duplicate. Unit-tested (empty-feed → still-open, any-leg → still-open, live-feed-absent → closed, entry guard). Root-causes #26 too.
+**41. SPX combo orders rejected (error 478)** — ✅ **2026-07-28**. `make_bag_multi` set `bag.symbol`
+to the option root `'SPXW'` while the legs are on underlying `SPX` → 478 rejected every SPX
+order. Fixed: `bag.symbol = symbol`. Unit-tested (`test_xsp_and_regime.py`). Validator hardened
+with a `[4b]` step: deterministic `bag.symbol == leg-underlying` check + a `whatIfOrder` that
+runs IBKR's real order validation without placing it and prints the est. commission (the #42 fee
+number; needs market hours for a populated state).
 
-26. ~~**Order reject/retry infinite loop on error 201**~~ — ✅ **2026-07-09**. `close_position()` now caps retries: attempts are spaced by a 30s cooldown, and after 4 rejections the bot sets `close_failed`, fires a 🛑 **CLOSE FAILED — MANUAL ACTION NEEDED** alert, and **stops auto-retrying** (keeps the trade tracked — never orphans it). On an error-201 rejection specifically, it sweeps stray open orders on the underlying (`cancel_open_orders_for`) before the next attempt, and logs the exact IBKR error code/message from the order log. Root cause was already removed by #21 (no orphan cascade → no conflicting orders); this bounds the loop as belt-and-suspenders. Unit-tested (4 attempts → give up + alert).
+**40. Switch XSP → SPX (fee lever)** — ✅ **2026-07-22** (intraday-validated). SPX = 10× notional/
+contract → ~4× fewer fees; cash-settled European (no assignment); far more liquid than XSP.
+No code changes needed (`INDEX_SPECS['SPX']` already correct). Config: `SYMBOLS=SPX`,
+`SIGNAL_SOURCE['SPX']='SPY'`, `STRIKE_STEP[SPX]` 25→5, `MAX_POSITION_SIZE` 300→400 (LOW skip /
+MED 1 / HIGH 2 spreads), `MAX_DAILY_LOSS` 400→800. Validated: ATM 5-wide debit ~$2.15;
+bid/ask $0.10/leg (~0.7%, vs XSP 20–40%). Supersedes #3.
 
-25. ~~**permId as a tracked key + in audit**~~ — ✅ **2026-07-09**. `broker.order_perm_id()` reads IBKR's permanent order id; captured as `entry_permId`/`exit_permId` on the trade and written to a new `PermId` audit column (both BUY and SELL rows). `scripts/backfill_permid.py` retro-filled today's rows by matching IBKR executions on (symbol, price, time) — 9/10 matched (older rows are outside IBKR's ~24h execution window; need Flex Query per #24). permId is the exact join key for reconciliation and audit↔IBKR.
+**3. Migrate to XSP (cash-settled, no assignment)** — ✅ **2026-07-13**, validated live 07-14;
+**superseded by SPX (#40) 07-22.** Triggered by the 07-10 assignment (~−$9k, 400 QQQ + 600 SPY
+shares from assignable ETF options). Built `INDEX_SPECS`, `option_exchange()`, index-aware
+contract path, `SIGNAL_SOURCE` (signals from SPY bars, execute on the index).
 
-24. ~~**Ad-hoc P&L reconciliation by date**~~ — ✅ **2026-07-09**. `scripts/reconcile_ibkr.py [date] [--write]` now: (a) auto-uses an **IBKR Flex Query** for dates older than the ~24h live-API window (`IBKR_FLEX_TOKEN`/`IBKR_FLEX_QUERY_ID` env vars — code done, needs the user's one-time Flex setup); (b) **joins on `permId`** for exact per-order matching, flagging IBKR orders with no audit row as ORPHANS, plus an audit-internal "BUY with no SELL" check; (c) **`--write`** appends orphan RECONCILE rows to the audit (backs up first). permId-join + orphan detection unit-tested offline against the real 07-09 audit (caught the unbooked order and the SPY/IWM orphans).
+**34. Entry-order timeout (adverse-selection fills)** — ✅ **2026-07-15**, validated live 07-17.
+A limit that sits unfilled only fills once the spread decays to our bid — i.e. once the market
+moved against us (07-15: sat 1h42m, filled, invalidated 65s later). `ENTRY_ORDER_TIMEOUT_SECONDS
+=120`; `_expire_stale_entry` cancels + drops. Fill path extracted to `_activate_entry` so a
+**partial fill is promoted with the real qty, never orphaned** (also fixed a latent Cancelled→pop
+orphan bug). Tests: `test_entry_timeout.py` (15). Partial-fill rescue fired live 07-20.
 
-30. ~~**Close orders can double-fill → untracked residual position**~~ — ✅ **2026-07-10**. The close path no longer trusts order *status*; it trusts **fills and the account position**: (1) a `Cancelled`/`Inactive` closing order has its **fills checked first** — fully filled → booked (the exact 07-10 bug), partially filled → the slice is booked (audit + day record) and the tracked qty shrinks to the true remainder; (2) **every close submission requantifies against the account** via the always-long reference leg — remaining 0 with prior fills → book, 0 without → drop as external (no fabricated P&L), **negative → OVER-CLOSED halt + 🚨 inverse-position alert**, unknown feed → defer (never blind-submit); (3) `last_order_error` now **skips informational codes** (the `10349` red herring) and returns the real rejection; (4) retries **sweep stray open orders** on the legs first (the 201 fix). Unit-tested across all 7 scenarios: `scripts/test_close_integrity.py`.
+**35. `MIN_SPREAD_COST` 0.10 → 0.30 (fee bomb)** — ✅ **2026-07-15**. A cheap spread buys the most
+contracts → the most fees (07-15: $0.14 spread = 21 lots = $95 fees on an $80 loss). Contract
+cap still open (see #20/#35 above).
 
-31. ~~**Path-aware entries (the bear-trap fix)**~~ — ✅ **2026-07-10** as `strategy.path_confirms()` (pure, unit-testable), hard-gated in `entry_signal`: (1) **freshness** — the trigger level must have been crossed within `PATH_FRESH_BARS=10` (at least one recent close on the other side; blocks stale-break hovering); (2) **micro-momentum** — net move of the last `PATH_MOMENTUM_BARS=3` closes must agree with the signal (never fade the last 3 bars). Verified by trace: blocks both 5/5 bear traps (07-09 QQQ +0.96 net-rising against PUT; stale hovers) while passing genuine fresh breaks. Passing detail appended to the signal reason for audit visibility. *User decision: keep `CONVICTION_HIGH_MULT=1.5` — this fix repairs the entries the multiplier amplifies, rather than shrinking the multiplier.*
+**32. Regime-aware exit — mechanisms built, left OFF (evidence: not the lever).** ✅ built +
+unit-tested 2026-07-13: `VWAP_INVALIDATION_BUFFER_PCT`, `VWAP_INVALIDATION_HOLD_ADX` (direction-
+aware DI check), `ADX_SLOPE_OVERRIDE_ADX`. Replay recommended buffer=0.0005 as a small win, but
+the 07-27 #39 backtest showed the invalidation exit is net-protective and the entry filters
+aren't the bottleneck — so all three knobs stay **0/off**. Kept as tuning levers, not enabled.
 
-23. ~~**Hourly Discord health summary**~~ — ✅ **2026-07-09**. `notify_hourly_health` fires once per ET clock hour during market hours (`_last_hourly_hour` guard, reset daily): awaiting-fill / open (live P&L + peak) / closed-today + running net, and flags any `close_failed`. Liveness heartbeat so orphans/stuck orders surface within the hour, not at EOD.
+**21. Reconciliation false-positives orphan live positions** — ✅ **2026-07-09**. `_position_still_open`
+fails open on empty feed, checks any-leg, drops on 180s time-based absence (not loop-count);
+anti-cascade entry guard. Unit-tested.
 
-29. ~~**Condor setup-quality in alerts**~~ — ✅ **2026-07-09**. Condors don't use the directional conviction score (every component is inverted for range trades — a condor wants low ADX + many VWAP crosses). Instead the ⏳/🦅 condor alerts now show a `Setup quality` line — credit/width ratio (the R:R), ADX, and VWAP-cross count — with a note that condors are sized by max-loss budget, not conviction.
+**26. Order reject/retry infinite loop (error 201)** — ✅ **2026-07-09**. `close_position` caps at
+4 attempts w/ 30s cooldown + give-up alert + error-201 order sweep. Unit-tested.
 
-27. ~~**Operational logging (separate from audit)**~~ — ✅ **2026-07-09** (`src/logging_setup.py`): all bot activity (orders, IBKR errors, reconnects, exit decisions, reconciliation drops, dashboard rebuilds) now written to `logs/bot.log` — daily rotation, 30-day retention, ET timestamps, with module names. Console output unchanged. Distinct from `audit.csv` (financials only). Motivated by the 2026-07-09 error-201 loop scrolling off the terminal. *Tuning knob: ib_insync INFO `placeOrder` dumps are captured for order-debugging; drop them to WARNING if the file gets noisy.*
+**30. Close orders double-fill → untracked residual** — ✅ **2026-07-10**. Close path trusts fills +
+account position, never status: fills-check on dead orders, per-submission requantification,
+over-close halt + inverse-position alert. Unit-tested (`test_close_integrity.py`, 7 scenarios).
 
-1. ~~**ADX slope check (rising vs. flat)**~~ — ✅ **2026-07-05** as `ADX_SLOPE_BARS=10` (entry requires ADX rising over the last 10 bars; fails open early-session).
-   *Evidence 2026-07-01: ADX direction (entry→exit) predicted all 5 trade outcomes.*
+**31. Path-aware entries (bear-trap fix)** — ✅ **2026-07-10**. `path_confirms()`: freshness (level
+crossed within `PATH_FRESH_BARS=10`) + micro-momentum (last `PATH_MOMENTUM_BARS=3` agree).
+*(Note: #39 later showed the freshness half is imperfect but net-helpful — keep it.)*
 
-10. ~~**Invalidation-aware entry throttle**~~ — ✅ **2026-07-06** as `MAX_INVALIDATIONS_PER_SIGNAL=2`: after 2 thesis-invalidation exits on a (symbol, direction) in one day, the signal stands down until tomorrow. ⛔ Discord alert on trip. First fired 2026-07-07 (SPY PUT); counterfactual cleared it.
+**25. permId tracking + audit column** — ✅ **2026-07-09**. `order_perm_id()` → `PermId` audit
+column (BUY+SELL); `backfill_permid.py`. The join key for reconciliation.
 
-11. ~~**Conviction-based position sizing**~~ — ✅ **2026-07-06** (both tiers live per user — paper trading): score 0–5 (+1 each: ADX ≥ 30, slope ≥ +3, cross-symbol agreement, pre-11:00 ET entry, ≤ 4 VWAP crosses; −1 per invalidation today) → LOW 0.5× / MEDIUM 1× / HIGH 1.5× budget. Logged to audit, shown in Discord, charted in dashboard. **Calibration pass pending** (~2 weeks of `Conviction` column data). First live save 2026-07-07: LOW sizing halved a losing re-entry.
+**24. Reconcile P&L by date** — ✅ **2026-07-09**. `reconcile_ibkr.py [date] [--write]`, Flex-Query
+path for >24h dates, permId join, orphan detection two ways.
 
-13. ~~**Fix exit-fill sampling slippage**~~ — ✅ **2026-07-07** via fast polling: the loop drops 60s → `FAST_POLL_SECONDS=15` whenever a closing order is in flight or an ACTIVE trade's profit reaches `FAST_POLL_ARM_PCT=0.35` (pre-arm zone, so fast peaks near the +50% trigger aren't missed). Entry scans and invalidation bar-fetches stay on ~60s/50s cadence. *Native BAG stop orders deliberately deferred to live-hardening: IBKR stops on multi-leg combos trigger off noisy spread quotes and behave unrealistically on paper/delayed data — revisit at GO_LIVE Gate 6 with real-time data.* Watch the Peak→Exit gap in the retros to confirm the giveback shrinks.
+**23. Hourly Discord health summary** — ✅ **2026-07-09**. `notify_hourly_health` once/ET-hour.
 
-14. ~~**Confirm exit fills + capture commissions**~~ — ✅ **2026-07-07**: closes go through a `PENDING_EXIT` state; P&L booked from IBKR's `avgFillPrice` on confirmation, with round-trip commissions from `commissionReport`. Unfilled closing orders reprice after 3 min. New `Commission` audit column; alerts + dashboard show net-after-fees. (Motivated by the IBKR YTD NAV report: account −$423 vs audit +$236.)
+**27. Operational logging** — ✅ **2026-07-09**. `logs/bot.log`, daily rotation, ET, 30-day.
 
-15. ~~**Daily dollar loss limit**~~ — ✅ **2026-07-07**: `MAX_DAILY_LOSS=400`. Once the day's realized P&L **net of commissions** breaches −$400, no new entries until tomorrow (open positions still managed; EOD flatten unaffected). Checked on every confirmed exit fill; 🛑 Discord alert on breach. Complements the circuit breaker: that one needs *consecutive* losses, this catches interleaved-win bleed days. GO_LIVE Gate 5 requirement.
-
-17. ~~**Skip low-conviction entries**~~ — ✅ **2026-07-08** as `MIN_CONVICTION_SCORE=2` (user chose ≤1 = skip the whole LOW tier, stronger than the original <0 proposal). Evidence: LOW-tier record 1W/5L, −$147 gross, and tiny positions can't clear the per-contract fee floor. `-99` disables.
-
-18. ~~**Throttle only on losing invalidations**~~ — ✅ **2026-07-08**: only invalidation exits worse than −10% count toward `MAX_INVALIDATIONS_PER_SIGNAL`; profitable ones don't (IWM was stood down after two winners). ALL invalidations still feed the conviction penalty via a separate counter (tape character vs signal quality).
-
-9. ~~**Credit-side structures (regime-matched iron condors)**~~ — ✅ **2026-07-08**: on proven range days (ADX < 22, ≥ 8 VWAP crosses, 11:00–13:30 ET, price mid-range), the bot sells an iron condor around the day's high/low (wings `SPREAD_WIDTH` out) as a 4-leg BAG. Sized by max loss (`(width − credit) × 100 × qty ≤ MAX_POSITION_SIZE`). Exits: resting buy-back at 50% of credit, hard stop −70% (=1.7× credit), range-breach invalidation (2 closes beyond a short strike), trail + EOD flatten shared. Mutually exclusive with debit entries by ADX construction. *Evidence: 5 of the first 6 days were premium-seller days.* Known limitation: restart adoption alerts (not reconstructs) open condors. Watch for IBKR error 201 on first fill (may need spread permissions bump).
-
-19. ~~**Take-profit target via resting limit order (+60%)**~~ — ✅ **2026-07-08** as `TAKE_PROFIT_TARGET_PCT=0.60`: on entry fill, a limit sell rests at entry × 1.60. Fills between heartbeats, sells into strength. Every other exit path cancels it first and handles the cancel/fill race (a TP that fills mid-cancel is booked as the exit); external-close detection also cleans it up so no naked short can be left behind. Evidence: max peak ever +64.6%, winners cluster 48–65%; +50% flat target beat the trail on 5 of 7 historical winners. Calibrate 55 vs 60 after ~2 weeks.
+**1. ADX slope check** — ✅ **2026-07-05** (`ADX_SLOPE_BARS=10`).
+**10. Invalidation-aware throttle** — ✅ **2026-07-06** (`MAX_INVALIDATIONS_PER_SIGNAL=2`).
+**11. Conviction sizing** — ✅ **2026-07-06** (0.5×/1×/1.5× by 0–5 score).
+**13. Exit-fill sampling fix** — ✅ **2026-07-07** (fast poll 60→15s when arming/in-flight).
+**14. Confirm exit fills + commissions** — ✅ **2026-07-07** (`PENDING_EXIT`, `Commission` column).
+**15. Daily dollar loss limit** — ✅ **2026-07-07** (`MAX_DAILY_LOSS`).
+**17. Skip low-conviction entries** — ✅ **2026-07-08** (`MIN_CONVICTION_SCORE=2`).
+**18. Throttle only on losing invalidations** — ✅ **2026-07-08**.
+**9. Iron condors (regime-matched credit side)** — ✅ **2026-07-08**; **disabled 07-10** (net drag).
+**19. Take-profit resting limit (+60%)** — ✅ **2026-07-08** (`TAKE_PROFIT_TARGET_PCT=0.60`).
+**29. Condor setup-quality in alerts** — ✅ **2026-07-09**.

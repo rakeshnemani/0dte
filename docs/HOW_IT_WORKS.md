@@ -412,6 +412,7 @@ All values live in `.env` and are loaded by `src/config.py`.
 | `CONVICTION_LOW_MULT` | `0.5` | Budget multiplier for LOW conviction (score ≤ 1) |
 | `CONVICTION_HIGH_MULT` | `1.5` | Budget multiplier for HIGH conviction (score ≥ 4) |
 | `MIN_CONVICTION_SCORE` | `2` | Skip entries scoring below this (−99 to disable) |
+| `FLIP_DIRECTION` | `false` | #42: execute the OPPOSITE of each CALL/PUT signal (fade the breakout). Filters/conviction still run on the original signal. Regime bet — loses in a trend |
 | `TAKE_PROFIT_TARGET_PCT` | `0.60` | Resting limit sell at entry × (1 + this), parked on fill (0 = off) |
 | `CONDOR_ENABLED` | `true` | Sell iron condors on proven range days (11:00–13:30 ET) |
 | `CONDOR_MAX_ADX` | `22` | Condor requires ADX below this (no trend) |

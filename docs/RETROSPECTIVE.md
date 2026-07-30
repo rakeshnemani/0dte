@@ -149,6 +149,154 @@ regime's sample.
 
 ---
 
+## 2026-07-28/29 — ✅ FIRST LIVE FLIP TRADE on SPX — #41 confirmed + the real commission is in
+
+**The month-long questions got answered.** The first flipped SPX trade executed 07-28; today
+(07-29) was quiet. Three landmarks, one honest verdict.
+
+### 07-28 — the first BASELINE-flipped SPX trade
+Signal fired **CALL** (Bullish, SPY 741.07 > VWAP), flipped to a **PUT** spread. Entry $2.30 →
+invalidated at 6 bars → exit $1.90. **−$40 gross, $6.52 commission → −$46.52 net.**
+
+1. **✅ #41 CONFIRMED — SPX trades end-to-end.** The combo **filled clean, no error 478**
+   (entry $2.30, exit $1.90). The `bag.symbol = symbol` fix works live. SPX trading is unblocked.
+2. **✅ The flip works as designed.** Audit reason: `FLIP #42: signal CALL → exec PUT`. A
+   bullish signal correctly opened a PUT.
+3. **✅ The real SPX commission is in: $6.52 round-trip** (1-contract 5-wide spread; entry
+   $3.26 + exit $3.26). That's **~2.8% of the $230 debit — ~4× cheaper than XSP** (~12%). The
+   SPX thesis (#40) is confirmed.
+
+### 💰 The #42 verdict — fee eats ~85% of the edge → **breakeven, on a knife's edge**
+Converting to the backtest's units: $6.52 ≈ **~1.9 bp** on this trade's size. The flip's gross
+edge was **~+2.2 bp/trade** (+50 bp / 23 trades). So **net ≈ +0.3 bp/trade — essentially
+breakeven, before slippage.** Exactly the knife-edge we predicted: SPX fees are low enough that
+the flip isn't *dead*, but they consume almost the whole gross edge. **Not a clear winner.** It
+needs a real sample to see whether the +2.2 bp gross even holds live (the proxy may be
+optimistic), and slippage could tip it negative.
+
+### This trade was a *loss the flip caused* — the regime risk, live (n=1)
+The original CALL signal was **right** — SPY rose (that's *why* the PUT invalidated). Following
+would have won; fading lost. One concrete instance of "the flip is wrong when the breakout
+follows through." Meaningless alone (n=1), but a reminder the variance is real — don't read one
+trade either way.
+
+### 07-29 (today) — 0 trades
+Bot up all day. **2 orders submitted, both timed out unfilled** (#34 cancelled them — no adverse
+fills), everything else blocked by the filters (53 chop-guard + 36 path-guard). The timeout did
+its job (no dead-signal fills), but the net is **no participation.** ⚠️ **Watch:** 2 SPX
+non-fills in a day despite the tight $0.10/leg spreads — if SPX limits keep failing to fill,
+we'll starve for trades. First sign of it; monitor whether it's the flipped-limit pricing or
+just a slow tape.
+
+### Net
+The plumbing is **done and proven** (#41, SPX, flip all live and correct), and we finally have
+the number that gates everything: **$6.52/trade → the flip nets ~breakeven after fees.** So the
+verdict on #42 is not "win" or "dead" — it's **"thin, unproven, keep gathering real fills."**
+Two things to watch: (a) does the gross edge hold over a real sample, and (b) the SPX fill rate.
+
+---
+
+## 2026-07-27 (Mon) — 🟢 SPX went live · 🐛 but the first SPX order was rejected (contract-symbol bug)
+
+**First day live on SPX** (restarted onto it after the 07-22 validation). Good news up front:
+**sizing worked exactly as designed** — a MEDIUM 3/5 signal → **1 SPX spread @ $2.40 debit**
+(the validation predicted ~$2.15; MEDIUM budget $400 → 1 spread ✓). But **the order was
+rejected**, so **0 fills**. No completed trade since the 07-20 win (07-21 blocked, 07-22 no
+trades, 07-23–24 bot down during the migration, weekend).
+
+### 🐛 P0 — SPX combo orders rejected (IBKR error 478). *SPX cannot trade until fixed.*
+```
+error [478]: Parameters in request conflict … Requested symbol SPXW, in legs SPX
+```
+`make_bag_multi` sets the BAG's `symbol` to the **option root** via `option_symbol()` →
+`'SPXW'`. But the qualified legs are options on the **underlying `SPX`**. IBKR requires the
+combo's symbol to be the underlying, so it rejects the SPXW/SPX mismatch.
+- **Only SPX is affected.** For XSP and SPY the option root *equals* the underlying
+  (`XSP`/`SPY`), so `bag.symbol` matched the legs and combos worked (proven live). SPX is the
+  first product where **trading-class (`SPXW`) ≠ underlying (`SPX`)**, which is exactly what
+  478 is complaining about.
+- **Fix (one line, additive-safe):** in `make_bag_multi`, `bag.symbol = symbol` (the
+  underlying) instead of `self.option_symbol(symbol)`. No change for XSP/SPY (root == symbol);
+  fixes SPX. The comboLegs (by conId) and the option_exchange routing were fine.
+- **Why validation missed it:** `validate_xsp.py` qualifies *single legs* and prices via
+  `get_spread_value` (also single legs) — it never qualifies/places a **BAG**. The bug lives
+  only in the combo. **Lesson: the validator must also qualify a BAG combo** (add a
+  `reqContractDetails(make_bag(...))` check) so this class of bug can't reach a live order again.
+
+### Everything else: same #39 wall
+With SPX finally live, the day was still **56 chop-guard blocks + 54 path-guard blocks** —
+the anti-trend entry filters (#39) strangling entries exactly as on 07-21. Even the one
+signal that got through was a MEDIUM 3/5 on `slope✗` (ADX high but falling, 40→35) — the
+override (`ADX_SLOPE_OVERRIDE_ADX`, still 0) would have mattered, but the 478 bug made it moot.
+
+### Net
+A half-step forward: **SPX is live and sizes correctly**, and the one blocker is a
+one-line contract-symbol fix (plus a validator gap to close so it doesn't recur). But we're
+now **7 sessions without a completed trade** (blocked, down, or rejected), and the entry
+filters (#39) remain the thing keeping us out of the market. **Immediate: fix the BAG symbol
+(#41) + harden the validator; then #39 so SPX actually gets to trade a trend day.**
+
+---
+
+## 2026-07-21 (Tue) — 0 TRADES on a clean +0.36% BULL TREND 🔴 — the guards strangled our best day
+
+**The one regime this strategy is built to win — a clean trend day — and we didn't place a
+single filled trade.** SPY ground **up +0.36%** (high +0.46%, low −0.19%: shallow dips, steady
+grind). Zero participation, $0. This is the most important "quiet" day in the journal.
+
+### Why we sat out (block tally, all-day)
+| count | blocker |
+|---|---|
+| **22** | **#31 path-freshness guard** — `level 747.44 not crossed in last 10 bars — stale break / hovering` |
+| **13** | ADX-slope chop guard — `ADX … flat/falling` |
+| 4 | signal cooldown |
+| 1 | the ONE order (11:23, MEDIUM 2/5 CALL @ $0.48) — **timed out unfilled (#34)** |
+| 2 | conviction below minimum |
+
+### The core finding — the #31 freshness guard is *anti-trend by construction*
+The path guard (built 07-10 to stop chop-day bear-traps) requires the breakout level to have
+been **crossed within the last 10 bars** — i.e. a recent close on the *other* side of the level.
+**A healthy sustained trend never provides that:** price broke above XSP's 747.44 ORB early and
+*stayed* above it, so from ~11:30 on, every CALL was blocked as a "stale break / hovering" —
+for the rest of the day. The mechanism can't tell a *stale hover in chop* (flat at the level)
+from a *breakout that held* (trending away from it). It treats the second like the first and
+vetoes it.
+
+**This inverts our participation vs. regime — the worst possible selection:**
+- **Chop day:** price oscillates *around* the level → it *was* crossed recently → freshness
+  **passes** → we enter → the breakout reverts → we lose. (This is the flip-test result:
+  25% direction accuracy, we buy tops.)
+- **Trend day:** price breaks and *holds* → no recent cross → freshness **blocks** → we miss
+  the one clean move. (Today.)
+
+So the guard actively selects **for** the regime we lose in and **against** the regime we'd win
+in. That's not a tuning nit — it's backwards. Third independent confirmation of the #10/#32
+thesis ("the risk/filter layer is over-fit to chop and strangles trend days"), now with the
+specific culprit named.
+
+### Compounding factors
+- **The ADX-slope gate (13 blocks)** hit the same way: a smooth trend has *high but flat* ADX,
+  which the rising-ADX requirement rejects. **`ADX_SLOPE_OVERRIDE_ADX` (built + tested in #32,
+  left at 0/off) is exactly this fix** — turning it on would have unblocked some of these.
+- **The one order that got through didn't fill:** a passive mid-priced CALL limit on a *rising*
+  tape gets left behind, and #34 (rightly) cancelled it at 129s. On a strong trend we may need
+  a more aggressive limit (nearer the ask) — but that's secondary to not being blocked at all.
+
+### Fix direction (new TODO #39)
+The freshness check should be **waived when momentum strongly agrees and price is decisively
+beyond the level** (a held breakout), and only applied when price is *hovering near* the level
+(within ~X%) — where the bear-trap actually lives. The momentum sub-check (`PATH_MOMENTUM_BARS`)
+already exists to lean on. Pair with turning on `ADX_SLOPE_OVERRIDE_ADX`. Ties to #32/#33.
+
+### Net
+0 trades, $0 — but the most diagnostic day since the flip test. We now have the whole loop:
+we **over-participate in chop** (lose) and **under-participate in trends** (miss), because the
+#31 freshness guard + ADX-slope gate are anti-trend by construction. The direction engine isn't
+even the bottleneck here — the *entry filters* are. **#39 + turning on the #32 override are the
+next concrete moves.**
+
+---
+
 ## 2026-07-20 (Mon) — 1W/0L 🟢 **STREAK BROKEN** (first win since 07-09) + #34 partial-fill fired live
 
 **First green close in 9 trades.** XSP PUT, **+17.14% / +$24 gross → +$3 net.** Tiny, but

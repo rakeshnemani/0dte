@@ -150,7 +150,11 @@ class IBKRBroker:
         condor), and limit prices stay plain positive numbers either way."""
         exch = self.option_exchange(symbol)
         bag = Contract()
-        bag.symbol = self.option_symbol(symbol)
+        # #41 (07-27): a BAG's symbol is the UNDERLYING, not the option root. For SPX
+        # the root is 'SPXW' but the legs are on underlying 'SPX' — using the root got
+        # IBKR error 478 ("Requested symbol SPXW, in legs SPX") and every SPX order was
+        # rejected. Unchanged for SPY/XSP (root == underlying); fixes SPX.
+        bag.symbol = symbol
         bag.secType = 'BAG'
         bag.currency = 'USD'
         bag.exchange = exch

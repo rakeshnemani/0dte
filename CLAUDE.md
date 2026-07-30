@@ -50,6 +50,10 @@ restarted** (state is in-memory).
 - `scripts/backfill_permid.py` — retro-fill `PermId` on recent audit rows (~24h window).
 - `scripts/build_dashboard.py` — `audit.csv` → `dashboard.xlsx`.
 - `scripts/counterfactual.py SYMBOL HH:MM` — "what did SYMBOL do after this ET time?" (retro helper).
+- **Backtest/analysis tools** (`backtest_39.py`, `flip_analysis.py`, `replay_invalidation.py`,
+  `validate_xsp.py SYM`) — **see `docs/BACKTESTING.md`** for what each answers, the data inputs,
+  and the caveats every result is subject to (proxy P&L, fees excluded, single-symbol SPY,
+  rolling-vs-session VWAP). Read it before quoting or extending any backtest.
 
 IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bot). Gateway on port 4002.
 
@@ -60,6 +64,7 @@ IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bo
 - `docs/RECONCILE.md` — how to use `reconcile_ibkr.py`.
 - `docs/RETROSPECTIVE.md` — **the daily journal + hypotheses under test** (append after each trading day).
 - `docs/GO_LIVE.md` — paper→live readiness gates (Gate 2 = fee-adjusted profit is the blocker).
+- `docs/BACKTESTING.md` — the analysis tooling, data inputs, and caveats; how every backtest number was produced.
 - `TODO.md` — prioritized backlog (P0/P1/P2/P3 + a Done section).
 
 ## Strategy in one screen
@@ -106,12 +111,18 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
    never saw them (ledger tracks options only). **Lesson: reconcile the IBKR *account
    positions* (stock too), not just the bot ledger; and move to cash-settled European index
    options (XSP) that can't be assigned (TODO #3, now P0).**
-10. **The risk/filter layer is over-fit to chop and strangles trend days (07-13).** The
-    guards we added over two weeks to survive chop (rising-ADX entry gate, VWAP-recross
-    invalidation exit) turned a −2% *down day where our PUT direction was right* into a
-    loss: invalidation whipsawed us out of SPY/IWM before the move paid, and the ADX-slope
-    gate blocked every QQQ entry on QQQ's biggest down day. Fix = **regime-aware** exit/gate
-    (TODO #32), not a rewrite — the direction engine was right.
+10. **"The guards strangle trend days" — TESTED 07-27, and it's mostly WRONG.** For two
+    weeks the retros blamed the entry filters (rising-ADX gate, #31 path-freshness) and the
+    VWAP-invalidation exit for the losses. A proper backtest (`scripts/backtest_39.py`,
+    signal-replay over 20 days) contradicts it: un-blocking those entries makes results
+    **worse** (39%→35% win, −9→−134 bp; the added trades are 31% win, net-negative — and
+    bad *even with the invalidation exit off*). And the invalidation exit is net-**protective**
+    (−9 with it vs −63 without), not a whipsaw-villain. The salient "we got whipsawed out of a
+    winner" days (07-13, 07-20) were real but cherry-picked; in aggregate the rule and the
+    guards help. **Lesson: the entry filters are NOT the bottleneck — even guard-filtered
+    entries are ~39%/−9bp before fees. The problem is the breakout premise in this regime +
+    fees. Don't loosen the guards.** The one real signal is the flip test (we're systematically
+    on the wrong side — a regime/direction problem, not a filter one). #39 downgraded to P3.
 
 ## Bug history (the big ones, all fixed)
 
@@ -148,9 +159,12 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 
 ## Current priorities (see TODO.md for detail)
 
-**▶️ RUNNING on XSP-only (2026-07-14).** #3 landed + validated live (clean CBOE fill, no
-assignment). Reminder: to pause a *running* bot you must **stop the process** — a `.env`
-edit won't affect the live process (config is in memory).
+**▶️ RUNNING on XSP; SWITCHING to SPX (2026-07-21, #40).** SPX = 10× notional/contract →
+~3-4× lower fees (the fee wall is the bottleneck: 07-20 fees ate 87% of a +17% winner);
+cash-settled European (no assignment), more liquid than XSP. Config staged + structurally
+validated (`validate_xsp.py SPX` — no code changes needed); **not restart-safe until an
+INTRADAY validation** confirms real debit/fills/fees. Reminder: to switch a *running* bot
+you must **restart the process** — a `.env` edit won't affect the live process (config in memory).
 
 - **P0 — active:** **#33** anchored/session VWAP (rolling-14 hugs price → 32/33 entries
   invalidate; the real edge lever) · **#32** regime-aware exit — mechanisms built + default-

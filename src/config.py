@@ -31,8 +31,8 @@ MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.30"))
 # 1h42m, filled, and invalidated 65s later. Cancel an unfilled entry after this
 # many seconds and let the signal be re-evaluated fresh. 0 disables (wait forever).
 ENTRY_ORDER_TIMEOUT_SECONDS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECONDS", "120"))
-STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 25}
-SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}
+STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}   # SPX 0DTE lists 5-pt strikes ATM (was 25 — too coarse; validate on the chain)
+SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}  # 5-pt SPX spread ≈ XSP $0.50-wide
 
 # ── Signal source vs execution symbol (#3, XSP migration) ────────────────────
 # Some tradables are illiquid as an underlying but track a liquid proxy. XSP
@@ -41,7 +41,7 @@ SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}
 # indicators (VWAP, ORB, ADX) from the proxy's bars (SPY — real volume) but
 # select strikes and place orders on the execution symbol itself (XSP). A symbol
 # absent from this map sources its own bars (SPY/QQQ/IWM unchanged).
-SIGNAL_SOURCE = {"XSP": "SPY"}
+SIGNAL_SOURCE = {"XSP": "SPY", "SPX": "SPY"}   # both index products have thin/no-volume bars → source VWAP from SPY
 
 # ── Chop guards (added after 2026-07-01 reversal-day retro) ──────────────────
 # Entry gate: require ADX to be RISING over the last N bars, not just > 25.
@@ -101,6 +101,14 @@ CONVICTION_HIGH_MULT = float(os.getenv("CONVICTION_HIGH_MULT", "1.5"))  # score 
 # -$147 gross — and tiny positions can't clear the per-contract fee floor.
 # Below this score the right size is zero, not half. Set to -99 to disable.
 MIN_CONVICTION_SCORE = int(os.getenv("MIN_CONVICTION_SCORE", "2"))
+
+# #42 (2026-07-28): FADE-THE-BREAKOUT. Execute the OPPOSITE of each CALL/PUT signal
+# (all filters + conviction still run on the original signal; only the traded side
+# inverts). backtest_39.py showed our breakout DIRECTION is systematically wrong in
+# this mean-reverting tape: BASELINE flipped went 39%→61% win, −9→+50 bp gross.
+# ⚠️ REGIME BET — fading breakouts LOSES in a trending stretch; watch for a trend guard.
+# ⚠️ Edge is thin (~+2 bp/trade) vs SPX fees — unproven until real fills land.
+FLIP_DIRECTION = os.getenv("FLIP_DIRECTION", "false").lower() == "true"
 
 # Take-profit target: on entry fill, a resting limit sell is parked at
 # entry x (1 + this). Max peak ever recorded is +64.6% (all winners peak

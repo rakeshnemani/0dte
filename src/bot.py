@@ -327,11 +327,29 @@ class TradingBot:
 
         return direction, reason, indicators
 
+    @staticmethod
+    def _maybe_flip(direction: str) -> str:
+        """#42 fade-the-breakout: with FLIP_DIRECTION on, execute the OPPOSITE of a
+        CALL/PUT signal (CONDOR untouched). The entry filters + conviction already
+        ran on the original signal; only the executed side inverts."""
+        if config.FLIP_DIRECTION and direction in ('CALL', 'PUT'):
+            return 'PUT' if direction == 'CALL' else 'CALL'
+        return direction
+
     def execute_trade(self, symbol: str, direction: str, reason: str, indicators: dict):
         """Run the entry guards, size by conviction, and submit the BAG order."""
         if symbol in self.active_trades:
             logger.warning(f"Already in active trade for {symbol}. Skipping.")
             return
+
+        # #42: fade the breakout — flip AFTER the signal's own gates/conviction have
+        # passed on the original direction; everything downstream (strikes, order,
+        # exit, cooldown) then uses the flipped side. REGIME BET (loses in a trend).
+        flipped = self._maybe_flip(direction)
+        if flipped != direction:
+            logger.info(f"[{symbol}] FLIP_DIRECTION → executing {flipped} (signal was {direction}) [#42]")
+            reason = f"FLIP #42: signal {direction} → exec {flipped} | {reason}"
+            direction = flipped
 
         # Anti-cascade guard: never open on top of an untracked position in this
         # symbol. If a still-open orphan exists, a new order would pile on (the

@@ -61,6 +61,26 @@ def test_broker_contract_mapping():
           spy_bag.exchange == 'SMART'
           and all(leg.exchange == 'SMART' for leg in spy_bag.comboLegs))
 
+    # #41: a BAG's symbol is the UNDERLYING, not the option root. SPX root is SPXW
+    # but its BAG.symbol must be SPX (else IBKR error 478). XSP/SPY: root == underlying.
+    check("SPX bag.symbol is underlying 'SPX', not root 'SPXW' (#41)",
+          b.make_bag_multi('SPX', [(1, 'BUY'), (2, 'SELL')]).symbol == 'SPX')
+    check("XSP bag.symbol == 'XSP'", xsp_bag.symbol == 'XSP')
+    check("SPY bag.symbol == 'SPY'", spy_bag.symbol == 'SPY')
+
+    # #42 fade-the-breakout: FLIP_DIRECTION inverts only CALL/PUT execution.
+    import bot as _bot
+    _saved = config.FLIP_DIRECTION
+    try:
+        config.FLIP_DIRECTION = False
+        check("flip OFF: CALL stays CALL", _bot.TradingBot._maybe_flip('CALL') == 'CALL')
+        config.FLIP_DIRECTION = True
+        check("flip ON: CALL → PUT", _bot.TradingBot._maybe_flip('CALL') == 'PUT')
+        check("flip ON: PUT → CALL", _bot.TradingBot._maybe_flip('PUT') == 'CALL')
+        check("flip ON: CONDOR untouched", _bot.TradingBot._maybe_flip('CONDOR') == 'CONDOR')
+    finally:
+        config.FLIP_DIRECTION = _saved
+
     check("SIGNAL_SOURCE maps XSP → SPY", config.SIGNAL_SOURCE.get('XSP') == 'SPY')
     check("SIGNAL_SOURCE leaves SPY self-sourced", config.SIGNAL_SOURCE.get('SPY', 'SPY') == 'SPY')
     check("XSP is a known cash-settled index", 'XSP' in INDEX_SPECS)
