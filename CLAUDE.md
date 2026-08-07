@@ -10,12 +10,14 @@ A Python **0DTE options-spread trading bot** on **Interactive Brokers paper trad
 - **Iron condors** (sell premium) on range/chop days.
 
 **Goal:** reach consistent, *fee-adjusted* profitability on paper, then go live.
-**Status (2026-07-14): NOT profitable, but now running on XSP-only.** Thin-edge coin-flip
-(~45% WR, ~break-even gross, net-negative on ~$100/day commissions). **#3 done + validated
-live 07-14** — migrated to **XSP-only** (cash-settled European index options → *no
-assignment*, unlike the 07-10 SPY/QQQ debacle); first live XSP trade executed clean on
-CBOE. Still losing on the **entry-quality / VWAP-whipsaw** problem (#32 buffer + #33
-anchored VWAP are the open levers). See `docs/GO_LIVE.md` (~20% ready).
+**Status (2026-08-06): NOT profitable — on an "honest last try" (fresh start).** Five weeks,
+~−$1.8k paper, and exhaustive testing (filters on/off, follow/flip, XSP→SPX) showed **no config
+convincingly clears fees**; the breakout signal is anti-predictive (flipping helps) and fees eat
+~85% of any edge. User's call: **one more month, clean slate** — audit reset (old archived), on
+**INITIAL breakout · follow · SPX-only** (every added filter OFF), with the *user* analyzing
+trades hands-on. Never ran INITIAL on SPX (only SPY/QQQ/IWM), and SPX is ~4× cheaper — that's the
+shot. Success criteria + config baseline: see the 2026-08-06 "FRESH START" retro entry.
+See `docs/GO_LIVE.md` (~20% ready) and `docs/BACKTESTING.md` (why every config failed).
 
 ## Architecture (modular — refactored from one monolith)
 
@@ -159,24 +161,22 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 
 ## Current priorities (see TODO.md for detail)
 
-**▶️ RUNNING on XSP; SWITCHING to SPX (2026-07-21, #40).** SPX = 10× notional/contract →
-~3-4× lower fees (the fee wall is the bottleneck: 07-20 fees ate 87% of a +17% winner);
-cash-settled European (no assignment), more liquid than XSP. Config staged + structurally
-validated (`validate_xsp.py SPX` — no code changes needed); **not restart-safe until an
-INTRADAY validation** confirms real debit/fills/fees. Reminder: to switch a *running* bot
-you must **restart the process** — a `.env` edit won't affect the live process (config in memory).
+**🔄 FRESH START (2026-08-06) — "honest last try," one month.** Running (on restart) **INITIAL
+breakout · follow · SPX-only**, every added filter OFF (`FLIP_DIRECTION=false`, `ADX_SLOPE_BARS=0`,
+`ORB_BREAKOUT_BUFFER_PCT=0`, `PATH_FRESH/MOMENTUM_BARS=0`, `VWAP_INVALIDATION_BARS=0`,
+`CONVICTION_SIZING_ENABLED=false`); kept: ADX>25 base signal, hard-stop/trail/TP, EOD flatten,
+daily-loss $800, entry timeout 120s, condors off. Fresh `audit.csv` (old archived); user resets
+account + **analyzes trades hands-on** this time. Config baseline + success/kill criteria: the
+2026-08-06 "FRESH START" retro entry. **To activate: restart the bot** (config is in-memory).
 
-- **P0 — active:** **#33** anchored/session VWAP (rolling-14 hugs price → 32/33 entries
-  invalidate; the real edge lever) · **#32** regime-aware exit — mechanisms built + default-
-  off; replay says `VWAP_INVALIDATION_BUFFER_PCT=0.0005` is the one small win (hold/override
-  showed nothing). **#3 XSP migration: DONE (validated live 07-14).**
-- **P1:** #2 total-exposure cap · #16 always-on host · #22/#28 condor tuning.
-- **P2 (fee viability):** #20 wider spreads to cut the fee ratio; #5 time stop, #6 midday
-  tightening, #7 expected-move anchor, #12 2-hour throttle.
-- **P3:** #4 GLD/TLT, #8 VIX1D.
+**The one job for the month:** does INITIAL follow-the-breakout clear fees on SPX? (Backtest said
+−80 bp net; this is the live check with the user reading every trade.) *Don't re-tune filters* —
+that well is dry (docs/BACKTESTING.md). If the live trades reconfirm "following loses," the flip
+is one toggle (`FLIP_DIRECTION=true`).
 
-**Two open questions now:** (1) can the debit strategy clear its fees? (~break-even gross;
-#20 is the lever). (2) Does making the exit/gate **regime-aware** (#32) recover the
-trend days we're currently strangling? 07-13 says the direction engine is right — the
-scaffolding around it is what's losing. XSP migration (#3) is the mandatory safety gate
-before any of that matters.
+- **Parked (not now):** everything in TODO.md P1/P2/P3 (#36 breaker, #38 trail, #20 fees, #2
+  exposure, #16 host, #33 anchored VWAP, #32 regime exit). **#16 (always-on host) is the one
+  exception worth doing** — bot down-days poison the experiment's sample.
+
+**Resolved by evidence (don't reopen):** #39 (filters aren't the bottleneck), the flip is
+regime-neutral / not a router (#42/#37), no config clears fees. See docs/BACKTESTING.md.

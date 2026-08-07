@@ -149,6 +149,85 @@ regime's sample.
 
 ---
 
+## 2026-08-06 — 🔄 FRESH START: the "honest last try" — INITIAL breakout, follow, SPX-only
+
+**Decision (user):** one more month, clean slate, with the user analyzing trades hands-on this
+time (not relying on my retros). Rationale that earns the shot: **we tested INITIAL on
+SPY/QQQ/IWM but never on SPX** — and SPX is ~4× cheaper on fees, which is the whole game. The
+old ledger is archived (`audit_archive_2026-06-30_to_2026-08-06.csv`, 103 trades); `audit.csv`
+reset to header only; account balance reset (user, in IBKR).
+
+### The config baseline (what "INITIAL" means here)
+Pure original breakout, **following** (not flipped), every filter we added after 06-30 turned OFF:
+| setting | value | = |
+|---|---|---|
+| `SYMBOLS` | SPX | cash-settled, cheapest fees |
+| `FLIP_DIRECTION` | **false** | follow the breakout |
+| `ADX_SLOPE_BARS` | 0 | no rising-ADX gate |
+| `ORB_BREAKOUT_BUFFER_PCT` | 0 | no breakout buffer |
+| `PATH_FRESH_BARS` / `PATH_MOMENTUM_BARS` | 0 / 0 | no #31 path guard |
+| `VWAP_INVALIDATION_BARS` | 0 | no invalidation exit |
+| `CONVICTION_SIZING_ENABLED` | false | no min-score gate, fixed size |
+| **kept** | | ADX>25 base signal · hard-stop −70% · trail@+50% · TP +60% · EOD flatten 15:55 · daily-loss $800 · entry timeout 120s · condors off |
+
+### The honest test — success criteria, set NOW so we don't move goalposts
+- **What we're testing:** does the *original* follow-the-breakout premise clear fees on SPX,
+  where it's never run? (Backtest said INITIAL-follow was −80 bp net — this is the live check
+  of that, with the user reading every trade.)
+- **Duration:** ~4 weeks / until ~30–40 trades, whichever first.
+- **Call it a WIN if:** fee-adjusted net is ≥ ~breakeven and trending up, OR the user's trade-
+  level analysis surfaces a concrete, fixable pattern (that's the real prize).
+- **Call it DONE if:** net < −$500 paper, or a clear ~consistent "following loses" pattern
+  (which would *reconfirm* the flip finding — at which point `FLIP_DIRECTION=true` is one toggle).
+- **Confound to control:** bot uptime (#16). A fair test needs it *running* — down-days poison
+  the sample. Keep it alive (tmux + caffeinate at minimum).
+
+### Watch-list for the user's own analysis
+Per trade, look at: entry vs the day's eventual direction (were we on the right side?), how much
+of the move we captured before the exit, and **fees vs gross** (do wins clear the ~$6–10 fee?).
+The audit logs all of it (ADX, VWAP, ORB, conviction-for-reference, commission, peak%). One clean
+month of *your* eyes on the tape beats another month of my proxies.
+
+---
+
+## 2026-08-06 — 📉 The flip drought: 0W/2L live + days of no trades (three separate causes)
+
+**Since going flipped (07-28), the live record is 0W/2L, −$66.76, plus a week that mostly
+didn't trade.** The frustration ("no trades these days") is real — but the cause isn't one
+thing, and that matters for the fix.
+
+### The record 07-28 → 08-06
+| day | what happened |
+|---|---|
+| 07-28 | SPX PUT (flip) **−$46.52** — CALL signal was right, fade lost |
+| 07-29 | 0 trades — 2 orders **timed out unfilled** (fill problem) |
+| 07-30, 07-31, 08-03 | **bot DOWN** (no logs — host reliability #16) |
+| 08-04 | SPX PUT (flip) **−$20.24** — held 81s, **commission $10.24 > the $10 gross loss** |
+| 08-05, 08-06 | 0 trades — **filters blocked everything** (path + chop guards, 0 submitted) |
+
+### The "no trades" has THREE causes — removing filters fixes only one
+1. **Bot down** (07-30/31, 08-03) — the always-on-host gap (#16). No config change touches this.
+2. **Fills timing out** (07-29) — orders submitted, didn't fill in 120s, #34 cancelled them.
+   Removing filters makes this *worse* (more unfilled orders), not better.
+3. **Filters blocking** (08-05/06) — quiet, rangey days where the guards (and the base ADX>25 +
+   ORB breakout requirement) found no clean setup. *This* is the only piece removing filters
+   would change — it'd generate more entries on these days.
+
+### The live flip: 0W/2L, and fees are still the story
+Both flip trades lost, and on 08-04 the **commission ($10.24) exceeded the gross loss ($10)** —
+fees remain the dominant cost even on a near-scratch trade. n=2 is meaningless for the edge, but
+it's a reminder the flip is *breakeven-at-best* after the $6.52–10 fee, exactly as the 07-28
+verdict said.
+
+### The honest state
+We've now run this strategy on every axis — filters on/off, flip on/off, XSP→SPX — and **no
+configuration convincingly clears fees** (see the net comparison logged with this entry / in the
+response). The drought is part host-downtime (#16), part fills, part genuinely-quiet days. The
+"rip out the filters" instinct scratches only the third, and by our own backtest the un-filtered
+*follow* version is the worst config of all. See the decision below.
+
+---
+
 ## 2026-07-28/29 — ✅ FIRST LIVE FLIP TRADE on SPX — #41 confirmed + the real commission is in
 
 **The month-long questions got answered.** The first flipped SPX trade executed 07-28; today
