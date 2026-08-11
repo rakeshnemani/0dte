@@ -54,6 +54,9 @@ TREND_SKIP_LOWIV = float(os.getenv("TREND_SKIP_LOWIV", "0.082"))
 GEX_WINDOWS = os.getenv("GEX_WINDOWS", "09:30-15:55")                 # OR-breakout gates entries to post-9:45
 GEX_OR_MINUTES = int(os.getenv("GEX_OR_MINUTES", "15"))               # opening range = 9:30 + this many min
 GEX_FLATTEN_TIME = os.getenv("GEX_FLATTEN_TIME", "15:55")             # flatten all positions by 3:55 PM
+# GEX is single-leg → NO take-profit by default (a TP caps the convex tail that IS the edge,
+# same lesson as trend). 0 = off; set >0 (e.g. 0.60) only to re-enable a hard TP.
+GEX_TAKE_PROFIT = float(os.getenv("GEX_TAKE_PROFIT", "0.0"))
 # Structure: single-leg directional (2026-08-09 pivot — NO spreads anywhere). Buy one
 # ~50Δ leg: CALL on a bullish GEX signal, PUT on bearish. Single-leg = half the fee +
 # uncapped convex tail, which is exactly what a fast negative-gamma move pays for.

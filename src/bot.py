@@ -430,8 +430,8 @@ class TradingBot:
         inside the 15-min opening range). EOD 3:50 flatten is handled by the main loop."""
         if profit_pct <= -config.HARD_STOP_LOSS_PCT:
             return True, f"Hard stop loss: lost {abs(profit_pct)*100:.1f}%"
-        if config.TAKE_PROFIT_TARGET_PCT > 0 and profit_pct >= config.TAKE_PROFIT_TARGET_PCT:
-            return True, f"Take-profit +{config.TAKE_PROFIT_TARGET_PCT*100:.0f}% hit"
+        if config.GEX_TAKE_PROFIT > 0 and profit_pct >= config.GEX_TAKE_PROFIT:
+            return True, f"Take-profit +{config.GEX_TAKE_PROFIT*100:.0f}% hit"
         ind = trade.get('entry_indicators', {})
         or_high, or_low = ind.get('orb_high'), ind.get('orb_low')
         if or_high is None or or_low is None:

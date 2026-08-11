@@ -20,8 +20,9 @@ forward-test-only (no historical GEX data) — Gflip + OI walls computed LIVE fr
 tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`, `test_gex`,
 `test_gex_strategy`, `test_single_leg` (+ existing), all green. GEX code: `src/gex.py`,
 `broker.fetch_gex_chain`, `strategy.gex_entry_signal`/`gex_invalidated`, `bot._scan_gex_entries`/
-`evaluate_gex_entry`/`_gex_exit_check`. ⚠️ GEX still carries a 60% TP (open question for single-leg);
-startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
+`evaluate_gex_entry`/`_gex_exit_check`. GEX exits = 50% stop · OR-reclaim invalidation · 3:55 flatten,
+**NO take-profit** (`GEX_TAKE_PROFIT=0`, 2026-08-10 — a TP caps the convex single-leg tail, same as trend).
+⚠️ startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
 
 **(2026-08-08): PIVOTED from breakout → a TREND strategy.** The breakout
 premise never cleared fees (five weeks, ~−$1.8k paper; exhaustive testing — filters on/off,
