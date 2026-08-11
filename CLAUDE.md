@@ -22,6 +22,13 @@ tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`,
 `broker.fetch_gex_chain`, `strategy.gex_entry_signal`/`gex_invalidated`, `bot._scan_gex_entries`/
 `evaluate_gex_entry`/`_gex_exit_check`. GEX exits = 50% stop · OR-reclaim invalidation · 3:55 flatten,
 **NO take-profit** (`GEX_TAKE_PROFIT=0`, 2026-08-10 — a TP caps the convex single-leg tail, same as trend).
+**🐛 CRITICAL BUG FOUND+FIXED 2026-08-11:** `broker.fetch_intraday_data` requested MIDPOINT for indices →
+**SPX MIDPOINT returns 0 bars** (an index has no bid/ask) → trend/gex bailed at the empty-bar check
+EVERY scan → **the bot never evaluated a single entry** (the ~zero trades were this, NOT the filters).
+Fixed: TRADES-first (works for indices), MIDPOINT fallback, + a warn-log on empty bars. So the forward
+test effectively STARTS on the next restart. Also 2026-08-11: bot now **saves the live GEX chain** every
+refresh → `data/gex/chain_YYYY-MM-DD.csv` (ts, spot, gflip, strike, oi_call, oi_put, iv, T) — accumulating
+our OWN historical GEX dataset (buying it is costly); + 5-min live Gflip/regime logging for diagnosis.
 ⚠️ startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
 
 **(2026-08-08): PIVOTED from breakout → a TREND strategy.** The breakout

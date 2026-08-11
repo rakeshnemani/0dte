@@ -288,19 +288,18 @@ class IBKRBroker:
             contract = self.underlying_contract(symbol)
             self.ib.qualifyContracts(contract)
 
-            # Cash indices (SPX/XSP) have no "trade" volume — use MIDPOINT bars.
-            what_to_show = 'MIDPOINT' if symbol in INDEX_SPECS else 'TRADES'
-            bars = self.ib.reqHistoricalData(
-                contract,
-                endDateTime='',
-                durationStr='1 D',
-                barSizeSetting='1 min',
-                whatToShow=what_to_show,
-                useRTH=True,
-                formatDate=1,
-                timeout=30,
-            )
+            # BUG FIX (2026-08-11): indices were requesting MIDPOINT → returns 0 bars
+            # (an INDEX has no bid/ask, so no midpoint). reqHistoricalData returns the
+            # index LEVEL via 'TRADES'. This 0-bar result made trend/gex bail at the
+            # empty-bar check EVERY scan — the bot never evaluated a single entry.
+            # Try TRADES first (works for indices AND equities), MIDPOINT as fallback.
+            def _hist(what):
+                return self.ib.reqHistoricalData(
+                    contract, endDateTime='', durationStr='1 D', barSizeSetting='1 min',
+                    whatToShow=what, useRTH=True, formatDate=1, timeout=30)
+            bars = _hist('TRADES') or _hist('MIDPOINT')
             if not bars:
+                logger.warning(f"[{symbol}] Intraday fetch returned no bars (TRADES + MIDPOINT).")
                 return pd.DataFrame()
 
             # .copy() avoids pandas chained-assignment FutureWarnings on the

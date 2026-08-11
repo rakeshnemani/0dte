@@ -387,8 +387,33 @@ class TradingBot:
             self._gex_chain = chain
             self._gex_chain_at = now
             logger.info(f"[{symbol}] GEX chain refreshed: {len(chain)} strike-expiries.")
+            self._save_gex_chain(symbol, spot, chain)
         elif not self._gex_chain:
             logger.warning(f"[{symbol}] GEX chain fetch returned empty — no regime read this scan.")
+
+    def _save_gex_chain(self, symbol: str, spot: float, chain: list):
+        """Persist the live GEX chain (OI + IV per strike) on every refresh. Historical
+        GEX data is expensive to buy, so we accumulate our OWN dataset here — one CSV per
+        day (data/gex/chain_YYYY-MM-DD.csv), which later lets us backtest GEX for real."""
+        try:
+            import csv
+            d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'gex')
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, f"chain_{market_time.now_et():%Y-%m-%d}.csv")
+            new = not os.path.isfile(path)
+            gf = gex.gamma_flip(chain, spot)
+            ts = market_time.now_et().strftime('%Y-%m-%d %H:%M:%S')
+            with open(path, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['timestamp', 'symbol', 'spot', 'gflip', 'strike',
+                                'oi_call', 'oi_put', 'iv', 'T'])
+                for c in chain:
+                    w.writerow([ts, symbol, round(spot, 2), round(gf, 2) if gf else '',
+                                c['strike'], int(c['oi_call']), int(c['oi_put']),
+                                round(c['iv'], 4), round(c['T'], 6)])
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not save GEX chain snapshot: {e}")
 
     @staticmethod
     def _tkey(strategy: str, symbol: str) -> str:
@@ -419,10 +444,27 @@ class TradingBot:
         spot = float(df['close'].iloc[-1])
         gflip = gex.gamma_flip(self._gex_chain, spot)
         zones = gex.concentration_zones(self._gex_chain, n=3)
+        # Log the LIVE Gflip/regime every ~5 min so we can see exactly what the bot sees
+        # (needed to diagnose why GEX does/doesn't fire — the flip drifts intraday).
+        last = getattr(self, '_gex_log_at', None)
+        if last is None or (now - last).total_seconds() >= 300:
+            self._gex_log_at = now
+            reg = gex.gex_regime(spot, gflip)
+            gfs = f"{gflip:.1f}" if gflip else "n/a"
+            cw = zones.get('call_walls', [[0]])[0][0]; pw = zones.get('put_walls', [[0]])[0][0]
+            logger.info(f"[{symbol}] GEX regime: spot {spot:.1f} vs Gflip {gfs} → {reg} gamma "
+                        f"| walls C{cw:.0f}/P{pw:.0f}")
         direction, reason, indicators, _ = strategy.gex_entry_signal(
             symbol, df, now, gflip, zones)
+        if direction and config.GEX_SKIP_LOWIV > 0:
+            ive = strategy.entry_realized_vol(df)      # open→now, no lookahead
+            if ive < config.GEX_SKIP_LOWIV:
+                logger.info(f"[{symbol}] GEX low-vol skip: entry-time vol {ive:.3f} < "
+                            f"{config.GEX_SKIP_LOWIV} — slow tape, theta would eat the naked leg.")
+                return None, "", {}
+            indicators['iv_entry'] = round(ive, 3)
         if direction:
-            logger.info(f"[{symbol}] GEX SIGNAL: {reason}")
+            logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
         return direction, reason, indicators
 
     def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):

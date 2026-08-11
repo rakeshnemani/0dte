@@ -66,6 +66,10 @@ GEX_LONG_DELTA = float(os.getenv("GEX_LONG_DELTA", "0.50"))           # the ~50�
 GEX_SHORT_DELTA = float(os.getenv("GEX_SHORT_DELTA", "0.22"))
 GEX_SPREAD_WIDTH = float(os.getenv("GEX_SPREAD_WIDTH", "10"))
 GEX_MOMENTUM_BARS = int(os.getenv("GEX_MOMENTUM_BARS", "2"))          # "delta acceleration" ≈ price momentum over N bars
+# Theta protection (2026-08-11): skip a GEX entry when entry-time realized vol (open→now,
+# annualized, NO lookahead) < this — a slow tape can't move fast enough for a naked single
+# leg to outrun theta (the 08-11 grind-down: right direction, but ~breakeven-to-loss). 0=off.
+GEX_SKIP_LOWIV = float(os.getenv("GEX_SKIP_LOWIV", "0.082"))
 GEX_INVALIDATION_BARS = int(os.getenv("GEX_INVALIDATION_BARS", "3"))  # 3 closes back inside the OR → exit
 GEX_WALL_TOL_PCT = float(os.getenv("GEX_WALL_TOL_PCT", "0.0015"))     # "at a wall" tolerance (~0.15% of spot)
 GEX_CHAIN_STRIKE_PCT = float(os.getenv("GEX_CHAIN_STRIKE_PCT", "0.05"))  # fetch strikes within ±5% of spot (far OI ≈ 0 gamma)
