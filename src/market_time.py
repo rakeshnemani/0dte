@@ -30,6 +30,43 @@ def is_entry_window() -> bool:
     return now_et().hour < 15
 
 
+def in_windows(windows: str) -> bool:
+    """True if now (ET) is inside one of the comma-separated HH:MM-HH:MM windows."""
+    now = now_et()
+    for part in windows.split(','):
+        try:
+            a, b = part.strip().split('-')
+            ah, am = (int(x) for x in a.split(':'))
+            bh, bm = (int(x) for x in b.split(':'))
+        except ValueError:
+            continue
+        start = now.replace(hour=ah, minute=am, second=0, microsecond=0)
+        end = now.replace(hour=bh, minute=bm, second=0, microsecond=0)
+        if start <= now < end:
+            return True
+    return False
+
+
+def in_trend_window() -> bool:
+    """True if now is inside a config.TREND_WINDOWS slot (STRATEGY=='trend')."""
+    return in_windows(config.TREND_WINDOWS)
+
+
+def in_gex_window() -> bool:
+    """True if now is inside a config.GEX_WINDOWS slot (STRATEGY=='gex')."""
+    return in_windows(config.GEX_WINDOWS)
+
+
+def past_gex_flatten() -> bool:
+    """True once we've reached config.GEX_FLATTEN_TIME (e.g. 15:50) — GEX flattens then."""
+    now = now_et()
+    try:
+        h, m = (int(x) for x in config.GEX_FLATTEN_TIME.split(':'))
+    except ValueError:
+        h, m = 15, 50
+    return now >= now.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
 def is_eod_flatten_time() -> bool:
     """True once we've reached the end-of-day flatten time on a trading day."""
     now = now_et()

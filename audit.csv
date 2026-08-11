@@ -1,1 +1,3 @@
-Timestamp,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Breadth,Reason,Profit_Pct,Dollar_PnL,ADX_Slope,Peak_Pct,Conviction,Commission,PermId
+Timestamp,Strategy,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Breadth,Reason,Profit_Pct,Dollar_PnL,ADX_Slope,Peak_Pct,Conviction,Commission,PermId
+2026-08-07 11:27:32,breakout,BUY,SPX,CALL,2.6,773.86,26.72,773.19,772.37,770.46,✓ confirmed | breadth data insufficient — filter bypassed,Bullish: Price (773.86) > VWAP (773.19) and ORB High+buffer (772.37). ADX: 26.72 | path✓ (path checks disabled/insufficient bars),,,,,LOW 0/5 | ADX✗ slope✗ agree✗ early✗ tape✗(17x),3.26,1621762251
+2026-08-07 12:30:08,breakout,SELL,SPX,CALL,0.95,771.64,27.83,772.19,772.37,770.46,,Hard stop loss: spread lost 63.5% of entry value,-63.46%,-165.00,,0.00%,,6.52,1621762252

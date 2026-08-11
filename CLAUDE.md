@@ -10,14 +10,36 @@ A Python **0DTE options-spread trading bot** on **Interactive Brokers paper trad
 - **Iron condors** (sell premium) on range/chop days.
 
 **Goal:** reach consistent, *fee-adjusted* profitability on paper, then go live.
-**Status (2026-08-06): NOT profitable — on an "honest last try" (fresh start).** Five weeks,
-~−$1.8k paper, and exhaustive testing (filters on/off, follow/flip, XSP→SPX) showed **no config
-convincingly clears fees**; the breakout signal is anti-predictive (flipping helps) and fees eat
-~85% of any edge. User's call: **one more month, clean slate** — audit reset (old archived), on
-**INITIAL breakout · follow · SPX-only** (every added filter OFF), with the *user* analyzing
-trades hands-on. Never ran INITIAL on SPX (only SPY/QQQ/IWM), and SPX is ~4× cheaper — that's the
-shot. Success criteria + config baseline: see the 2026-08-06 "FRESH START" retro entry.
-See `docs/GO_LIVE.md` (~20% ready) and `docs/BACKTESTING.md` (why every config failed).
+
+**Status (2026-08-10): running BOTH `trend` + `gex` at once (`STRATEGY=trend,gex`), SPX single-leg,
+9:30–3:55.** Dual-strategy engine: trades keyed `strategy:symbol` (e.g. `trend:SPX`, `gex:SPX`) so each
+strategy holds its own position; both entry scans run every loop; exits route per `trade['strategy']`;
+orphan/anti-cascade guards gather conIds across BOTH (a trade's own conIds distinguish it); per-strategy
+cooldowns; shared account guards; `audit.csv` has a `Strategy` column tagging every row. GEX is
+forward-test-only (no historical GEX data) — Gflip + OI walls computed LIVE from the IBKR chain (OI via
+tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`, `test_gex`,
+`test_gex_strategy`, `test_single_leg` (+ existing), all green. GEX code: `src/gex.py`,
+`broker.fetch_gex_chain`, `strategy.gex_entry_signal`/`gex_invalidated`, `bot._scan_gex_entries`/
+`evaluate_gex_entry`/`_gex_exit_check`. ⚠️ GEX still carries a 60% TP (open question for single-leg);
+startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
+
+**(2026-08-08): PIVOTED from breakout → a TREND strategy.** The breakout
+premise never cleared fees (five weeks, ~−$1.8k paper; exhaustive testing — filters on/off,
+follow/flip, XSP→SPX — showed no config convincingly clears fees; the signal is anti-predictive and
+fees eat ~85% of any edge). The breakout code is **paused, not deleted** (`STRATEGY=breakout`
+switches back). New live-paper bet: **Supertrend(7,3) + PSAR(0.02,0.2) + Kaufman-chop ≤50**, SPX,
+**single-leg directional** (`TREND_LEGS=single` — buy one ATM ~50Δ CALL on an up-flip / PUT on a
+down-flip), **1 contract, NO take-profit**, 50% stop / Supertrend-reversal / EOD, **drop the power
+hour** (`TREND_WINDOWS=09:30-14:00` — theta kills naked longs late) and **skip quiet mornings**
+(`TREND_SKIP_LOWIV=0.082`, entry-time realized vol, no lookahead). Built on a **3-year SPX backtest**
+(`scripts/backtest_spread_dollars.py`, real BS legs): single-leg net **+$12,985/3yr (t≈1.3)** vs the
+$10 spread's +$1,328 — the fee-halving + convex uncapped tail is where the money is. **But it's
+in-sample, ~80% from 2025, still can't clear 2024, and t≈1.3 isn't significant** → a **forward
+paper-test of a promising-but-unproven candidate**, not a found edge. Portable findings: **single-leg
+≫ spread (half fee, uncapped tail); no-TP for single-leg (a TP caps the convex tail that IS the edge);
+single-leg wants the OPEN not the power hour (theta); skip low-vol days.** ⚠️ **Known gap: startup
+adoption only reconstructs spreads, not a lone single leg** — don't restart with a single-leg position
+open. See `docs/GO_LIVE.md` and `docs/BACKTESTING.md`.
 
 ## Architecture (modular — refactored from one monolith)
 
@@ -161,22 +183,26 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 
 ## Current priorities (see TODO.md for detail)
 
-**🔄 FRESH START (2026-08-06) — "honest last try," one month.** Running (on restart) **INITIAL
-breakout · follow · SPX-only**, every added filter OFF (`FLIP_DIRECTION=false`, `ADX_SLOPE_BARS=0`,
-`ORB_BREAKOUT_BUFFER_PCT=0`, `PATH_FRESH/MOMENTUM_BARS=0`, `VWAP_INVALIDATION_BARS=0`,
-`CONVICTION_SIZING_ENABLED=false`); kept: ADX>25 base signal, hard-stop/trail/TP, EOD flatten,
-daily-loss $800, entry timeout 120s, condors off. Fresh `audit.csv` (old archived); user resets
-account + **analyzes trades hands-on** this time. Config baseline + success/kill criteria: the
-2026-08-06 "FRESH START" retro entry. **To activate: restart the bot** (config is in-memory).
+**🔄 TREND PIVOT (2026-08-08) — forward paper-test of the Supertrend strategy.** Live config
+(`STRATEGY=trend`, `.env` + `src/config.py`): **SPX $10** spread, **1 contract**, entry = Supertrend
+flip + PSAR agree + kauf ≤50, **only** in the 9:30–10:00 / 15:00–16:00 ET windows; exits = 50% hard
+stop · Supertrend reversal · 60% resting TP · EOD flatten. No condor/conviction/trail/VWAP-invalidation
+in trend mode. Code: `strategy.trend_entry_signal`/`trend_reversed`/`supertrend_dir`/`psar_dir`/
+`kaufman_chop` (pure, unit-tested in `scripts/test_trend_strategy.py`), wired via `bot._scan_trend_entries`
+/`evaluate_trend_entry`/`_trend_exit_check` + `market_time.in_trend_window`. **To activate: restart the
+bot** (state is in-memory; it's currently running the OLD breakout code).
 
-**The one job for the month:** does INITIAL follow-the-breakout clear fees on SPX? (Backtest said
-−80 bp net; this is the live check with the user reading every trade.) *Don't re-tune filters* —
-that well is dry (docs/BACKTESTING.md). If the live trades reconfirm "following loses," the flip
-is one toggle (`FLIP_DIRECTION=true`).
+**The one job:** does the trend strategy clear fees LIVE on SPX? Backtest = +$1,328/3yr at $10 but
+**within noise (t≈1.1), 7up/6down quarters, soft since 2025** — so read every trade; this is the real
+out-of-sample check. *Don't parameter-sweep to rescue it* (fits noise). Next structural idea (not a
+knob): **single-leg directional** — halves the ~$2,178 fee bill, uncaps winners; the BS engine already
+prices single legs. Backtest tooling: `scripts/backtest_spread_dollars.py` (real BS legs, per-quarter,
+per-trade CSV), 3-yr SPX cache `scripts/.spx_1min_2y_cache.pkl` (2023-07→2026-08, `pull_spx_2y.py`).
 
-- **Parked (not now):** everything in TODO.md P1/P2/P3 (#36 breaker, #38 trail, #20 fees, #2
-  exposure, #16 host, #33 anchored VWAP, #32 regime exit). **#16 (always-on host) is the one
-  exception worth doing** — bot down-days poison the experiment's sample.
+- **Housekeeping:** account isn't flat — paper still holds **−600 SPY / −400 QQQ** assigned-stock
+  residue (learning #9); flatten before trusting the trend P&L. **#16 (always-on host)** still the one
+  infra task worth doing (down-days poison the sample).
 
-**Resolved by evidence (don't reopen):** #39 (filters aren't the bottleneck), the flip is
-regime-neutral / not a router (#42/#37), no config clears fees. See docs/BACKTESTING.md.
+**Resolved by evidence (don't reopen):** breakout never clears fees (#39 filters aren't the bottleneck,
+flip is regime-neutral #42/#37); for the trend strategy — 30% stop worse than 50%, before-1PM cutoff
+was 3-month noise, $500-sizing was a power-hour mirage. See docs/BACKTESTING.md.

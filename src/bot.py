@@ -16,6 +16,7 @@ from typing import Dict
 
 import audit
 import config
+import gex
 import market_time
 import notifier
 import strategy
@@ -61,6 +62,10 @@ class TradingBot:
         # Entry scans stay on a ~60s cadence even when the loop fast-polls exits
         self._last_entry_scan = None
         self._last_interval: int = 60
+        # GEX chain cache (STRATEGY=='gex'): OI is once-daily, so fetch the chain
+        # occasionally and recompute Gflip intraday from it as spot moves.
+        self._gex_chain: list = []
+        self._gex_chain_at = None
 
         # A restart wipes active_trades — adopt any open option positions the
         # account still holds so they are managed instead of orphaned.
@@ -106,6 +111,8 @@ class TradingBot:
                 symbol, trade['short_call'], trade['wing_call'],
                 trade['short_put'], trade['wing_put']
             )
+        if trade.get('structure') == 'SINGLE':
+            return self.broker._get_option_mid(trade['option_contract'])
         return self.broker.get_spread_value(
             symbol, trade['direction'], trade['long_strike'], trade['short_strike']
         )
@@ -149,8 +156,9 @@ class TradingBot:
         for (underlying, right), legs in groups.items():
             longs = [p for p in legs if p.position > 0]
             shorts = [p for p in legs if p.position < 0]
+            adopt_key = self._tkey('breakout', underlying)
             if (len(longs) != 1 or len(shorts) != 1
-                    or underlying in self.active_trades or underlying in multi_right):
+                    or adopt_key in self.active_trades or underlying in multi_right):
                 leftovers.extend(legs)
                 continue
             long_p, short_p = longs[0], shorts[0]
@@ -160,7 +168,8 @@ class TradingBot:
             direction = 'CALL' if right == 'C' else 'PUT'
 
             bag = self.broker.make_bag(underlying, long_p.contract.conId, short_p.contract.conId)
-            self.active_trades[underlying] = {
+            self.active_trades[adopt_key] = {
+                'strategy': 'breakout', 'symbol': underlying,
                 'direction': direction,
                 'target_entry_price': entry_price,
                 'entry_price': entry_price,
@@ -327,6 +336,121 @@ class TradingBot:
 
         return direction, reason, indicators
 
+    def _scan_trend_entries(self):
+        """Trend-mode entry scan (STRATEGY == 'trend'): only inside a TREND_WINDOWS
+        slot, one position per symbol. No breadth/conviction/condor — just the
+        Supertrend flip + PSAR + Kaufman signal, fixed 1 contract."""
+        if not market_time.in_trend_window():
+            return
+        for symbol in config.SYMBOLS:
+            if self._tkey('trend', symbol) in self.active_trades:
+                continue
+            direction, reason, indicators = self.evaluate_trend_entry(symbol)
+            if direction in ('CALL', 'PUT'):
+                self.execute_trade(symbol, direction, reason, indicators, 'trend')
+
+    def evaluate_trend_entry(self, symbol: str):
+        """Run the trend signal on the symbol's OWN 1-min bars. Supertrend/PSAR/
+        Kaufman need only high/low/close, so SPX index bars are used directly (not
+        the SPY signal-source proxy the breakout VWAP needs). Returns (direction,
+        reason, indicators)."""
+        now = market_time.now_et()
+        df = self.broker.fetch_intraday_data(symbol)
+        if df.empty or len(df) < config.TREND_MIN_BARS:
+            return None, "", {}
+        direction, reason, indicators, lean = strategy.trend_entry_signal(symbol, df, now)
+        if lean is not None:
+            self.symbol_lean[symbol] = (lean, now)
+        if direction and config.TREND_SKIP_LOWIV > 0:
+            ive = strategy.entry_realized_vol(df)      # open→now, no lookahead
+            if ive < config.TREND_SKIP_LOWIV:
+                logger.info(f"[{symbol}] Low-vol skip: entry-time vol {ive:.3f} < "
+                            f"{config.TREND_SKIP_LOWIV} — quiet day, a naked long would just bleed theta.")
+                return None, "", {}
+            indicators['iv_entry'] = round(ive, 3)
+        if direction:
+            logger.info(f"[{symbol}] TREND SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
+        return direction, reason, indicators
+
+    # ── GEX strategy (STRATEGY=='gex') ───────────────────────────────────────
+    def _refresh_gex_chain(self, symbol: str):
+        """Re-fetch the OI+IV chain if the cache is empty or older than GEX_REFRESH_MIN
+        (OI is a once-daily number, so intraday refreshes are cheap-ish and rare)."""
+        now = market_time.now_et()
+        fresh = (self._gex_chain_at is not None and
+                 (now - self._gex_chain_at).total_seconds() < config.GEX_REFRESH_MIN * 60)
+        if self._gex_chain and fresh:
+            return
+        spot, chain = self.broker.fetch_gex_chain(
+            symbol, config.GEX_CHAIN_STRIKE_PCT, config.GEX_CHAIN_EXPIRIES, config.GEX_CHAIN_MAX_STRIKES)
+        if chain:
+            self._gex_chain = chain
+            self._gex_chain_at = now
+            logger.info(f"[{symbol}] GEX chain refreshed: {len(chain)} strike-expiries.")
+        elif not self._gex_chain:
+            logger.warning(f"[{symbol}] GEX chain fetch returned empty — no regime read this scan.")
+
+    @staticmethod
+    def _tkey(strategy: str, symbol: str) -> str:
+        """Composite active_trades key so multiple strategies can each hold a position in
+        the same symbol at once (e.g. 'trend:SPX' and 'gex:SPX')."""
+        return f"{strategy}:{symbol}"
+
+    def _scan_gex_entries(self):
+        """GEX entry scan: only inside a GEX_WINDOWS slot. Refresh the chain, recompute
+        Gflip + walls at the current spot, run the 3-condition signal."""
+        if not market_time.in_gex_window():
+            return
+        for symbol in config.SYMBOLS:
+            if self._tkey('gex', symbol) in self.active_trades:
+                continue
+            self._refresh_gex_chain(symbol)
+            direction, reason, indicators = self.evaluate_gex_entry(symbol)
+            if direction in ('CALL', 'PUT'):
+                self.execute_trade(symbol, direction, reason, indicators, 'gex')
+
+    def evaluate_gex_entry(self, symbol: str):
+        """Recompute Gflip + concentration zones from the cached chain at the current spot,
+        then apply the 3-condition GEX entry (regime + OR breakout + momentum)."""
+        now = market_time.now_et()
+        df = self.broker.fetch_intraday_data(symbol)
+        if df.empty or len(df) < 18 or not self._gex_chain:
+            return None, "", {}
+        spot = float(df['close'].iloc[-1])
+        gflip = gex.gamma_flip(self._gex_chain, spot)
+        zones = gex.concentration_zones(self._gex_chain, n=3)
+        direction, reason, indicators, _ = strategy.gex_entry_signal(
+            symbol, df, now, gflip, zones)
+        if direction:
+            logger.info(f"[{symbol}] GEX SIGNAL: {reason}")
+        return direction, reason, indicators
+
+    def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):
+        """GEX exits: hard stop · take-profit · failed-breakout invalidation (3 closes back
+        inside the 15-min opening range). EOD 3:50 flatten is handled by the main loop."""
+        if profit_pct <= -config.HARD_STOP_LOSS_PCT:
+            return True, f"Hard stop loss: lost {abs(profit_pct)*100:.1f}%"
+        if config.TAKE_PROFIT_TARGET_PCT > 0 and profit_pct >= config.TAKE_PROFIT_TARGET_PCT:
+            return True, f"Take-profit +{config.TAKE_PROFIT_TARGET_PCT*100:.0f}% hit"
+        ind = trade.get('entry_indicators', {})
+        or_high, or_low = ind.get('orb_high'), ind.get('orb_low')
+        if or_high is None or or_low is None:
+            return False, ""
+        inval = trade.get('_gex_inv_last', False)
+        checked = trade.get('_gex_inv_at')
+        if checked is None or (market_time.now_et() - checked).total_seconds() >= 50:
+            try:
+                df = self.broker.fetch_intraday_data(symbol)
+                inval = strategy.gex_invalidated(df, or_high, or_low, config.GEX_INVALIDATION_BARS)
+            except Exception as e:
+                logger.warning(f"[{symbol}] GEX invalidation check failed: {e}")
+            trade['_gex_inv_at'] = market_time.now_et()
+            trade['_gex_inv_last'] = inval
+        if inval:
+            return True, (f"Failed breakout: {config.GEX_INVALIDATION_BARS} closes reclaimed the "
+                          f"opening range ({or_low:.0f}-{or_high:.0f}) (P&L {profit_pct*100:+.1f}%)")
+        return False, ""
+
     @staticmethod
     def _maybe_flip(direction: str) -> str:
         """#42 fade-the-breakout: with FLIP_DIRECTION on, execute the OPPOSITE of a
@@ -336,10 +460,12 @@ class TradingBot:
             return 'PUT' if direction == 'CALL' else 'CALL'
         return direction
 
-    def execute_trade(self, symbol: str, direction: str, reason: str, indicators: dict):
-        """Run the entry guards, size by conviction, and submit the BAG order."""
-        if symbol in self.active_trades:
-            logger.warning(f"Already in active trade for {symbol}. Skipping.")
+    def execute_trade(self, symbol: str, direction: str, reason: str, indicators: dict,
+                      strategy: str = 'breakout'):
+        """Run the entry guards, size, and submit the order — for the given strategy
+        (its position is tracked under 'strategy:symbol' so strategies don't collide)."""
+        if self._tkey(strategy, symbol) in self.active_trades:
+            logger.warning(f"Already in active {strategy} trade for {symbol}. Skipping.")
             return
 
         # #42: fade the breakout — flip AFTER the signal's own gates/conviction have
@@ -360,10 +486,10 @@ class TradingBot:
             return
 
         now_est = market_time.now_et()
-        cooldown_expires = self.signal_cooldowns.get((symbol, direction))
+        cooldown_expires = self.signal_cooldowns.get((strategy, symbol, direction))
         if cooldown_expires and now_est < cooldown_expires:
             remaining = int((cooldown_expires - now_est).total_seconds() // 60)
-            logger.info(f"Signal ({symbol}, {direction}) in cooldown for {remaining}m more. Skipping.")
+            logger.info(f"Signal ({strategy}, {symbol}, {direction}) in cooldown for {remaining}m more. Skipping.")
             return
 
         # Invalidation throttle: this signal has been proven chop today
@@ -407,6 +533,14 @@ class TradingBot:
 
         step = config.STRIKE_STEP.get(symbol, 1)
         atm_strike = round(underlying_price / step) * step
+
+        # ── Single-leg directional (trend or gex, LEGS=single) ──────────────────
+        # Buy one ATM (~50Δ) option — CALL bullish, PUT bearish. No short leg, no spread.
+        if ((strategy == 'trend' and config.TREND_LEGS == 'single') or
+                (strategy == 'gex' and config.GEX_LEGS == 'single')):
+            self._place_single_leg(symbol, direction, atm_strike, indicators, reason, strategy)
+            return
+
         strike_width = config.SPREAD_WIDTH.get(symbol, 1)
 
         if direction == "CALL":
@@ -414,7 +548,10 @@ class TradingBot:
         else:
             long_strike, short_strike = atm_strike, atm_strike - strike_width
 
-        spread_cost = self.broker.get_spread_value(symbol, direction, long_strike, short_strike)
+        # One snapshot → bid/mid/ask. Size + the min-cost gate use the MID (stable);
+        # the LIMIT is priced toward the ask so a breakout order actually fills (08-07).
+        spread_bid, spread_cost, spread_ask = self.broker.get_spread_quote(
+            symbol, direction, long_strike, short_strike)
         if spread_cost <= 0:
             logger.warning(f"Could not fetch valid spread cost for {symbol}. Aborting.")
             return
@@ -423,6 +560,12 @@ class TradingBot:
             logger.warning(f"Spread cost ${spread_cost:.2f} below minimum ${config.MIN_SPREAD_COST:.2f}. Skipping.")
             return
 
+        # #entry-fill (08-07): limit = mid + ENTRY_AGGRESSION × (ask − mid), snapped to
+        # the tick, never below mid. At AGGRESSION=0.5 that's (mid+ask)/2.
+        tick = self.broker.option_tick(symbol)
+        limit_price = spread_cost + config.ENTRY_AGGRESSION * max(spread_ask - spread_cost, 0.0)
+        limit_price = max(round(round(limit_price / tick) * tick, 2), round(spread_cost, 2))
+
         # Conviction-based sizing: LOW 0.5x, MEDIUM 1x, HIGH 1.5x of base budget
         conviction = indicators.get('conviction')
         budget = config.MAX_POSITION_SIZE
@@ -430,20 +573,24 @@ class TradingBot:
             budget = config.MAX_POSITION_SIZE * conviction['mult']
             logger.info(f"[{symbol}] Conviction {conviction['tier']} ({conviction['score']}/5) → budget ${budget:.0f}")
 
-        qty_to_buy = int(budget // (spread_cost * 100))
-        if qty_to_buy < 1:
-            logger.warning(f"Spread cost ${spread_cost:.2f}/share exceeds position budget ${budget:.0f}.")
-            return
+        if strategy in ('trend', 'gex'):
+            qty_to_buy = 1                        # fixed 1 contract (validated sizing)
+        else:
+            qty_to_buy = int(budget // (spread_cost * 100))
+            if qty_to_buy < 1:
+                logger.warning(f"Spread cost ${spread_cost:.2f}/share exceeds position budget ${budget:.0f}.")
+                return
 
         try:
             long_c = self.broker.get_option_contract(symbol, direction, long_strike)
             short_c = self.broker.get_option_contract(symbol, direction, short_strike)
             bag = self.broker.make_bag(symbol, long_c.conId, short_c.conId)
-            ibkr_trade = self.broker.place_limit(bag, 'BUY', qty_to_buy, spread_cost)
+            ibkr_trade = self.broker.place_limit(bag, 'BUY', qty_to_buy, limit_price)
 
-            self.active_trades[symbol] = {
+            self.active_trades[self._tkey(strategy, symbol)] = {
+                'strategy': strategy, 'symbol': symbol,
                 'direction': direction,
-                'target_entry_price': spread_cost,
+                'target_entry_price': limit_price,
                 'status': 'PENDING_ENTRY',
                 'submitted_at': market_time.now_et(),   # #34 entry-timeout anchor
                 'ibkr_trade': ibkr_trade,
@@ -458,29 +605,78 @@ class TradingBot:
                 'entry_indicators': indicators,
                 'reason': reason,
             }
-            self.daily_trade_count += 1
-            cooldown_until = now_est + datetime.timedelta(minutes=config.SIGNAL_COOLDOWN_MINUTES)
-            self.signal_cooldowns[(symbol, direction)] = cooldown_until
-            logger.info(f"Signal ({symbol}, {direction}) cooling down until {cooldown_until.strftime('%H:%M')} EST.")
+            # NB: the cooldown + daily-count are set on the FILL (_activate_entry), NOT
+            # here — a never-filled (timed-out) entry must not lock out re-entry or burn
+            # a daily slot (08-07 analysis). The `active_trades` guard prevents duplicate
+            # submits while this order is pending.
             logger.info(
                 f"SUBMITTED {direction} SPREAD ORDER to IBKR: {qty_to_buy} contracts {symbol} "
-                f"at LIMIT ${spread_cost:.2f} (OrderId: {ibkr_trade.order.orderId})"
+                f"at LIMIT ${limit_price:.2f} (mid ${spread_cost:.2f}, ask ${spread_ask:.2f}; "
+                f"OrderId: {ibkr_trade.order.orderId})"
             )
 
             # Alert immediately on submission (fires even if later rejected),
             # then the consolidated "today" snapshot.
             notifier.notify_submit(symbol, direction, long_strike, short_strike,
-                                   spread_cost, qty_to_buy, budget, indicators,
+                                   limit_price, qty_to_buy, budget, indicators,
                                    reason, ibkr_trade.order.orderId)
             notifier.notify_today_summary(self.active_trades, self.closed_trades_today)
 
         except Exception as e:
             logger.error(f"Failed to place IBKR spread order for {symbol}: {e}")
 
+    def _place_single_leg(self, symbol: str, direction: str, strike: float,
+                          indicators: dict, reason: str, strategy: str = 'trend'):
+        """Buy ONE ATM directional option (structure='SINGLE'). No short leg, no BAG.
+        Priced mid + ENTRY_AGGRESSION×(ask−mid); fixed 1 contract; no resting TP. Tracked
+        under 'strategy:symbol' so trend and gex can each hold one."""
+        try:
+            opt = self.broker.get_option_contract(symbol, direction, strike)
+            bid, mid, ask = self.broker._get_option_quote(opt)
+            if mid <= 0:
+                logger.warning(f"[{symbol}] No valid quote for single-leg {direction} {strike:g}. Aborting.")
+                return
+            if mid < config.MIN_SPREAD_COST:
+                logger.warning(f"[{symbol}] Option mid ${mid:.2f} below min ${config.MIN_SPREAD_COST:.2f}. Skipping.")
+                return
+            tick = self.broker.option_tick(symbol)
+            limit_price = mid + config.ENTRY_AGGRESSION * max(ask - mid, 0.0)
+            limit_price = max(round(round(limit_price / tick) * tick, 2), round(mid, 2))
+
+            ibkr_trade = self.broker.place_limit(opt, 'BUY', 1, limit_price)
+            self.active_trades[self._tkey(strategy, symbol)] = {
+                'strategy': strategy, 'symbol': symbol,
+                'structure': 'SINGLE',
+                'direction': direction,
+                'target_entry_price': limit_price,
+                'status': 'PENDING_ENTRY',
+                'submitted_at': market_time.now_et(),   # #34 entry-timeout anchor
+                'ibkr_trade': ibkr_trade,
+                'option_contract': opt,                  # close + value use this (no bag)
+                'qty': 1,
+                'max_profit_pct': 0.0,
+                'long_strike': strike,
+                'long_conid': opt.conId,                 # reconciliation reference leg
+                'leg_conids': [opt.conId],
+                'entry_indicators': indicators,
+                'reason': reason,
+            }
+            logger.info(
+                f"SUBMITTED {direction} SINGLE-LEG ORDER to IBKR: 1x {symbol} {strike:g} "
+                f"at LIMIT ${limit_price:.2f} (mid ${mid:.2f}, ask ${ask:.2f}; "
+                f"OrderId: {ibkr_trade.order.orderId})"
+            )
+            notifier.notify_submit(symbol, direction, strike, strike, limit_price, 1,
+                                   config.MAX_POSITION_SIZE, indicators, reason,
+                                   ibkr_trade.order.orderId)
+            notifier.notify_today_summary(self.active_trades, self.closed_trades_today)
+        except Exception as e:
+            logger.error(f"[{symbol}] Failed to place single-leg order: {e}")
+
     def execute_condor(self, symbol: str, reason: str, indicators: dict):
-        """Sell an iron condor around the day's range (credit playbook).
+        """Sell an iron condor around the day's range (credit playbook — 'breakout' side).
         Sized by max loss: (width − credit) × 100 × qty <= MAX_POSITION_SIZE."""
-        if symbol in self.active_trades:
+        if self._tkey('breakout', symbol) in self.active_trades:
             return
 
         if self._symbol_has_untracked_position(symbol):
@@ -534,7 +730,8 @@ class TradingBot:
             ])
             ibkr_trade = self.broker.place_limit(bag, 'SELL', qty, credit)
 
-            self.active_trades[symbol] = {
+            self.active_trades[self._tkey('breakout', symbol)] = {
+                'strategy': 'breakout', 'symbol': symbol,
                 'structure': 'CONDOR',
                 'direction': 'CONDOR',
                 'target_entry_price': credit,
@@ -572,7 +769,7 @@ class TradingBot:
             notifier.notify_condor_submit(symbol, sc, wc, sp, wp, credit, qty,
                                           max_loss_per * qty, reason,
                                           ibkr_trade.order.orderId,
-                                          self.active_trades[symbol]['condor_quality'])
+                                          self.active_trades[self._tkey('breakout', symbol)]['condor_quality'])
             notifier.notify_today_summary(self.active_trades, self.closed_trades_today)
         except Exception as e:
             logger.error(f"Failed to place IBKR condor order for {symbol}: {e}")
@@ -583,21 +780,24 @@ class TradingBot:
         for symbol in list(self.active_trades.keys()):
             self.evaluate_exit_conditions_for_symbol(symbol)
 
-    def evaluate_exit_conditions_for_symbol(self, symbol: str):
-        if symbol not in self.active_trades:
+    def evaluate_exit_conditions_for_symbol(self, key: str):
+        if key not in self.active_trades:
             return
 
-        trade = self.active_trades[symbol]
+        trade = self.active_trades[key]
+        # `key` is the strategy:symbol tracking key; `symbol` is the real broker symbol.
+        # (So all the broker/log code below is unchanged; only active_trades ops use `key`.)
+        symbol = trade.get('symbol', key)
 
         # A closing order is in flight — confirm its fill before anything else
         if trade.get('status') == 'PENDING_EXIT':
-            self._check_pending_exit(symbol, trade)
+            self._check_pending_exit(key, trade)
             return
 
         # Resting take-profit filled? Must be checked BEFORE reconciliation —
         # a filled TP removes the legs from the account, which would otherwise
         # be misread as an external close (and its P&L discarded).
-        if trade.get('status') == 'ACTIVE' and self._tp_filled(symbol, trade):
+        if trade.get('status') == 'ACTIVE' and self._tp_filled(key, trade):
             return
 
         # Reconcile against the real IBKR account. Only conclude "externally
@@ -617,9 +817,9 @@ class TradingBot:
                 missing_for = (market_time.now_et() - first).total_seconds()
                 if missing_for >= self._RECONCILE_DROP_AFTER_S:
                     logger.warning(f"[{symbol}] Legs absent for {missing_for:.0f}s — confirmed closed externally. Dropping from tracking.")
-                    self._cancel_tp_order(symbol, trade)  # never leave a resting order behind
+                    self._cancel_tp_order(key, trade)  # never leave a resting order behind
                     notifier.notify_closed_externally(symbol, trade['direction'])
-                    self.active_trades.pop(symbol, None)
+                    self.active_trades.pop(key, None)
                 else:
                     logger.info(f"[{symbol}] Legs still absent ({missing_for:.0f}/{self._RECONCILE_DROP_AFTER_S}s); re-checking.")
                 return  # skip exit eval while the position's status is uncertain
@@ -630,7 +830,7 @@ class TradingBot:
             return
 
         if trade.get('status') == 'PENDING_ENTRY':
-            self._check_pending_fill(symbol, trade)
+            self._check_pending_fill(key, trade)
             return
 
         # side: +1 long premium (debit), −1 short premium (condor)
@@ -645,43 +845,77 @@ class TradingBot:
             if profit_pct > 0:
                 logger.info(f"[{symbol}] New Max Profit: {profit_pct*100:.2f}%")
 
-        # Thesis-invalidation check — debit: sustained VWAP recross; condor:
-        # price closed beyond a short strike (range thesis dead). 1-min bars
-        # change at most once a minute, so cache the verdict ~50s — fast
-        # polling shouldn't multiply bar fetches.
-        is_condor = trade.get('structure') == 'CONDOR'
-        invalidated = trade.get('_inval_last', False)
-        if config.VWAP_INVALIDATION_BARS > 0 or is_condor:
-            checked_at = trade.get('_inval_checked_at')
-            if checked_at is None or (market_time.now_et() - checked_at).total_seconds() >= 50:
-                try:
-                    # #3: invalidation reads the signal source too (XSP → SPY),
-                    # so the VWAP recross is measured on real volume, not thin XSP.
-                    df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(symbol, symbol))
-                    if is_condor:
-                        invalidated = strategy.condor_breached(
-                            df, trade['short_call'], trade['short_put'])
-                    else:
-                        invalidated = strategy.thesis_invalidated(trade['direction'], df)
-                except Exception as e:
-                    logger.warning(f"[{symbol}] Invalidation check failed: {e}")
-                trade['_inval_checked_at'] = market_time.now_et()
-                trade['_inval_last'] = invalidated
+        if trade.get('strategy') == 'trend':
+            # Trend exits: hard stop + Supertrend reversal (the +TP is a resting
+            # limit in _tp_filled; EOD flatten is the main loop). No VWAP
+            # invalidation / trailing stop — matches the backtest.
+            exit_triggered, exit_reason = self._trend_exit_check(symbol, trade, profit_pct)
+        elif trade.get('strategy') == 'gex':
+            # GEX exits: hard stop · +TP · failed-breakout invalidation (loop-based, since
+            # a single leg has no resting TP). 3:50 flatten is handled by the main loop.
+            exit_triggered, exit_reason = self._gex_exit_check(symbol, trade, profit_pct)
+        else:
+            # ── breakout / condor exits (thesis-invalidation + 3-rule model) ──
+            # Thesis-invalidation check — debit: sustained VWAP recross; condor:
+            # price closed beyond a short strike (range thesis dead). 1-min bars
+            # change at most once a minute, so cache the verdict ~50s — fast
+            # polling shouldn't multiply bar fetches.
+            is_condor = trade.get('structure') == 'CONDOR'
+            invalidated = trade.get('_inval_last', False)
+            if config.VWAP_INVALIDATION_BARS > 0 or is_condor:
+                checked_at = trade.get('_inval_checked_at')
+                if checked_at is None or (market_time.now_et() - checked_at).total_seconds() >= 50:
+                    try:
+                        # #3: invalidation reads the signal source too (XSP → SPY),
+                        # so the VWAP recross is measured on real volume, not thin XSP.
+                        df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(symbol, symbol))
+                        if is_condor:
+                            invalidated = strategy.condor_breached(
+                                df, trade['short_call'], trade['short_put'])
+                        else:
+                            invalidated = strategy.thesis_invalidated(trade['direction'], df)
+                    except Exception as e:
+                        logger.warning(f"[{symbol}] Invalidation check failed: {e}")
+                    trade['_inval_checked_at'] = market_time.now_et()
+                    trade['_inval_last'] = invalidated
 
-        inval_reason = None
-        if is_condor:
-            inval_reason = (
-                f"Range breached: price closed beyond a short strike "
-                f"({trade['short_put']:.0f}/{trade['short_call']:.0f}) for "
-                f"{strategy.CONDOR_BREACH_BARS} consecutive bars"
+            inval_reason = None
+            if is_condor:
+                inval_reason = (
+                    f"Range breached: price closed beyond a short strike "
+                    f"({trade['short_put']:.0f}/{trade['short_call']:.0f}) for "
+                    f"{strategy.CONDOR_BREACH_BARS} consecutive bars"
+                )
+            exit_triggered, exit_reason = strategy.exit_decision(
+                profit_pct, trade['max_profit_pct'], invalidated,
+                invalidation_reason=inval_reason
             )
-        exit_triggered, exit_reason = strategy.exit_decision(
-            profit_pct, trade['max_profit_pct'], invalidated,
-            invalidation_reason=inval_reason
-        )
         if exit_triggered:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")
-            self.close_position(symbol, current_spread_value, exit_reason)
+            self.close_position(key, current_spread_value, exit_reason)
+
+    def _trend_exit_check(self, symbol: str, trade: dict, profit_pct: float):
+        """Trend-mode exits: hard stop OR Supertrend reversal. (The +60% TP is a
+        resting limit handled by _tp_filled; EOD flatten by the main loop.) The
+        Supertrend check caches its bar fetch ~50s so fast-polling doesn't refetch."""
+        if profit_pct <= -config.HARD_STOP_LOSS_PCT:
+            return True, f"Hard stop loss: spread lost {abs(profit_pct)*100:.1f}% of entry value"
+
+        reversed_ = trade.get('_trend_rev_last', False)
+        checked_at = trade.get('_trend_checked_at')
+        if checked_at is None or (market_time.now_et() - checked_at).total_seconds() >= 50:
+            try:
+                df = self.broker.fetch_intraday_data(symbol)   # trend needs only HLC → SPX direct
+                reversed_ = strategy.trend_reversed(trade['direction'], df)
+            except Exception as e:
+                logger.warning(f"[{symbol}] Trend-reversal check failed: {e}")
+            trade['_trend_checked_at'] = market_time.now_et()
+            trade['_trend_rev_last'] = reversed_
+
+        if reversed_:
+            return True, (f"Trend reversed: Supertrend flipped against the "
+                          f"{trade['direction']} (P&L {profit_pct*100:+.1f}%)")
+        return False, ""
 
     def _tp_filled(self, symbol: str, trade: dict) -> bool:
         """If the resting take-profit limit filled, book the trade from its
@@ -824,10 +1058,12 @@ class TradingBot:
         except Exception as e:
             logger.error(f"[{symbol}] Error checking IBKR order status: {e}")
 
-    def _activate_entry(self, symbol: str, trade: dict, ibkr_trade):
+    def _activate_entry(self, key: str, trade: dict, ibkr_trade):
         """Promote a filled entry to ACTIVE: park the take-profit, audit, notify.
         Shared by the clean-fill path and the partial-fill rescues."""
         try:
+            symbol = trade.get('symbol', key)                # real broker symbol
+            strat = trade.get('strategy', 'breakout')
             filled_price = float(ibkr_trade.orderStatus.avgFillPrice)
             logger.info(f"[{symbol}] IBKR ORDER FILLED at ${filled_price:.2f}")
             trade['status'] = 'ACTIVE'
@@ -837,11 +1073,24 @@ class TradingBot:
             # permId — the permanent, account-wide key for this trade
             trade['entry_permId'] = self.broker.order_perm_id(ibkr_trade)
 
+            # Cool down + count the trade on the FILL (08-07), not at submission — a
+            # timed-out entry took no position, so it must not lock the signal out or
+            # burn a daily slot. Guarded so an idempotent re-call can't double-count.
+            if not trade.get('_counted'):
+                trade['_counted'] = True
+                self.daily_trade_count += 1
+                cd = market_time.now_et() + datetime.timedelta(minutes=config.SIGNAL_COOLDOWN_MINUTES)
+                self.signal_cooldowns[(strat, symbol, trade['direction'])] = cd
+                logger.info(f"[{symbol}] Filled — {trade['direction']} cooling down until "
+                            f"{cd.strftime('%H:%M')} ET; day trade #{self.daily_trade_count}.")
+
             # Park a resting take-profit limit. Debit: SELL at entry×(1+target).
             # Condor: BUY back at credit×(1−CONDOR_TP_PCT). Fills between
             # heartbeats (no sampling loss) and trades with the move, not
             # against it. Every other exit path cancels it first.
-            if trade.get('structure') == 'CONDOR':
+            if trade.get('structure') == 'SINGLE':
+                tp_price, tp_action = None, 'SELL'    # single-leg runs NO take-profit (convex tail is the edge)
+            elif trade.get('structure') == 'CONDOR':
                 tp_price = (round(filled_price * (1 - config.CONDOR_TP_PCT), 2)
                             if config.CONDOR_TP_PCT > 0 else None)
                 tp_action = 'BUY'
@@ -871,6 +1120,7 @@ class TradingBot:
                 conviction=ind.get('conviction_str'),
                 commission=entry_commission,
                 perm_id=trade.get('entry_permId'),
+                strategy=strat,
             )
             if trade.get('structure') == 'CONDOR':
                 notifier.notify_condor_filled(symbol, trade, filled_price)
@@ -893,27 +1143,30 @@ class TradingBot:
         """A closing order died after PARTIALLY filling: book the filled slice
         (audit + day record) and shrink the tracked qty so the retry closes only
         the true remainder. Counters (throttle/breaker) are left to the final close."""
+        sym = trade.get('symbol', symbol)
+        strat = trade.get('strategy', 'breakout')
         fill_price = float(exit_trade.orderStatus.avgFillPrice)
         side = self._side(trade)
         profit_pct = side * (fill_price - trade['entry_price']) / trade['entry_price']
         dollar_pnl = side * (fill_price - trade['entry_price']) * filled_qty * 100
         commission = self.broker.order_commission(exit_trade)
         reason = f"{trade.get('exit_reason', '')} [PARTIAL {filled_qty}/{trade['qty']} before order died]"
-        logger.warning(f"[{symbol}] Closing order died after partial fill "
+        logger.warning(f"[{sym}] Closing order died after partial fill "
                        f"{filled_qty}/{trade['qty']} at ${fill_price:.2f} — booking the slice.")
         self.closed_trades_today.append({
-            'symbol': symbol, 'direction': trade['direction'],
+            'symbol': sym, 'strategy': strat, 'direction': trade['direction'],
             'entry_price': trade['entry_price'], 'exit_price': fill_price,
             'profit_pct': profit_pct, 'dollar_pnl': dollar_pnl, 'reason': reason,
             'commission': commission,
         })
         audit.record(
-            "SELL", symbol, trade['direction'], fill_price, reason,
+            "SELL", sym, trade['direction'], fill_price, reason,
             profit_pct=profit_pct, dollar_pnl=dollar_pnl,
             peak_pct=trade.get('max_profit_pct'), commission=commission,
             perm_id=self.broker.order_perm_id(exit_trade),
+            strategy=strat,
         )
-        notifier.notify_closed(symbol, trade, fill_price, profit_pct, dollar_pnl,
+        notifier.notify_closed(sym, trade, fill_price, profit_pct, dollar_pnl,
                                reason, commission=commission)
         trade['qty'] -= filled_qty
 
@@ -932,15 +1185,16 @@ class TradingBot:
     _MAX_CLOSE_ATTEMPTS = 4
     _CLOSE_RETRY_COOLDOWN_S = 30
 
-    def close_position(self, symbol: str, current_spread_value: float, reason: str):
-        """Submit a closing BAG order and mark the trade PENDING_EXIT.
+    def close_position(self, key: str, current_spread_value: float, reason: str):
+        """Submit a closing order and mark the trade PENDING_EXIT.
 
         P&L is NOT booked here — it's booked in _check_pending_exit once IBKR
         confirms the fill, using the actual fill price and reported commissions
         (the audit previously assumed the submission price; see TODO #14)."""
-        if symbol not in self.active_trades:
+        if key not in self.active_trades:
             return
-        trade = self.active_trades[symbol]
+        trade = self.active_trades[key]
+        symbol = trade.get('symbol', key)                    # real broker symbol
         if trade.get('status') == 'PENDING_EXIT':
             return  # already closing; _check_pending_exit manages fill/repricing
         if trade.get('close_failed'):
@@ -967,7 +1221,7 @@ class TradingBot:
 
         # Cancel any resting take-profit first — if it filled during the cancel
         # race, the trade is already booked and this exit must abort.
-        if self._cancel_tp_order(symbol, trade):
+        if self._cancel_tp_order(key, trade):
             return
 
         # #30 double-fill guard: never trust order status — requantify against
@@ -989,11 +1243,11 @@ class TradingBot:
             prior = trade.get('exit_ibkr_trade')
             if prior is not None and float(prior.orderStatus.filled or 0) > 0:
                 logger.warning(f"[{symbol}] Prior 'dead' closing order actually filled — booking it instead of resubmitting.")
-                self._book_exit_fill(symbol, trade, prior)
+                self._book_exit_fill(key, trade, prior)
             else:
                 logger.warning(f"[{symbol}] Nothing left to close in the account — treating as externally closed.")
                 notifier.notify_closed_externally(symbol, trade.get('direction', ''))
-                self.active_trades.pop(symbol, None)
+                self.active_trades.pop(key, None)
             return
         if remaining < trade['qty']:
             logger.warning(f"[{symbol}] Account holds {remaining}/{trade['qty']} — a prior close "
@@ -1009,11 +1263,14 @@ class TradingBot:
                     logger.warning(f"[{symbol}] Swept {swept} stray open order(s) before close retry.")
                     self.broker.sleep(1)
 
-            # Same BAG contract as entry; closing action is the opposite of
-            # opening — SELL closes a debit spread, BUY closes a condor
+            # Closing action is the opposite of opening — SELL closes a debit spread or a
+            # single long leg, BUY closes a condor. A single leg closes on its own option
+            # contract (no BAG).
             close_action = 'BUY' if trade.get('structure') == 'CONDOR' else 'SELL'
+            close_contract = (trade['option_contract'] if trade.get('structure') == 'SINGLE'
+                              else trade['bag_contract'])
             exit_ibkr_trade = self.broker.place_limit(
-                trade['bag_contract'], close_action, trade['qty'], current_spread_value
+                close_contract, close_action, trade['qty'], current_spread_value
             )
             trade['status'] = 'PENDING_EXIT'
             trade['exit_ibkr_trade'] = exit_ibkr_trade
@@ -1033,7 +1290,9 @@ class TradingBot:
     def _check_pending_exit(self, symbol: str, trade: dict):
         """Poll a PENDING_EXIT order: book the trade on fill (actual price +
         commissions); reprice if it sits unfilled too long; revert to ACTIVE if
-        the order dies so the exit rules can fire again."""
+        the order dies so the exit rules can fire again. `symbol` holds the tracking
+        key; `sym` is the real broker symbol."""
+        sym = trade.get('symbol', symbol)
         try:
             self.broker.sleep(0)  # flush event loop so orderStatus is current
             exit_trade = trade['exit_ibkr_trade']
@@ -1062,7 +1321,7 @@ class TradingBot:
                 # leg. Sweep our stray open orders on this underlying so the
                 # retry isn't rejected for the same reason.
                 if code == 201:
-                    root = self.broker.option_symbol(symbol)
+                    root = self.broker.option_symbol(sym)
                     cleared = self.broker.cancel_open_orders_for(
                         root, except_order_id=exit_trade.order.orderId)
                     if cleared:
@@ -1078,7 +1337,7 @@ class TradingBot:
             else:
                 waited = (market_time.now_et() - trade['exit_submitted_at']).total_seconds()
                 if waited >= self._EXIT_REPRICE_AFTER_S:
-                    fresh = self._current_value(symbol, trade)
+                    fresh = self._current_value(sym, trade)
                     if fresh > 0 and abs(fresh - trade['exit_limit']) >= 0.01:
                         logger.warning(
                             f"[{symbol}] Closing order unfilled for {waited:.0f}s — repricing "
@@ -1095,7 +1354,10 @@ class TradingBot:
     def _finalize_closed_trade(self, symbol: str, trade: dict,
                                fill_price: float, commission: float):
         """Book a confirmed exit: day record, throttle/breaker counters, Discord,
-        audit row — all from the ACTUAL fill price and IBKR-reported commissions."""
+        audit row — all from the ACTUAL fill price and IBKR-reported commissions.
+        `symbol` holds the tracking key; `sym`/`strat` are the real symbol + strategy."""
+        sym = trade.get('symbol', symbol)
+        strat = trade.get('strategy', 'breakout')
         reason = trade.get('exit_reason', '')
         side = self._side(trade)   # +1 debit, −1 condor (short premium)
         profit_pct = side * (fill_price - trade['entry_price']) / trade['entry_price']
@@ -1108,7 +1370,7 @@ class TradingBot:
 
         # Record for the post-close day summary
         self.closed_trades_today.append({
-            'symbol': symbol, 'direction': trade['direction'],
+            'symbol': sym, 'strategy': strat, 'direction': trade['direction'],
             'entry_price': trade['entry_price'], 'exit_price': fill_price,
             'profit_pct': profit_pct, 'dollar_pnl': dollar_pnl, 'reason': reason,
             'commission': commission,
@@ -1154,13 +1416,13 @@ class TradingBot:
             )
             notifier.notify_daily_loss_limit(realized, config.MAX_DAILY_LOSS)
 
-        notifier.notify_closed(symbol, trade, fill_price, profit_pct, dollar_pnl,
+        notifier.notify_closed(sym, trade, fill_price, profit_pct, dollar_pnl,
                                reason, commission=commission)
 
         # Capture exit-time indicators for the audit log — from the signal source
         # (#3: XSP → SPY), so exit indicators are comparable to the entry ones and
         # aren't computed from thin XSP index bars.
-        df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(symbol, symbol))
+        df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(sym, sym))
         exit_indicators = trade.get('entry_indicators', {}).copy()
         # >= 30 bars: ADX(14) raises "index out of bounds" below ~29 bars
         if not df.empty and len(df) >= 30:
@@ -1174,7 +1436,7 @@ class TradingBot:
                 }
 
         audit.record(
-            "SELL", symbol, trade['direction'], fill_price, reason,
+            "SELL", sym, trade['direction'], fill_price, reason,
             adx=exit_indicators.get('adx'), vwap=exit_indicators.get('vwap'),
             orb_high=exit_indicators.get('orb_high'), orb_low=exit_indicators.get('orb_low'),
             underlying_price=exit_indicators.get('current_price'),
@@ -1182,27 +1444,29 @@ class TradingBot:
             peak_pct=trade.get('max_profit_pct'),
             commission=commission,
             perm_id=trade.get('exit_permId'),
+            strategy=strat,
         )
         self.active_trades.pop(symbol, None)
 
     def close_all_positions(self, reason: str):
-        """Force-close every open position (end-of-day flatten)."""
-        for symbol in list(self.active_trades.keys()):
-            trade = self.active_trades[symbol]
+        """Force-close every open position (end-of-day flatten) — across all strategies."""
+        for key in list(self.active_trades.keys()):
+            trade = self.active_trades[key]
+            sym = trade.get('symbol', key)
             try:
                 if trade.get('status') == 'PENDING_ENTRY':
                     # Unfilled order lingering near the close — cancel instead of selling
                     self.broker.cancel_order(trade['ibkr_trade'].order)
-                    logger.info(f"[{symbol}] EOD: cancelled unfilled entry order.")
-                    self.active_trades.pop(symbol, None)
+                    logger.info(f"[{sym}] EOD: cancelled unfilled entry order.")
+                    self.active_trades.pop(key, None)
                     continue
-                current_spread_value = self._current_value(symbol, trade)
+                current_spread_value = self._current_value(sym, trade)
                 if current_spread_value <= 0:
                     current_spread_value = 0.01  # still flatten — submit at minimum tick
-                self.close_position(symbol, current_spread_value, reason)
+                self.close_position(key, current_spread_value, reason)
             except Exception as e:
-                logger.error(f"[{symbol}] EOD flatten failed: {e}")
-                self.active_trades.pop(symbol, None)
+                logger.error(f"[{sym}] EOD flatten failed: {e}")
+                self.active_trades.pop(key, None)
 
     # ── End-of-day reporting ─────────────────────────────────────────────────
 
@@ -1284,9 +1548,11 @@ class TradingBot:
                     self._last_hourly_hour = cur_hour
                     notifier.notify_hourly_health(self.active_trades, self.closed_trades_today)
 
-                # End-of-day flatten — never hold 0DTE positions into the close
-                if market_time.is_eod_flatten_time() and self.active_trades:
-                    logger.info("EOD flatten time reached — closing all open positions.")
+                # End-of-day flatten — never hold 0DTE positions into the close. GEX
+                # flattens earlier (GEX_FLATTEN_TIME, 3:50) per its playbook.
+                gex_flatten = 'gex' in config.ACTIVE_STRATEGIES and market_time.past_gex_flatten()
+                if (market_time.is_eod_flatten_time() or gex_flatten) and self.active_trades:
+                    logger.info("Flatten time reached — closing all open positions.")
                     self.close_all_positions("End of day — flattening 0DTE positions")
 
                 # Entry scanning stays on a ~60s cadence even when the loop
@@ -1295,16 +1561,22 @@ class TradingBot:
                             (market_time.now_et() - self._last_entry_scan).total_seconds() >= 55)
                 if scan_due:
                     self._last_entry_scan = market_time.now_et()
-                    if not market_time.is_entry_window():
-                        logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
-                    else:
-                        for symbol in config.SYMBOLS:
-                            if symbol not in self.active_trades:
-                                direction, reason, indicators = self.evaluate_entry_strategy(symbol)
-                                if direction in ("CALL", "PUT"):
-                                    self.execute_trade(symbol, direction, reason, indicators)
-                                elif direction == 'CONDOR':
-                                    self.execute_condor(symbol, reason, indicators)
+                    # Run EVERY active strategy each scan (they hold independent positions).
+                    if 'trend' in config.ACTIVE_STRATEGIES:
+                        self._scan_trend_entries()
+                    if 'gex' in config.ACTIVE_STRATEGIES:
+                        self._scan_gex_entries()
+                    if 'breakout' in config.ACTIVE_STRATEGIES:
+                        if not market_time.is_entry_window():
+                            logger.info("Entry window closed after 3:00 PM EST; skipping new entries.")
+                        else:
+                            for symbol in config.SYMBOLS:
+                                if self._tkey('breakout', symbol) not in self.active_trades:
+                                    direction, reason, indicators = self.evaluate_entry_strategy(symbol)
+                                    if direction in ("CALL", "PUT"):
+                                        self.execute_trade(symbol, direction, reason, indicators, 'breakout')
+                                    elif direction == 'CONDOR':
+                                        self.execute_condor(symbol, reason, indicators)
 
                 interval = self._loop_interval()
                 if interval != self._last_interval:

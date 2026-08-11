@@ -14,6 +14,61 @@ IBKR_MARKET_DATA_TYPE = int(os.getenv("IBKR_MARKET_DATA_TYPE", "1"))
 
 SYMBOLS = os.getenv("SYMBOLS", "SPY,QQQ,IWM").split(",")
 MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", "200.0"))
+
+# ── Strategy selector ────────────────────────────────────────────────────────
+# "breakout" = original VWAP+ORB+ADX debit/condor logic. "trend" = the
+# Supertrend(7,3)+PSAR(0.02,0.2)+Kaufman-chop windowed strategy, SPX $10 spread,
+# validated on a 3-year SPX backtest (2026-08-08, scripts/backtest_spread_dollars.py).
+# Trend mode ignores the breakout entry/exit/condor/conviction/trail/VWAP-invalidation
+# paths — its only exits are: hard stop, Supertrend reversal, +TP resting limit, EOD.
+STRATEGY = os.getenv("STRATEGY", "breakout")
+# Comma-separated → run MULTIPLE strategies at once (e.g. "trend,gex"). Each manages its
+# own position per symbol (trades keyed by strategy:symbol); account-level guards are shared.
+ACTIVE_STRATEGIES = [s.strip() for s in STRATEGY.split(",") if s.strip()]
+# Supertrend + Kaufman params (trend mode). Entry = Supertrend flip INTO a direction
+# AND PSAR agrees AND kaufman-chop <= TREND_KAUF_MAX, only inside a TREND_WINDOWS slot.
+TREND_SUPERTREND_PERIOD = int(os.getenv("TREND_SUPERTREND_PERIOD", "7"))
+TREND_SUPERTREND_MULT = float(os.getenv("TREND_SUPERTREND_MULT", "3.0"))
+TREND_KAUF_N = int(os.getenv("TREND_KAUF_N", "14"))
+TREND_KAUF_MAX = float(os.getenv("TREND_KAUF_MAX", "50"))
+TREND_MIN_BARS = int(os.getenv("TREND_MIN_BARS", "20"))     # session warmup before signalling
+# Entry windows (ET), comma-separated HH:MM-HH:MM. Only enter inside one of them.
+# 2026-08-09: single-leg pivot → drop the power hour (theta kills naked longs late),
+# trade the open + midday until 2 PM. See the single-leg backtest (+$12,985/3yr, t≈1.3).
+TREND_WINDOWS = os.getenv("TREND_WINDOWS", "09:30-14:00")
+# Structure: 'single' = buy one ATM (~50Δ) directional leg (CALL on up-flip, PUT on down-
+# flip); 'spread' = the ATM debit vertical. Single-leg halves the fee and uncaps the winner
+# (its edge is the convex tail), so single-leg mode also runs with NO take-profit.
+TREND_LEGS = os.getenv("TREND_LEGS", "single")
+# Skip an entry when entry-time realized vol (open→now, annualized, NO lookahead) is below
+# this — a quiet-so-far day starves a naked long (it just bleeds theta). 0 disables.
+TREND_SKIP_LOWIV = float(os.getenv("TREND_SKIP_LOWIV", "0.082"))
+
+# ── GEX strategy (STRATEGY='gex') — dealer gamma-flip momentum ────────────────
+# FORWARD-TEST ONLY (no historical GEX data exists for free). Entry = negative-gamma
+# regime (SPX < Gflip, OR breaking out of a concentration zone) + 15-min opening-range
+# breakout + short-term price momentum, inside a GEX_WINDOWS slot. Exits reuse
+# HARD_STOP_LOSS_PCT (0.50) + TAKE_PROFIT_TARGET_PCT (0.60) + OR-reclaim invalidation
+# + GEX_FLATTEN_TIME. GEX math lives in src/gex.py (unit-tested); the live chain (OI +
+# IV per strike) is pulled from IBKR — gate: verify OI streams on the Options Add-On feed.
+GEX_WINDOWS = os.getenv("GEX_WINDOWS", "09:30-15:55")                 # OR-breakout gates entries to post-9:45
+GEX_OR_MINUTES = int(os.getenv("GEX_OR_MINUTES", "15"))               # opening range = 9:30 + this many min
+GEX_FLATTEN_TIME = os.getenv("GEX_FLATTEN_TIME", "15:55")             # flatten all positions by 3:55 PM
+# Structure: single-leg directional (2026-08-09 pivot — NO spreads anywhere). Buy one
+# ~50Δ leg: CALL on a bullish GEX signal, PUT on bearish. Single-leg = half the fee +
+# uncapped convex tail, which is exactly what a fast negative-gamma move pays for.
+GEX_LEGS = os.getenv("GEX_LEGS", "single")
+GEX_LONG_DELTA = float(os.getenv("GEX_LONG_DELTA", "0.50"))           # the ~50Δ leg we buy
+# (spread params retained for optional A/B only; unused while GEX_LEGS=single)
+GEX_SHORT_DELTA = float(os.getenv("GEX_SHORT_DELTA", "0.22"))
+GEX_SPREAD_WIDTH = float(os.getenv("GEX_SPREAD_WIDTH", "10"))
+GEX_MOMENTUM_BARS = int(os.getenv("GEX_MOMENTUM_BARS", "2"))          # "delta acceleration" ≈ price momentum over N bars
+GEX_INVALIDATION_BARS = int(os.getenv("GEX_INVALIDATION_BARS", "3"))  # 3 closes back inside the OR → exit
+GEX_WALL_TOL_PCT = float(os.getenv("GEX_WALL_TOL_PCT", "0.0015"))     # "at a wall" tolerance (~0.15% of spot)
+GEX_CHAIN_STRIKE_PCT = float(os.getenv("GEX_CHAIN_STRIKE_PCT", "0.05"))  # fetch strikes within ±5% of spot (far OI ≈ 0 gamma)
+GEX_CHAIN_EXPIRIES = int(os.getenv("GEX_CHAIN_EXPIRIES", "3"))        # nearest N expirations to include in GEX
+GEX_CHAIN_MAX_STRIKES = int(os.getenv("GEX_CHAIN_MAX_STRIKES", "50")) # cap strikes nearest ATM (data-line budget)
+GEX_REFRESH_MIN = int(os.getenv("GEX_REFRESH_MIN", "30"))             # re-fetch OI chain every N min (OI is ~static intraday)
 # Each (symbol, direction) pair cools down for SIGNAL_COOLDOWN_MINUTES after a trade,
 # then can re-trigger. MAX_TRADES_PER_DAY is the overall daily cap across all symbols.
 # With 3 symbols × 2 directions and a 30-min cooldown in a 5.5-hr window: ~12 is realistic.
@@ -31,8 +86,17 @@ MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.30"))
 # 1h42m, filled, and invalidated 65s later. Cancel an unfilled entry after this
 # many seconds and let the signal be re-evaluated fresh. 0 disables (wait forever).
 ENTRY_ORDER_TIMEOUT_SECONDS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECONDS", "120"))
+# 2026-08-07 (user trade analysis): entry limits at the spread MID don't fill on a
+# moving/breakout tape (the market runs away from a passive bid) → orders time out,
+# we miss the good early entry and chase a worse late one. Price the entry limit
+# this fraction of the way from mid → ask: 0 = mid (old), 0.5 = (mid+ask)/2, 1 = ask.
+# On SPX the leg spread is ~$0.10, so crossing costs pennies vs missing the trade.
+ENTRY_AGGRESSION = float(os.getenv("ENTRY_AGGRESSION", "0.5"))
 STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}   # SPX 0DTE lists 5-pt strikes ATM (was 25 — too coarse; validate on the chain)
-SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}  # 5-pt SPX spread ≈ XSP $0.50-wide
+# SPX widened 5→10 for the trend strategy (2026-08-08): the fixed per-contract fee is
+# a smaller drag on a $10 spread, which cleared the fee wall far better in backtest
+# (+$1,328 vs +$289 over 3yr). A $10-wide SPX spread = long ATM, short ATM±10 (2 strikes).
+SPREAD_WIDTH = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 10}
 
 # ── Signal source vs execution symbol (#3, XSP migration) ────────────────────
 # Some tradables are illiquid as an underlying but track a liquid proxy. XSP

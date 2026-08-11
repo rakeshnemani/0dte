@@ -187,11 +187,32 @@ def test_entry_adx_override():
         _restore(saved)
 
 
+# ── entry pricing (08-07): (mid+ask)/2 fill-aggressive limit ─────────────────
+def test_entry_pricing():
+    print("\nentry pricing — get_spread_quote net bid/mid/ask + (mid+ask)/2 tick-snap")
+    b = IBKRBroker()
+    check("SPX option tick = 0.05", b.option_tick('SPX') == 0.05)
+    check("SPY option tick = 0.01", b.option_tick('SPY') == 0.01)
+    # long leg (bid,mid,ask)=(3.0,3.1,3.25); short leg=(1.0,1.05,1.1)
+    quotes = iter([(3.0, 3.1, 3.25), (1.0, 1.05, 1.1)])
+    b.get_option_contract = lambda *a, **k: object()
+    b._get_option_quote = lambda c: next(quotes)
+    bid, mid, ask = b.get_spread_quote('SPX', 'CALL', 7750, 7745)
+    check("spread mid = long_mid − short_mid (2.05)", abs(mid - 2.05) < 1e-9)
+    check("spread ask = long_ask − short_bid = marketable BUY (2.25)", abs(ask - 2.25) < 1e-9)
+    check("spread bid = long_bid − short_ask (1.90)", abs(bid - 1.90) < 1e-9)
+    # AGGRESSION 0.5 → (mid+ask)/2 = 2.15, snapped to $0.05 tick
+    lim = mid + 0.5 * (ask - mid)
+    lim = max(round(round(lim / 0.05) * 0.05, 2), round(mid, 2))
+    check("aggressive limit = (mid+ask)/2 = 2.15 (≥ mid)", lim == 2.15)
+
+
 if __name__ == '__main__':
     test_broker_contract_mapping()
     test_invalidation_buffer()
     test_invalidation_trend_hold()
     test_entry_adx_override()
+    test_entry_pricing()
     print()
     if _fails:
         print(f"❌ {len(_fails)} FAILED: {_fails}")

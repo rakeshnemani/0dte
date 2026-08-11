@@ -84,11 +84,14 @@ def _make_bot():
     import bot as bot_mod
     b = bot_mod.TradingBot.__new__(bot_mod.TradingBot)   # skip __init__/IBKR
     b.active_trades = {}
+    b.signal_cooldowns = {}       # cooldown/count now set on FILL (08-07)
+    b.daily_trade_count = 0
     return b
 
 
 def _trade(ibkr_trade, age_s, qty=21):
     return {
+        'strategy': 'trend', 'symbol': 'XSP',
         'direction': 'PUT', 'status': 'PENDING_ENTRY', 'qty': qty,
         'target_entry_price': 0.14,
         'submitted_at': market_time.now_et() - datetime.timedelta(seconds=age_s),
@@ -121,6 +124,9 @@ def test_expired_unfilled():
     check("1h42m old: cancel sent", b.broker.cancel_calls == 1)
     check("1h42m old: dropped from tracking (no position opened)",
           'XSP' not in b.active_trades)
+    check("timed-out entry: NO cooldown set (fix #2 — signal free to re-fire)",
+          b.signal_cooldowns == {})
+    check("timed-out entry: NO daily-count burned", b.daily_trade_count == 0)
 
 
 def test_expired_partial_fill_is_rescued():
@@ -142,6 +148,8 @@ def test_expired_partial_fill_is_rescued():
     check("partial fill: promoted to ACTIVE", tr['status'] == 'ACTIVE')
     check("partial fill: qty requantified 21 → 8 (the real slice)", tr['qty'] == 8)
     check("partial fill: entry price booked from the fill", tr['entry_price'] == 0.14)
+    check("FILL sets per-strategy cooldown ('trend','XSP','PUT')", ('trend', 'XSP', 'PUT') in b.signal_cooldowns)
+    check("FILL burns one daily slot", b.daily_trade_count == 1)
 
 
 def test_timeout_disabled():

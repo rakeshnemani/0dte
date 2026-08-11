@@ -340,6 +340,72 @@ class IBKRBroker:
             logger.error(f"Failed to fetch intraday data for {symbol}: {e}")
             return pd.DataFrame()
 
+    def fetch_gex_chain(self, symbol: str, strike_pct: float = 0.05,
+                        n_expiries: int = 3, max_strikes: int = 60):
+        """Open interest + IV per (strike, expiry) near spot, for the GEX calc. Returns
+        (spot, chain) where chain = [{strike, oi_call, oi_put, iv, T}, ...] (one entry per
+        strike×expiry, each with its own time-to-expiry). Batched to respect data-line
+        limits. OI is once-daily → the caller caches this and recomputes Gflip intraday
+        from the cached chain as spot moves. Index (SPX/XSP) only."""
+        spec = INDEX_SPECS.get(symbol)
+        if not spec:
+            return 0.0, []
+        try:
+            und = self.underlying_contract(symbol)
+            self.ib.qualifyContracts(und)
+            spot = self._ticker_mid(self._request_snapshot(und))
+            if spot <= 0:
+                return 0.0, []
+            chains = self.ib.reqSecDefOptParams(symbol, '', 'IND', und.conId)
+            root = spec['option_root']
+            cs = [c for c in chains if c.tradingClass == root] or chains
+            if not cs:
+                return spot, []
+            exps = sorted(e for e in cs[0].expirations)[:n_expiries]
+            lo, hi = spot * (1 - strike_pct), spot * (1 + strike_pct)
+            strikes = sorted([s for s in cs[0].strikes if lo <= s <= hi],
+                             key=lambda s: abs(s - spot))[:max_strikes]
+            exch = spec['option_exchange']
+            contracts = [Option(root, e, k, r, exch, tradingClass=root, multiplier='100', currency='USD')
+                         for e in exps for k in strikes for r in ('C', 'P')]
+            qualified = []
+            for i in range(0, len(contracts), 50):
+                qualified += self.ib.qualifyContracts(*contracts[i:i + 50])
+
+            agg = {}     # (strike, expiry) -> {oi_call, oi_put, iv}
+            for i in range(0, len(qualified), 50):
+                batch = qualified[i:i + 50]
+                tickers = [self.ib.reqMktData(c, '100,101', False, False) for c in batch]
+                self.ib.sleep(8)                      # let OI (static) + greeks populate
+                for c, t in zip(batch, tickers):
+                    key = (float(c.strike), c.lastTradeDateOrContractMonth)
+                    d = agg.setdefault(key, {'oi_call': 0.0, 'oi_put': 0.0, 'iv': None})
+                    oi = t.callOpenInterest if c.right == 'C' else t.putOpenInterest
+                    if oi is not None and oi == oi:    # not NaN
+                        d['oi_call' if c.right == 'C' else 'oi_put'] = float(oi)
+                    g = t.modelGreeks
+                    iv = getattr(g, 'impliedVol', None) if g else None
+                    if d['iv'] is None and iv and iv == iv and iv > 0:
+                        d['iv'] = float(iv)
+                    self.ib.cancelMktData(c)
+
+            now = market_time.now_et()
+            chain = []
+            for (strike, expiry), d in agg.items():
+                if d['oi_call'] == 0 and d['oi_put'] == 0:
+                    continue
+                exp_dt = market_time.TZ.localize(
+                    datetime.datetime.strptime(expiry, '%Y%m%d').replace(hour=16))
+                T = max((exp_dt - now).total_seconds(), 60) / (365.25 * 24 * 3600)
+                chain.append({'strike': strike, 'oi_call': d['oi_call'], 'oi_put': d['oi_put'],
+                              'iv': d['iv'] or 0.15, 'T': T})
+            logger.info(f"[{symbol}] GEX chain: {len(chain)} strike-expiries, spot {spot:.2f}, "
+                        f"{len(exps)} expiries, ±{strike_pct:.0%}")
+            return spot, chain
+        except Exception as e:
+            logger.error(f"[{symbol}] fetch_gex_chain failed: {e}")
+            return 0.0, []
+
     def _get_option_mid(self, contract: Option) -> float:
         """Fetch the mid-price (bid/ask midpoint) for a single option leg."""
         try:
@@ -348,6 +414,50 @@ class IBKRBroker:
         except Exception as e:
             logger.error(f"Error fetching option mid price: {e}")
             return 0.0
+
+    def _get_option_quote(self, contract: Option):
+        """(bid, mid, ask) for one option leg from a single snapshot. bid/ask are 0
+        when unquoted; mid falls back through last/close (via _ticker_mid)."""
+        def valid(v):
+            return v is not None and v == v and v > 0
+        try:
+            ticker = self._request_snapshot(contract)
+            bid = float(ticker.bid) if valid(ticker.bid) else 0.0
+            ask = float(ticker.ask) if valid(ticker.ask) else 0.0
+            return bid, self._ticker_mid(ticker), ask
+        except Exception as e:
+            logger.error(f"Error fetching option quote: {e}")
+            return 0.0, 0.0, 0.0
+
+    def option_tick(self, symbol: str) -> float:
+        """Min price increment for a limit on this symbol's options (index=$0.05)."""
+        return 0.05 if symbol in INDEX_SPECS else 0.01
+
+    def get_spread_quote(self, symbol: str, direction: str,
+                         long_strike: float, short_strike: float):
+        """Net-debit (bid, mid, ask) for the long/short vertical, from ONE snapshot
+        of each leg. ask = marketable BUY (pay the long's ask, sell the short's bid);
+        bid = the reverse. Collapses to mid-only if a leg lacks a two-sided quote —
+        so the caller safely falls back to the old mid behavior. (0,0,0) on failure."""
+        try:
+            long_c = self.get_option_contract(symbol, direction, long_strike)
+            short_c = self.get_option_contract(symbol, direction, short_strike)
+            lb, lm, la = self._get_option_quote(long_c)
+            sb, sm, sa = self._get_option_quote(short_c)
+            if lm <= 0 or sm <= 0:
+                logger.warning(f"Could not price {symbol} {direction} {long_strike}/{short_strike}: "
+                               f"long_mid={lm} short_mid={sm}")
+                return 0.0, 0.0, 0.0
+            mid = max(lm - sm, 0.01)
+            if la > 0 and sa > 0:                     # both legs tradeable → real ask/bid
+                ask = max(la - sb, 0.01)              # buy long @ ask, sell short @ bid
+                bid = max(lb - sa, 0.01)              # sell long @ bid, buy short @ ask
+            else:
+                ask = bid = mid
+            return bid, mid, ask
+        except Exception as e:
+            logger.error(f"Error fetching spread quote for {symbol}: {e}")
+            return 0.0, 0.0, 0.0
 
     def get_spread_value(self, symbol: str, direction: str, long_strike: float, short_strike: float) -> float:
         """Fetch the current market value of the debit spread from IBKR."""

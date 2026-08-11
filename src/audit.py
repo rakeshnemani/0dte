@@ -4,6 +4,7 @@ import logging
 import os
 from typing import Optional
 
+import config
 import market_time
 
 logger = logging.getLogger(__name__)
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 AUDIT_FILE = "audit.csv"
 
 _COLUMNS = [
-    "Timestamp", "Action", "Symbol", "Direction", "Price", "Underlying_Price",
+    "Timestamp", "Strategy", "Action", "Symbol", "Direction", "Price", "Underlying_Price",
     "ADX", "VWAP", "ORB_High", "ORB_Low", "Breadth", "Reason",
     "Profit_Pct", "Dollar_PnL", "ADX_Slope", "Peak_Pct", "Conviction", "Commission",
     "PermId",
@@ -25,7 +26,7 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
            dollar_pnl: Optional[float] = None, breadth: Optional[str] = None,
            adx_slope: Optional[float] = None, peak_pct: Optional[float] = None,
            conviction: Optional[str] = None, commission: Optional[float] = None,
-           perm_id: Optional[int] = None):
+           perm_id: Optional[int] = None, strategy: Optional[str] = None):
     file_exists = os.path.isfile(AUDIT_FILE)
     try:
         with open(AUDIT_FILE, mode='a', newline='') as file:
@@ -35,6 +36,9 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
             writer.writerow([
                 # Logged in ET — the timezone the strategy runs in
                 market_time.now_et().strftime("%Y-%m-%d %H:%M:%S"),
+                # Which strategy generated this trade (breakout / trend / gex) — defaults
+                # to the live STRATEGY so GEX trades are distinguishable from trend ones.
+                strategy or config.STRATEGY,
                 action, symbol, direction, price,
                 f"{underlying_price:.2f}" if underlying_price else "",
                 f"{adx:.2f}" if adx else "",
