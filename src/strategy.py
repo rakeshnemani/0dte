@@ -523,7 +523,11 @@ def trend_entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime
 
         kc = float(kaufman_chop(df, config.TREND_KAUF_N)[-1])   # kaufman-chop gate
         if not (kc <= config.TREND_KAUF_MAX):
-            return None, "", {}, lean
+            # A real setup formed (Supertrend flip + PSAR agree) but the chop gate blocked
+            # it — return the reason (direction still None) so the bot can alert on it.
+            blk = 'CALL' if cur == 1 else 'PUT'
+            return None, (f"{blk} flip formed (Supertrend flip + PSAR agree) but SKIPPED: "
+                          f"kauf {kc:.0f} > {config.TREND_KAUF_MAX:g} — choppy reversal, not a clean trend"), {}, lean
 
         direction = 'CALL' if cur == 1 else 'PUT'
         price = float(df['close'].iloc[-1])
@@ -632,6 +636,8 @@ def gex_entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime,
         tol = spot * config.GEX_WALL_TOL_PCT
         neg_gamma = gflip is not None and spot < gflip
 
+        gfs = f"{gflip:.0f}" if gflip else "n/a"
+        blocked = None
         for direction in ('CALL', 'PUT'):
             if direction == 'CALL':
                 level = max(x for x in (or_high, prev_high) if x is not None)
@@ -641,10 +647,17 @@ def gex_entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime,
                 broke, up = spot < level, False
             if not broke:
                 continue
+            # A structural breakout formed — record WHY it's blocked (regime / momentum) so
+            # the bot can alert on it, for process transparency.
             wall_ok, wall_lvl = _wall_breakout(direction, df, zones, tol)
             if not (neg_gamma or wall_ok):                       # condition 1
+                blocked = (f"{direction}: broke the {config.GEX_OR_MINUTES}-min OR "
+                           f"({'>' if up else '<'} {level:.0f}) but SKIPPED — positive-gamma "
+                           f"(spot {spot:.0f} vs Gflip {gfs}): dealers dampen, breakouts fade")
                 continue
             if not _accelerating(closes, config.GEX_MOMENTUM_BARS, up):   # condition 3
+                blocked = (f"{direction}: OR breakout in negative-gamma but SKIPPED — "
+                           f"no momentum ({config.GEX_MOMENTUM_BARS} accelerating bars required)")
                 continue
             regime = 'neg-γ (spot<Gflip)' if neg_gamma else f'wall-breakout @{wall_lvl:.0f}'
             reason = (f"GEX {direction}: {regime} | close {spot:.2f} "
@@ -654,7 +667,7 @@ def gex_entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime,
                    'gflip': gflip, 'regime': 'negative' if neg_gamma else 'wall-breakout',
                    'adx': None, 'vwap': None}
             return direction, reason, ind, direction
-        return None, "", {}, None
+        return None, blocked or "", {}, None
     except Exception as e:
         logger.error(f"[{symbol}] gex_entry_signal error: {e}")
         return None, "", {}, None

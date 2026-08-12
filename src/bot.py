@@ -66,6 +66,8 @@ class TradingBot:
         # occasionally and recompute Gflip intraday from it as spot moves.
         self._gex_chain: list = []
         self._gex_chain_at = None
+        # Throttle "signal formed but skipped" transparency alerts (per strategy:symbol).
+        self._blocked_alert_at: Dict[tuple, datetime.datetime] = {}
 
         # A restart wipes active_trades — adopt any open option positions the
         # account still holds so they are managed instead of orphaned.
@@ -366,10 +368,15 @@ class TradingBot:
             if ive < config.TREND_SKIP_LOWIV:
                 logger.info(f"[{symbol}] Low-vol skip: entry-time vol {ive:.3f} < "
                             f"{config.TREND_SKIP_LOWIV} — quiet day, a naked long would just bleed theta.")
+                self._alert_blocked('trend', symbol,
+                                    f"{direction} flip formed but SKIPPED: entry-vol {ive:.3f} < "
+                                    f"{config.TREND_SKIP_LOWIV} — slow tape, theta would eat a naked long")
                 return None, "", {}
             indicators['iv_entry'] = round(ive, 3)
         if direction:
             logger.info(f"[{symbol}] TREND SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
+        elif reason:                          # a flip formed but the kauf gate blocked it
+            self._alert_blocked('trend', symbol, reason)
         return direction, reason, indicators
 
     # ── GEX strategy (STRATEGY=='gex') ───────────────────────────────────────
@@ -421,6 +428,18 @@ class TradingBot:
         the same symbol at once (e.g. 'trend:SPX' and 'gex:SPX')."""
         return f"{strategy}:{symbol}"
 
+    def _alert_blocked(self, strategy: str, symbol: str, reason: str):
+        """Discord alert when a setup FORMED but no trade was placed (a filter blocked it) —
+        for process transparency. Throttled to once per 10 min per (strategy, symbol)."""
+        now = market_time.now_et()
+        key = (strategy, symbol)
+        last = self._blocked_alert_at.get(key)
+        if last and (now - last).total_seconds() < 600:
+            return
+        self._blocked_alert_at[key] = now
+        logger.info(f"[{symbol}] {strategy} setup formed but skipped → {reason}")
+        notifier.notify_signal_blocked(strategy, symbol, reason)
+
     def _scan_gex_entries(self):
         """GEX entry scan: only inside a GEX_WINDOWS slot. Refresh the chain, recompute
         Gflip + walls at the current spot, run the 3-condition signal."""
@@ -461,10 +480,15 @@ class TradingBot:
             if ive < config.GEX_SKIP_LOWIV:
                 logger.info(f"[{symbol}] GEX low-vol skip: entry-time vol {ive:.3f} < "
                             f"{config.GEX_SKIP_LOWIV} — slow tape, theta would eat the naked leg.")
+                self._alert_blocked('gex', symbol,
+                                    f"{direction}: full GEX setup formed but SKIPPED — entry-vol {ive:.3f} < "
+                                    f"{config.GEX_SKIP_LOWIV} (slow tape, theta would eat the naked leg)")
                 return None, "", {}
             indicators['iv_entry'] = round(ive, 3)
         if direction:
             logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
+        elif reason:                          # an OR breakout formed but regime/momentum blocked it
+            self._alert_blocked('gex', symbol, reason)
         return direction, reason, indicators
 
     def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):
