@@ -29,7 +29,14 @@ Fixed: TRADES-first (works for indices), MIDPOINT fallback, + a warn-log on empt
 test effectively STARTS on the next restart. Also 2026-08-11: bot now **saves the live GEX chain** every
 refresh → `data/gex/chain_YYYY-MM-DD.csv` (ts, spot, gflip, strike, oi_call, oi_put, iv, T) — accumulating
 our OWN historical GEX dataset (buying it is costly); + 5-min live Gflip/regime logging for diagnosis.
-⚠️ startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
+**🐛 2026-08-13:** the FIRST real single-leg signal (GEX 7800C @ 10:01) fired and exposed **3 execution
+bugs that blocked it** — index-option tick ($0.10 at premium ≥ $3, else IBKR error 110) + two single-leg
+notify crashes (None-format on `adx/vwap/orb`, missing `short_strike`). All fixed + tested
+(`test_single_leg_execution`); (A)+(B) would have blocked **every** single-leg order. Also added a
+**data-feed drop/restore Discord alert** (`broker._check_data_farm` → `notify_data_farm`, on-change/deduped)
+after 08-12's self-healed ~18-min farm blackout, + a pandas-2.x chained-assignment cleanup in
+`fetch_intraday_data`. **Forward test still has 0 clean single-leg fills — next signal (post-restart) is the
+real first.** ⚠️ startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
 
 **(2026-08-08): PIVOTED from breakout → a TREND strategy.** The breakout
 premise never cleared fees (five weeks, ~−$1.8k paper; exhaustive testing — filters on/off,
@@ -173,6 +180,17 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
 - **#31 (07-10):** 5/5-conviction bear traps (2×) — entries were path-blind (couldn't tell
   fresh breakdown from recovery hovering under the level) → `path_confirms()`: level must
   be crossed within 10 bars AND last-3-closes net-move must agree with the signal.
+- **#SL-EXEC (2026-08-13, blocked the FIRST real single-leg trade):** the maiden GEX signal
+  (BUY SPXW 7800C @ 10:01) never executed — THREE single-leg-path bugs: (A) `option_tick`
+  returned $0.05 for SPX at all prices, but SPX options tick **$0.10 at premium ≥ $3** → limit
+  11.65 bounced with **IBKR error 110**; (B) `notify_submit` crashed formatting the single-leg
+  indicator dict (`adx/vwap/orb` are explicit `None` → `f"{None:.2f}"`, since `.get(k, 0)`
+  returns `None` when the key is present-but-None); (C) `notify_filled` dereferenced
+  `trade['short_strike']`, absent on single legs (KeyError, latent — the order never filled).
+  **(A)+(B) would have blocked EVERY single-leg order (trend AND gex), not just this one.**
+  Fixed: price-aware `option_tick(symbol, price)` + tick-snapped limit, `(x or 0)` coercion +
+  single-leg-aware notify templates. Tested (`test_single_leg_execution`). Lesson: **index
+  options tick $0.10 at premium ≥ $3 — always snap limits to the price-aware tick.**
 
 ## How we work (conventions the user expects)
 

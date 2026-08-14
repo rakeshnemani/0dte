@@ -46,9 +46,16 @@ class IBKRBroker:
         2158,  # Sec-def data farm connection OK
         2119,  # Market data farm is connecting
     }
+    # Data-farm connectivity transitions (alerted on-change, not on every heartbeat)
+    _FARM_DOWN_CODES = {2103: 'market-data', 2105: 'historical-data'}
+    _FARM_UP_CODES = {2104: 'market-data', 2106: 'historical-data'}
 
     def __init__(self):
         self.ib = IB()
+        # Data-farm connectivity state → on-change alerts (a dropped feed blinds the
+        # bot: no bars → no entries). bot wires on_farm_change to notify_data_farm.
+        self._farm_down: set = set()
+        self.on_farm_change = None
         # Breadth data cache — TICK and VOLD are market-wide, shared across all
         # symbols. Cache for 60 seconds to avoid redundant IBKR requests per loop.
         self._breadth_cache_time: Optional[datetime.datetime] = None
@@ -81,10 +88,35 @@ class IBKRBroker:
 
     def _on_ibkr_error(self, reqId: int, errorCode: int, errorString: str, contract):
         """Route IBKR error events: suppress expected codes, log real problems."""
+        self._check_data_farm(errorCode, errorString)
         if errorCode in self._IBKR_INFO_CODES:
             logger.debug(f"IBKR [{errorCode}] reqId={reqId}: {errorString}")
         else:
             logger.warning(f"IBKR error [{errorCode}] reqId={reqId}: {errorString}")
+
+    def _check_data_farm(self, errorCode: int, errorString: str):
+        """Fire an on-change alert when a data farm drops (2103/2105) or recovers
+        (2104/2106). Transition-based + deduped via _farm_down, so the periodic
+        'connection is OK' heartbeats don't spam. A dropped feed blinds the bot
+        (no bars → no entries) until it reconnects — 2026-08-12 it was blind ~18 min."""
+        def _emit(state, farm):
+            if self.on_farm_change:
+                try:
+                    self.on_farm_change(state, farm, errorString)
+                except Exception as e:
+                    logger.warning(f"Data-farm alert failed: {e}")
+        if errorCode in self._FARM_DOWN_CODES:
+            farm = self._FARM_DOWN_CODES[errorCode]
+            if farm not in self._farm_down:
+                self._farm_down.add(farm)
+                logger.warning(f"Data farm DOWN: {farm} — bot is data-blind until it recovers.")
+                _emit('down', farm)
+        elif errorCode in self._FARM_UP_CODES:
+            farm = self._FARM_UP_CODES[errorCode]
+            if farm in self._farm_down:
+                self._farm_down.discard(farm)
+                logger.info(f"Data farm RESTORED: {farm} — evaluation resumes.")
+                _emit('up', farm)
 
     def ensure_connected(self):
         if not self.ib.isConnected():
@@ -302,27 +334,29 @@ class IBKRBroker:
                 logger.warning(f"[{symbol}] Intraday fetch returned no bars (TRADES + MIDPOINT).")
                 return pd.DataFrame()
 
-            # .copy() avoids pandas chained-assignment FutureWarnings on the
-            # column writes below
-            df = util.df(bars).copy()
-            df['date'] = pd.to_datetime(df['date'])
-            if df['date'].dt.tz is None:
-                df['date'] = df['date'].dt.tz_localize('America/New_York')
-            else:
-                df['date'] = df['date'].dt.tz_convert('America/New_York')
-            df = df.set_index('date')
+            # Build the datetime index WITHOUT chained-column writes: pandas 2.x
+            # flags `df['col'] = …` after a boolean slice (a view) with a
+            # ChainedAssignmentError FutureWarning. .assign returns a fresh frame
+            # and we .copy() after the slice so the volume write lands on an owned
+            # frame. (A bare .copy() at the top does NOT suffice — the flagged
+            # write is post-slice. Verified warning-free 2026-08-14.)
+            df = util.df(bars)
+            dates = pd.to_datetime(df['date'])
+            dates = (dates.dt.tz_localize('America/New_York') if dates.dt.tz is None
+                     else dates.dt.tz_convert('America/New_York'))
+            df = df.assign(date=dates).set_index('date')
 
             # Keep only today's RTH bars (IBKR durationStr='1 D' can include
             # yesterday's bars; delayed data also backfills with NaN rows)
             now = market_time.now_et()
-            df = df[df.index >= market_time.market_open_today()]
+            df = df[df.index >= market_time.market_open_today()].copy()
 
             # Drop rows where key price fields are NaN (delayed feed backfill artefacts)
             df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
             # SPX MIDPOINT bars have no volume; set dummy volume=1 so VWAP math works
             if 'volume' not in df.columns or (df['volume'] == 0).all():
-                df['volume'] = 1
+                df = df.assign(volume=1)
 
             # Stale-feed detector: on 2026-07-01 an entry was evaluated on
             # indicator values identical to ~2h-old data. Flag it if it recurs.
@@ -428,9 +462,17 @@ class IBKRBroker:
             logger.error(f"Error fetching option quote: {e}")
             return 0.0, 0.0, 0.0
 
-    def option_tick(self, symbol: str) -> float:
-        """Min price increment for a limit on this symbol's options (index=$0.05)."""
-        return 0.05 if symbol in INDEX_SPECS else 0.01
+    def option_tick(self, symbol: str, price: float = None) -> float:
+        """Min price increment for a limit on this symbol's options.
+
+        SPX/XSP index options tick $0.05 for premium < $3.00 and $0.10 at/above
+        (CBOE variable increment). A $0.05-aligned price ≥ $3 is REJECTED by IBKR
+        with error 110 (this cost us the 2026-08-13 GEX trade — limit 11.65 bounced).
+        A $0.10-aligned price is valid at ANY premium, so default to $0.10 when the
+        price is unknown. Equities/ETFs tick $0.01."""
+        if symbol in INDEX_SPECS:
+            return 0.05 if (price is not None and price < 3.0) else 0.10
+        return 0.01
 
     def get_spread_quote(self, symbol: str, direction: str,
                          long_strike: float, short_strike: float):

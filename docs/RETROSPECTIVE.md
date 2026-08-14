@@ -149,6 +149,44 @@ regime's sample.
 
 ---
 
+## 2026-08-13 (Thu) — 🐛 the FIRST real single-leg signal fired — and 3 bugs blocked it (all fixed)
+
+**Chop day, 0 trades booked — but for the first time that wasn't the filters, it was a bug.**
+At **10:01** the maiden GEX signal of the whole forward test fired: `GEX CALL: wall-breakout
+@7800` (close 7802 > OR 7787, 2-bar accel, entry-vol 0.082). It tried to buy 1× SPXW 7800C at
+limit 11.65 and **failed to execute** — three independent defects on the single-leg path:
+
+- **(A) IBKR error 110 — the fatal one.** `option_tick` returned $0.05 for SPX at all prices,
+  but SPX options tick **$0.10 at premium ≥ $3**; 11.65 isn't a valid $0.10 increment → rejected.
+- **(B)** `notify_submit` crashed (`NoneType.__format__`) — single-leg indicators carry
+  `adx/vwap/orb = None`, and `.get('adx', 0)` returns `None` (not 0) when the key is present.
+- **(C)** `notify_filled` dereferenced `trade['short_strike']` — a KeyError single-leg would hit
+  on fill (latent today; the order never filled).
+
+**(A)+(B) would have blocked every single-leg order (trend AND gex) — so across the entire
+forward test, no single-leg trade could ever have executed.** Fixed + unit-tested
+(`test_single_leg_execution`): price-aware `option_tick(symbol, price)` + tick-snapped limit,
+`(x or 0)` coercion + single-leg-aware notify templates.
+
+**What did the miss cost? Nothing — it dodged a loss.** BS-replay along today's real path with
+live GEX exits: entry 11.65 → **peaked 19.21 at 10:33 (+$756 unrealized)** → round-tripped as
+SPX mean-reverted to ~7791 → **50% stop ~11:18, net ≈ –$650**. Textbook chop-day round-trip: the
+no-TP design gave the spike back. The bug cost **$0** today (saved ~$650); it matters for the next
+**trending** day, where that same uncapped tail is the edge — *that's* the day the fix pays.
+
+**Also (08-12 context, not previously logged):** first day the bot actually *evaluated*
+post-MIDPOINT-fix — 69 regime reads, 19 correct skip-alerts, and a self-healed **~18-min data-farm
+blackout** (10:06–10:24, IBKR 2103/2105). Added a **data-feed drop/restore Discord alert**
+(on-change, deduped) so a future blackout pings instead of hiding in the console, + a pandas-2.x
+chained-assignment cleanup.
+
+**Where we stand:** the forward test still has **zero clean single-leg executions** — the next real
+signal (after restart) is the true first. Both filters keep correctly flagging chop (GEX
+positive-gamma all day, trend kauf > 50). Don't read the empty ledger as evidence about the
+*strategy* yet — the machinery is only now actually able to trade.
+
+---
+
 ## 2026-08-06 — 🔄 FRESH START: the "honest last try" — INITIAL breakout, follow, SPX-only
 
 **Decision (user):** one more month, clean slate, with the user analyzing trades hands-on this

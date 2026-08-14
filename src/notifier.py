@@ -40,18 +40,23 @@ def notify_submit(symbol: str, direction: str, long_strike: float, short_strike:
                   reason: str, order_id):
     breadth_line = indicators.get('breadth', '')
     conviction_line = indicators.get('conviction_str', '')
+    single = (long_strike == short_strike)   # single-leg passes strike twice
+    strikes_line = (f"**⚙️ Strike:** ${long_strike:.0f} (1× long {direction})\n" if single
+                    else f"**⚙️ Strikes:** Long ${long_strike:.0f} / Short ${short_strike:.0f}\n")
+    # (x or 0): single-leg indicators carry adx/vwap/orb as None (audit-column reuse);
+    # .get(k, 0) returns None when the key is PRESENT-but-None → f"{None:.2f}" crashes.
     desc = (
         f"**📊 Ticker:** {symbol}\n"
-        f"**🎯 Direction:** {direction} Spread\n"
-        f"**⚙️ Strikes:** Long ${long_strike:.0f} / Short ${short_strike:.0f}\n"
+        f"**🎯 Direction:** {direction} ({'Single-leg' if single else 'Spread'})\n"
+        + strikes_line +
         f"**💰 Limit Price:** ${spread_cost:.2f} per contract\n"
         f"**📈 Quantity:** {qty} contracts\n"
         f"**💸 Max Investment:** ${spread_cost * qty * 100:.2f} (budget ${budget:.0f})\n"
         + (f"**🎚️ Conviction:** {conviction_line}\n" if conviction_line else "") +
         f"\n**📉 Indicators at Signal:**\n"
-        f"• ADX: {indicators.get('adx', 0):.2f}\n"
-        f"• Price vs VWAP: ${indicators.get('current_price', 0):.2f} / ${indicators.get('vwap', 0):.2f}\n"
-        f"• ORB: High ${indicators.get('orb_high', 0):.2f} / Low ${indicators.get('orb_low', 0):.2f}\n"
+        f"• ADX: {(indicators.get('adx') or 0):.2f}\n"
+        f"• Price vs VWAP: ${(indicators.get('current_price') or 0):.2f} / ${(indicators.get('vwap') or 0):.2f}\n"
+        f"• ORB: High ${(indicators.get('orb_high') or 0):.2f} / Low ${(indicators.get('orb_low') or 0):.2f}\n"
         + (f"• Breadth: {breadth_line}\n" if breadth_line else "") +
         f"\n**📝 Signal:** {reason}\n"
         f"**⏳ Status:** Pending fill (Order #{order_id})"
@@ -63,23 +68,40 @@ def notify_filled(symbol: str, trade: dict, filled_price: float):
     ind = trade['entry_indicators']
     breadth_entry = ind.get('breadth', '')
     conviction_entry = ind.get('conviction_str', '')
+    # single-leg trades carry no 'short_strike'/'tp_price' and None indicators
+    single = trade.get('structure') == 'SINGLE' or trade.get('short_strike') is None
+    strikes_line = (f"**⚙️ Strike:** ${trade['long_strike']:.2f} (1× long)\n" if single
+                    else f"**⚙️ Strikes:** Long ${trade['long_strike']:.2f} / Short ${trade['short_strike']:.2f}\n")
     desc = (
         f"**📊 Ticker:** {symbol}\n"
-        f"**🎯 Direction:** {trade['direction']} Spread\n"
-        f"**⚙️ Strikes:** Long ${trade['long_strike']:.2f} / Short ${trade['short_strike']:.2f}\n"
+        f"**🎯 Direction:** {trade['direction']} ({'Single-leg' if single else 'Spread'})\n"
+        + strikes_line +
         f"**💰 Entry Price:** ${filled_price:.2f} per contract\n"
         f"**📈 Quantity:** {trade['qty']} Contracts\n"
         f"**💸 Total Investment:** ${filled_price * trade['qty'] * 100:.2f}\n"
         + (f"**🎚️ Conviction:** {conviction_entry}\n" if conviction_entry else "")
         + (f"**🎯 Take-profit resting at:** ${trade['tp_price']:.2f}\n" if trade.get('tp_price') else "") +
         f"\n**📉 Indicators at Entry:**\n"
-        f"• ADX: {ind.get('adx', 0):.2f}\n"
-        f"• Price vs VWAP: ${ind.get('current_price', 0):.2f} / ${ind.get('vwap', 0):.2f}\n"
-        f"• ORB: High ${ind.get('orb_high', 0):.2f} / Low ${ind.get('orb_low', 0):.2f}\n"
+        f"• ADX: {(ind.get('adx') or 0):.2f}\n"
+        f"• Price vs VWAP: ${(ind.get('current_price') or 0):.2f} / ${(ind.get('vwap') or 0):.2f}\n"
+        f"• ORB: High ${(ind.get('orb_high') or 0):.2f} / Low ${(ind.get('orb_low') or 0):.2f}\n"
         + (f"• Breadth: {breadth_entry}\n" if breadth_entry else "") +
         f"\n**📝 Reason:** {trade.get('reason', 'N/A')}"
     )
-    send("🟢 NEW 0DTE SPREAD ENTRY", desc, GREEN)
+    send("🟢 NEW 0DTE ENTRY", desc, GREEN)
+
+
+def notify_data_farm(state: str, farm: str, msg: str = ''):
+    """Alert when an IBKR data farm drops or recovers. A dropped feed blinds the
+    bot (no bars → no entries) until it reconnects — on-change only (see
+    broker._check_data_farm), so heartbeats don't spam."""
+    if state == 'down':
+        send("🔌 DATA FEED DOWN — bot is data-blind",
+             f"IBKR **{farm}** farm connection dropped. The bot can't fetch bars or "
+             f"evaluate entries until it reconnects.\n\n`{msg}`", RED)
+    else:
+        send("✅ DATA FEED RESTORED",
+             f"IBKR **{farm}** farm reconnected — evaluation resumes.\n\n`{msg}`", GREEN)
 
 
 def notify_condor_submit(symbol: str, short_call: float, wing_call: float,

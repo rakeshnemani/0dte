@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 class TradingBot:
     def __init__(self):
         self.broker = IBKRBroker()
+        self.broker.on_farm_change = notifier.notify_data_farm   # data-feed drop/restore → Discord
         self.broker.connect()
 
         # State management — one active trade per symbol
@@ -705,9 +706,13 @@ class TradingBot:
             if mid < config.MIN_SPREAD_COST:
                 logger.warning(f"[{symbol}] Option mid ${mid:.2f} below min ${config.MIN_SPREAD_COST:.2f}. Skipping.")
                 return
-            tick = self.broker.option_tick(symbol)
-            limit_price = mid + config.ENTRY_AGGRESSION * max(ask - mid, 0.0)
-            limit_price = max(round(round(limit_price / tick) * tick, 2), round(mid, 2))
+            raw_limit = mid + config.ENTRY_AGGRESSION * max(ask - mid, 0.0)
+            # Price-aware tick ($0.10 at premium ≥ $3, else $0.05). Snap BOTH the
+            # limit and the mid-floor to that grid — a $0.05 price ≥ $3 → IBKR
+            # error 110 (rejected). See broker.option_tick / the 2026-08-13 bug.
+            tick = self.broker.option_tick(symbol, raw_limit)
+            snap = lambda p: round(round(p / tick) * tick, 2)
+            limit_price = max(snap(raw_limit), snap(mid))
 
             ibkr_trade = self.broker.place_limit(opt, 'BUY', 1, limit_price)
             self.active_trades[self._tkey(strategy, symbol)] = {

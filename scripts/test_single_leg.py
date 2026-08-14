@@ -52,7 +52,7 @@ class FakeBroker:
     def get_option_contract(self, symbol, direction, strike): return FakeContract(12345)
     def _get_option_quote(self, opt): return self.q
     def _get_option_mid(self, opt): return self.mid_now
-    def option_tick(self, symbol): return 0.05
+    def option_tick(self, symbol, price=None): return 0.05
     def place_limit(self, contract, action, qty, price):
         self.placed.append((contract, action, qty, price)); return FakeIbkrTrade()
 
