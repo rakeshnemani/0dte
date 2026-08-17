@@ -51,6 +51,9 @@ def fresh_bot(pos):
             return NS(order=NS(orderId=77),
                       orderStatus=NS(status='Submitted', filled=0, avgFillPrice=0))
         def cancel_open_orders_for(self, r, except_order_id=None): return 0
+        def option_tick(self, s, price=None): return 0.05
+        def snap_to_tick(self, s, price):
+            t = self.option_tick(s, price); return round(round(price / t) * t, 2)
         def option_symbol(self, s): return s
         def sleep(self, n): pass
         def fetch_intraday_data(self, s): return pd.DataFrame()

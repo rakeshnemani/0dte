@@ -57,6 +57,14 @@ GEX_FLATTEN_TIME = os.getenv("GEX_FLATTEN_TIME", "15:55")             # flatten 
 # GEX is single-leg → NO take-profit by default (a TP caps the convex tail that IS the edge,
 # same lesson as trend). 0 = off; set >0 (e.g. 0.60) only to re-enable a hard TP.
 GEX_TAKE_PROFIT = float(os.getenv("GEX_TAKE_PROFIT", "0.0"))
+# GEX exit philosophy (2026-08-17): LET THE CONVEX TAIL RIDE. No invalidation cut and no
+# fixed max-loss stop — those cut the 08-17 winner at -4% before it ran to +100%. Exit only
+# via a trailing stop (arms once peaked at GEX_TRAIL_TRIGGER, exits on giving back
+# GEX_TRAIL_GIVEBACK OF the peak) + this WIDE catastrophe backstop so a trade that never
+# peaks can't ride to a full-premium loss. GEX-specific so it's independent of the debit trail.
+GEX_TRAIL_TRIGGER = float(os.getenv("GEX_TRAIL_TRIGGER", "0.50"))         # arm once peaked +50%
+GEX_TRAIL_GIVEBACK = float(os.getenv("GEX_TRAIL_GIVEBACK", "0.20"))       # exit at 80% of peak
+GEX_CATASTROPHE_STOP = float(os.getenv("GEX_CATASTROPHE_STOP", "0.80"))   # 0 = no stop at all
 # Structure: single-leg directional (2026-08-09 pivot — NO spreads anywhere). Buy one
 # ~50Δ leg: CALL on a bullish GEX signal, PUT on bearish. Single-leg = half the fee +
 # uncapped convex tail, which is exactly what a fast negative-gamma move pays for.

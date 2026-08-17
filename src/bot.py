@@ -493,29 +493,26 @@ class TradingBot:
         return direction, reason, indicators
 
     def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):
-        """GEX exits: hard stop · take-profit · failed-breakout invalidation (3 closes back
-        inside the 15-min opening range). EOD 3:50 flatten is handled by the main loop."""
-        if profit_pct <= -config.HARD_STOP_LOSS_PCT:
-            return True, f"Hard stop loss: lost {abs(profit_pct)*100:.1f}%"
+        """GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE): no invalidation cut, no fixed
+        max-loss stop. Exit only via (1) a trailing stop that ARMS once the trade peaks at
+        GEX_TRAIL_TRIGGER, then exits on giving back GEX_TRAIL_GIVEBACK of the peak, and
+        (2) a WIDE catastrophe backstop (GEX_CATASTROPHE_STOP) so a trade that never peaks
+        can't ride to a full-premium loss. EOD 3:55 flatten → main loop.
+        Rationale: the removed invalidation + 50% stop cut the 08-17 winner at -4% before it
+        ran to +100% (max_profit_pct is updated by the caller before this runs)."""
+        peak = trade.get('max_profit_pct', 0.0)
+        # Trailing stop — only protects gains AFTER the trade has actually run
+        if peak >= config.GEX_TRAIL_TRIGGER:
+            trail_exit = peak * (1 - config.GEX_TRAIL_GIVEBACK)
+            if profit_pct <= trail_exit:
+                return True, (f"Trailing stop: peaked +{peak*100:.0f}%, gave back to "
+                              f"{profit_pct*100:+.0f}% (trail +{trail_exit*100:.0f}%)")
+        # Catastrophe backstop — the only downside floor now (trail can't arm on a loser)
+        if config.GEX_CATASTROPHE_STOP > 0 and profit_pct <= -config.GEX_CATASTROPHE_STOP:
+            return True, f"Catastrophe stop: lost {abs(profit_pct)*100:.0f}%"
+        # Optional hard TP (disabled by default: GEX_TAKE_PROFIT=0 — the tail is the edge)
         if config.GEX_TAKE_PROFIT > 0 and profit_pct >= config.GEX_TAKE_PROFIT:
             return True, f"Take-profit +{config.GEX_TAKE_PROFIT*100:.0f}% hit"
-        ind = trade.get('entry_indicators', {})
-        or_high, or_low = ind.get('orb_high'), ind.get('orb_low')
-        if or_high is None or or_low is None:
-            return False, ""
-        inval = trade.get('_gex_inv_last', False)
-        checked = trade.get('_gex_inv_at')
-        if checked is None or (market_time.now_et() - checked).total_seconds() >= 50:
-            try:
-                df = self.broker.fetch_intraday_data(symbol)
-                inval = strategy.gex_invalidated(df, or_high, or_low, config.GEX_INVALIDATION_BARS)
-            except Exception as e:
-                logger.warning(f"[{symbol}] GEX invalidation check failed: {e}")
-            trade['_gex_inv_at'] = market_time.now_et()
-            trade['_gex_inv_last'] = inval
-        if inval:
-            return True, (f"Failed breakout: {config.GEX_INVALIDATION_BARS} closes reclaimed the "
-                          f"opening range ({or_low:.0f}-{or_high:.0f}) (P&L {profit_pct*100:+.1f}%)")
         return False, ""
 
     @staticmethod
@@ -707,12 +704,10 @@ class TradingBot:
                 logger.warning(f"[{symbol}] Option mid ${mid:.2f} below min ${config.MIN_SPREAD_COST:.2f}. Skipping.")
                 return
             raw_limit = mid + config.ENTRY_AGGRESSION * max(ask - mid, 0.0)
-            # Price-aware tick ($0.10 at premium ≥ $3, else $0.05). Snap BOTH the
-            # limit and the mid-floor to that grid — a $0.05 price ≥ $3 → IBKR
-            # error 110 (rejected). See broker.option_tick / the 2026-08-13 bug.
-            tick = self.broker.option_tick(symbol, raw_limit)
-            snap = lambda p: round(round(p / tick) * tick, 2)
-            limit_price = max(snap(raw_limit), snap(mid))
+            # Snap BOTH the limit and the mid-floor to the price-aware tick — a
+            # $0.05 price ≥ $3 → IBKR error 110 (rejected). See broker.snap_to_tick.
+            limit_price = max(self.broker.snap_to_tick(symbol, raw_limit),
+                              self.broker.snap_to_tick(symbol, mid))
 
             ibkr_trade = self.broker.place_limit(opt, 'BUY', 1, limit_price)
             self.active_trades[self._tkey(strategy, symbol)] = {
@@ -1340,19 +1335,23 @@ class TradingBot:
             close_action = 'BUY' if trade.get('structure') == 'CONDOR' else 'SELL'
             close_contract = (trade['option_contract'] if trade.get('structure') == 'SINGLE'
                               else trade['bag_contract'])
+            # Snap the close limit to the valid tick — a $0.05 price ≥ $3 is rejected
+            # by IBKR error 110, which blocked EVERY close on 2026-08-17 (the bot
+            # could not exit all day). See broker.snap_to_tick / #SL-EXEC.
+            close_limit = self.broker.snap_to_tick(symbol, current_spread_value)
             exit_ibkr_trade = self.broker.place_limit(
-                close_contract, close_action, trade['qty'], current_spread_value
+                close_contract, close_action, trade['qty'], close_limit
             )
             trade['status'] = 'PENDING_EXIT'
             trade['exit_ibkr_trade'] = exit_ibkr_trade
             trade['exit_reason'] = reason
-            trade['exit_limit'] = current_spread_value
+            trade['exit_limit'] = close_limit
             trade['exit_submitted_at'] = market_time.now_et()
             trade['close_attempts'] = attempts + 1
             trade['last_close_attempt_at'] = market_time.now_et()
             logger.info(
                 f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to IBKR at LIMIT "
-                f"${current_spread_value:.2f} (OrderId: {exit_ibkr_trade.order.orderId}, "
+                f"${close_limit:.2f} (OrderId: {exit_ibkr_trade.order.orderId}, "
                 f"attempt {attempts + 1}/{self._MAX_CLOSE_ATTEMPTS}). Awaiting fill confirmation."
             )
         except Exception as e:
@@ -1409,6 +1408,8 @@ class TradingBot:
                 waited = (market_time.now_et() - trade['exit_submitted_at']).total_seconds()
                 if waited >= self._EXIT_REPRICE_AFTER_S:
                     fresh = self._current_value(sym, trade)
+                    if fresh > 0:
+                        fresh = self.broker.snap_to_tick(sym, fresh)   # off-tick → IBKR error 110
                     if fresh > 0 and abs(fresh - trade['exit_limit']) >= 0.01:
                         logger.warning(
                             f"[{symbol}] Closing order unfilled for {waited:.0f}s — repricing "

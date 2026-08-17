@@ -43,6 +43,17 @@ def test_limit_snaps_to_valid_tick():
     print(f"✓ limit snaps to a valid $0.10 tick (raw {raw} → {limit}); no more error 110")
 
 
+def test_close_path_snaps_to_tick():
+    """The 2026-08-17 close prices IBKR rejected (error 110) must snap to a valid
+    $0.10 tick — the bug that blocked EVERY close and left the bot unable to exit."""
+    snap = IBKRBroker.snap_to_tick.__get__(object.__new__(IBKRBroker))
+    for raw in (8.25, 7.85, 7.55, 6.05, 7.25, 6.35):   # actual rejected close limits
+        s = snap('SPX', raw)
+        assert round(s * 100) % 10 == 0, f"close {raw} → {s} is not a valid $0.10 tick"
+    assert round(snap('SPX', 2.95) * 100) % 5 == 0, "sub-$3 must tick $0.05"
+    print("✓ snap_to_tick: 08-17 close prices now snap to a valid $0.10 tick (close unblocked)")
+
+
 def _single_leg_indicators():
     # exactly what strategy.py emits for single-leg trend/gex (adx/vwap/orb = None)
     return {'current_price': 7802.26, 'supertrend_dir': 1, 'psar_dir': 1, 'kauf': 12.0,
@@ -74,6 +85,7 @@ def test_notify_filled_no_crash_single_leg():
 if __name__ == '__main__':
     test_option_tick_price_aware()
     test_limit_snaps_to_valid_tick()
+    test_close_path_snaps_to_tick()
     test_notify_submit_no_crash_single_leg()
     test_notify_filled_no_crash_single_leg()
     print("\nAll single-leg execution regression tests passed ✓")

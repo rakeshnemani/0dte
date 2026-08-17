@@ -474,6 +474,13 @@ class IBKRBroker:
             return 0.05 if (price is not None and price < 3.0) else 0.10
         return 0.01
 
+    def snap_to_tick(self, symbol: str, price: float) -> float:
+        """Round a limit price to this symbol's valid (price-aware) option tick.
+        An off-tick index-option limit is rejected by IBKR error 110 — this must be
+        applied to EVERY option limit (entry AND close). See option_tick."""
+        tick = self.option_tick(symbol, price)
+        return round(round(price / tick) * tick, 2)
+
     def get_spread_quote(self, symbol: str, direction: str,
                          long_strike: float, short_strike: float):
         """Net-debit (bid, mid, ask) for the long/short vertical, from ONE snapshot

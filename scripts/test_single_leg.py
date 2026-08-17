@@ -53,6 +53,8 @@ class FakeBroker:
     def _get_option_quote(self, opt): return self.q
     def _get_option_mid(self, opt): return self.mid_now
     def option_tick(self, symbol, price=None): return 0.05
+    def snap_to_tick(self, symbol, price):
+        t = self.option_tick(symbol, price); return round(round(price / t) * t, 2)
     def place_limit(self, contract, action, qty, price):
         self.placed.append((contract, action, qty, price)); return FakeIbkrTrade()
 
@@ -97,9 +99,25 @@ def test_lowvol_gate():
     check("too-few bars → 0.0 (no crash)", strategy.entry_realized_vol(pd.DataFrame({'close': [1, 2]})) == 0.0)
 
 
+def test_gex_exit_rules():
+    print("\n_gex_exit_check — trailing + catastrophe ONLY (no invalidation, no 50% stop)")
+    b = _make_bot()
+    trig, give, cat = (config.GEX_TRAIL_TRIGGER, config.GEX_TRAIL_GIVEBACK,
+                       config.GEX_CATASTROPHE_STOP)
+    ex = lambda peak, pnl: b._gex_exit_check('SPX', {'max_profit_pct': peak}, pnl)
+    peak = trig + 0.5
+    check("moderate loss, never peaked → HOLD (fixed max-loss stop removed)",
+          ex(0.0, -(cat - 0.10))[0] is False)
+    check(f"loss past −{cat*100:.0f}% → catastrophe stop", ex(0.0, -(cat + 0.01))[0] is True)
+    check("peak below trail-trigger → HOLD (trail unarmed)", ex(trig - 0.01, 0.0)[0] is False)
+    check("trail armed, gave back past trail → EXIT", ex(peak, peak*(1 - give) - 0.01)[0] is True)
+    check("trail armed, still above trail → HOLD", ex(peak, peak*(1 - give) + 0.01)[0] is False)
+
+
 if __name__ == '__main__':
     test_single_leg_order()
     test_lowvol_gate()
+    test_gex_exit_rules()
     print()
     if _fails:
         print(f"❌ {len(_fails)} FAILED: {_fails}")

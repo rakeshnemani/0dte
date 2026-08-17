@@ -149,6 +149,39 @@ regime's sample.
 
 ---
 
+## 2026-08-17 (Mon) — 🟢 FIRST clean fill + a manual +$876.74 win — but the bot couldn't close (fixed)
+
+**The first single-leg trade actually executed end-to-end on the entry side, booked a profit — and
+exposed that the exit path was still broken.** First green in a while, with a big caveat.
+
+- ✅ **Entry worked:** GEX PUT signal 09:59 (neg-γ, close 7773 < OR 7774, 2-bar accel), filled 1× SPXW
+  7775P @ **$8.60**. The entry tick fix delivered our first clean single-leg fill.
+- 🐛 **Close path had the SAME tick bug** (the entry fix was incomplete): `close_position` passed the
+  price **raw**, so every SELL bounced with **error 110**, then **error 103** (duplicate-id on the
+  reprice-modify). 4 attempts → give-up → "close manually" Discord alert. **The bot could not exit all
+  day** — not the invalidation (−4%), not the −50% stop, not the 3:55 flatten.
+- 🖐️ **You closed manually @ 17.40 = +$876.74** (booked to `audit.csv`, reconciled by permId) — and
+  cleared the assigned-stock residue too (+$3,337 QQQ, +$252 SPY). Account's finally clean.
+
+**The honest part — the profit was luck, not the system.** The bot's intended exit was a **loss at every
+trigger**: invalidation wanted out at **−4%**, and it drifted to the **−53% hard stop** by 12:18. Only an
+afternoon reversal (SPX → ~7758) turned the PUT into a +100% winner you captured by hand. A 0DTE long
+that can't be closed can go to zero — we dodged a bullet.
+
+**Fixes shipped:** `broker.snap_to_tick(symbol, price)` now applied to EVERY option limit (entry + close +
+reprice); fixing 110 also kills the 103 cascade. The new **data-farm alert fired correctly** on two
+blackouts today (11:19, 14:25 — both self-healed). All 8 suites green.
+
+**Strategy change (user call) — GEX now LETS THE TAIL RIDE.** Removed the invalidation cut and the fixed
+50% max-loss stop (they'd have guillotined today's winner at −4%). GEX exits are now: **trailing stop**
+(arm at +50% peak, exit on giving back **20% of peak** → e.g. peak +100% exits +80%) · **wide −80%
+catastrophe backstop** (a straight-down trade can't ride to a full-premium loss) · **3:55 flatten**.
+Rationale: don't cut convex winners early. **Risk, stated plainly:** a trade that never peaks has no
+protection until −80% (~−$690/contract). GEX has **no backtest** (learning: we never had GEX data) — so
+this is a forward-test judgment, watch it. Trend keeps its own 50%-stop/reversal/EOD exits.
+
+---
+
 ## 2026-08-13 (Thu) — 🐛 the FIRST real single-leg signal fired — and 3 bugs blocked it (all fixed)
 
 **Chop day, 0 trades booked — but for the first time that wasn't the filters, it was a bug.**

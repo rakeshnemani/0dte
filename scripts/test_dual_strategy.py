@@ -53,6 +53,8 @@ class FakeBroker:
     def _get_option_quote(self, opt): return (9.0, 9.5, 10.0)
     def _get_option_mid(self, opt): return 9.5
     def option_tick(self, symbol, price=None): return 0.05
+    def snap_to_tick(self, symbol, price):
+        t = self.option_tick(symbol, price); return round(round(price / t) * t, 2)
     def option_symbol(self, symbol): return 'SPXW'
     def place_limit(self, *a, **k): return FakeIbkrTrade()
     def positions(self): return self.positions_list

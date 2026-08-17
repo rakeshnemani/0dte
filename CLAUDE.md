@@ -20,8 +20,11 @@ forward-test-only (no historical GEX data) — Gflip + OI walls computed LIVE fr
 tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`, `test_gex`,
 `test_gex_strategy`, `test_single_leg` (+ existing), all green. GEX code: `src/gex.py`,
 `broker.fetch_gex_chain`, `strategy.gex_entry_signal`/`gex_invalidated`, `bot._scan_gex_entries`/
-`evaluate_gex_entry`/`_gex_exit_check`. GEX exits = 50% stop · OR-reclaim invalidation · 3:55 flatten,
-**NO take-profit** (`GEX_TAKE_PROFIT=0`, 2026-08-10 — a TP caps the convex single-leg tail, same as trend).
+`evaluate_gex_entry`/`_gex_exit_check`. **GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE):**
+trailing stop only (arm +50% peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) ·
+WIDE catastrophe backstop −80% (`GEX_CATASTROPHE_STOP`) · 3:55 flatten. **NO invalidation cut, NO fixed
+max-loss stop, NO take-profit** — they cut the 08-17 winner at −4% before it ran to +100% (user call;
+GEX has no backtest). Trend keeps its own 50%-stop/reversal/EOD exits.
 **🐛 CRITICAL BUG FOUND+FIXED 2026-08-11:** `broker.fetch_intraday_data` requested MIDPOINT for indices →
 **SPX MIDPOINT returns 0 bars** (an index has no bid/ask) → trend/gex bailed at the empty-bar check
 EVERY scan → **the bot never evaluated a single entry** (the ~zero trades were this, NOT the filters).
@@ -191,6 +194,16 @@ circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/da
   Fixed: price-aware `option_tick(symbol, price)` + tick-snapped limit, `(x or 0)` coercion +
   single-leg-aware notify templates. Tested (`test_single_leg_execution`). Lesson: **index
   options tick $0.10 at premium ≥ $3 — always snap limits to the price-aware tick.**
+- **#SL-CLOSE (2026-08-17, the SAME tick bug on the CLOSE path):** the entry fix was incomplete —
+  `close_position` passed `current_spread_value` (and the reprice passed `fresh`) **raw**, so the FIRST
+  real single-leg fill (BUY SPXW 7775P @ 8.60, our first clean fill ✓) **could not be closed all day**:
+  every SELL bounced with error 110, then error 103 (duplicate-id on the modify-a-rejected-order). 4
+  attempts → give-up → "close manually" alert; the bot was helpless to honor invalidation, the −50% stop,
+  OR the 3:55 flatten. User closed manually at 17.40 (**+$876.74**, reconciled into `audit.csv` by permId).
+  **A 0DTE long that can't be closed can go to zero — we were saved by an afternoon reversal, not the
+  system.** Fixed: `broker.snap_to_tick(symbol, price)` applied to EVERY option limit (entry + close +
+  reprice); fixing 110 also removes the 103 cascade. Tested (`test_single_leg_execution`). Lesson:
+  **snap the tick on the CLOSE path too — an un-closeable position is a risk bug, not a cosmetic one.**
 
 ## How we work (conventions the user expects)
 
