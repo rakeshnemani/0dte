@@ -25,11 +25,6 @@ def is_market_open() -> bool:
     return market_open <= now <= market_close
 
 
-def is_entry_window() -> bool:
-    """No new entries after 3:00 PM ET."""
-    return now_et().hour < 15
-
-
 def in_windows(windows: str) -> bool:
     """True if now (ET) is inside one of the comma-separated HH:MM-HH:MM windows."""
     now = now_et()

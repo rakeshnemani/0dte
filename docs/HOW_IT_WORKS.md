@@ -2,7 +2,12 @@
 
 This document explains the full lifecycle of the bot — from startup and market-hours management through entry scanning, order execution, position monitoring, and exit rules.
 
-> Looking for the entry/exit/P&L rules organized **by trade structure** (CALL/PUT debit spread vs. iron condor, and why there's no standalone credit spread)? See [PLAYBOOKS.md](PLAYBOOKS.md). This document is the chronological lifecycle; that one is the structure-by-structure reference.
+> **⚠️ 2026-08-17:** the bot is now **single-leg only** (buy one ATM CALL/PUT for the trend or gex
+> strategy). The **breakout, iron-condor, spread/bag, conviction, breadth, and VWAP-invalidation**
+> machinery described in older parts of this doc was **DELETED** — treat those sections as history.
+> For the current entry/exit rules see [PLAYBOOKS.md](PLAYBOOKS.md) and the "Strategy in one screen"
+> section of [CLAUDE.md](../CLAUDE.md). The startup / order-execution / reconciliation / guard
+> lifecycle below is still accurate in shape.
 
 ---
 

@@ -4,12 +4,16 @@ Orientation for working on this repo. Read the linked docs for depth; this file 
 
 ## What this is
 
-A Python **0DTE options-spread trading bot** on **Interactive Brokers paper trading**
-(via `ib_insync`). Trades **SPY, QQQ, IWM**. Two regime-matched structures:
-- **Directional debit spreads** (CALL/PUT verticals) on trend days.
-- **Iron condors** (sell premium) on range/chop days.
+A Python **0DTE single-leg options trading bot** on **Interactive Brokers paper trading**
+(via `ib_insync`). Trades **SPX** (cash-settled, no assignment). Buys ONE ATM (~50Δ) CALL/PUT —
+two directional strategies run together:
+- **Trend** — Supertrend(7,3) + PSAR + Kaufman-chop flip.
+- **GEX** — dealer gamma-flip momentum (negative-γ / wall breakout).
 
 **Goal:** reach consistent, *fee-adjusted* profitability on paper, then go live.
+
+**🧹 Cleanup 2026-08-17:** the old breakout + iron-condor + all spread/bag machinery was **DELETED**
+(src 3,841 → 2,533 lines). Only single-leg **trend + gex** remain — `STRATEGY=breakout` no longer works.
 
 **Status (2026-08-10): running BOTH `trend` + `gex` at once (`STRATEGY=trend,gex`), SPX single-leg,
 9:30–3:55.** Dual-strategy engine: trades keyed `strategy:symbol` (e.g. `trend:SPX`, `gex:SPX`) so each
@@ -19,7 +23,7 @@ cooldowns; shared account guards; `audit.csv` has a `Strategy` column tagging ev
 forward-test-only (no historical GEX data) — Gflip + OI walls computed LIVE from the IBKR chain (OI via
 tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`, `test_gex`,
 `test_gex_strategy`, `test_single_leg` (+ existing), all green. GEX code: `src/gex.py`,
-`broker.fetch_gex_chain`, `strategy.gex_entry_signal`/`gex_invalidated`, `bot._scan_gex_entries`/
+`broker.fetch_gex_chain`, `strategy.gex_entry_signal`, `bot._scan_gex_entries`/
 `evaluate_gex_entry`/`_gex_exit_check`. **GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE):**
 trailing stop only (arm +50% peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) ·
 WIDE catastrophe backstop −80% (`GEX_CATASTROPHE_STOP`) · 3:55 flatten. **NO invalidation cut, NO fixed
@@ -39,14 +43,15 @@ notify crashes (None-format on `adx/vwap/orb`, missing `short_strike`). All fixe
 **data-feed drop/restore Discord alert** (`broker._check_data_farm` → `notify_data_farm`, on-change/deduped)
 after 08-12's self-healed ~18-min farm blackout, + a pandas-2.x chained-assignment cleanup in
 `fetch_intraday_data`. **Forward test still has 0 clean single-leg fills — next signal (post-restart) is the
-real first.** ⚠️ startup-adoption only rebuilds spreads, not lone single legs (daily 3:55 flatten mitigates).
+real first.** ⚠️ startup-adoption is now **alert-only** (on restart the bot can't know a lone leg's strategy,
+so it warns instead of adopting) — the daily 3:55 flatten mitigates; don't restart with a position open.
 
 **(2026-08-08): PIVOTED from breakout → a TREND strategy.** The breakout
 premise never cleared fees (five weeks, ~−$1.8k paper; exhaustive testing — filters on/off,
 follow/flip, XSP→SPX — showed no config convincingly clears fees; the signal is anti-predictive and
-fees eat ~85% of any edge). The breakout code is **paused, not deleted** (`STRATEGY=breakout`
-switches back). New live-paper bet: **Supertrend(7,3) + PSAR(0.02,0.2) + Kaufman-chop ≤50**, SPX,
-**single-leg directional** (`TREND_LEGS=single` — buy one ATM ~50Δ CALL on an up-flip / PUT on a
+fees eat ~85% of any edge). The breakout code was **DELETED 2026-08-17** (only trend + gex remain).
+New live-paper bet: **Supertrend(7,3) + PSAR(0.02,0.2) + Kaufman-chop ≤50**, SPX,
+**single-leg directional** (buy one ATM ~50Δ CALL on an up-flip / PUT on a
 down-flip), **1 contract, NO take-profit**, 50% stop / Supertrend-reversal / EOD, **drop the power
 hour** (`TREND_WINDOWS=09:30-14:00` — theta kills naked longs late) and **skip quiet mornings**
 (`TREND_SKIP_LOWIV=0.082`, entry-time realized vol, no lookahead). Built on a **3-year SPX backtest**
@@ -92,17 +97,17 @@ restarted** (state is in-memory).
 - `scripts/backfill_permid.py` — retro-fill `PermId` on recent audit rows (~24h window).
 - `scripts/build_dashboard.py` — `audit.csv` → `dashboard.xlsx`.
 - `scripts/counterfactual.py SYMBOL HH:MM` — "what did SYMBOL do after this ET time?" (retro helper).
-- **Backtest/analysis tools** (`backtest_39.py`, `flip_analysis.py`, `replay_invalidation.py`,
-  `validate_xsp.py SYM`) — **see `docs/BACKTESTING.md`** for what each answers, the data inputs,
-  and the caveats every result is subject to (proxy P&L, fees excluded, single-symbol SPY,
-  rolling-vs-session VWAP). Read it before quoting or extending any backtest.
+- **Trend backtest** (`backtest_spread_dollars.py`, real BS legs, per-quarter + per-trade CSV;
+  `pull_spx_2y.py` builds the 3-yr SPX 1-min cache) — **see `docs/BACKTESTING.md`** for inputs +
+  caveats. **GEX has NO backtest** (no free historical GEX data) — it is forward-test-only.
+  (The breakout-era analysis scripts were deleted with the breakout strategy on 2026-08-17.)
 
 IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bot). Gateway on port 4002.
 
 ## Docs map
 
 - `docs/HOW_IT_WORKS.md` — full bot lifecycle + config reference table.
-- `docs/PLAYBOOKS.md` — entry/exit/P&L **by structure** (debit vs condor; why no lone credit spread).
+- `docs/PLAYBOOKS.md` — entry/exit/P&L for the trend + GEX single-leg strategies.
 - `docs/RECONCILE.md` — how to use `reconcile_ibkr.py`.
 - `docs/RETROSPECTIVE.md` — **the daily journal + hypotheses under test** (append after each trading day).
 - `docs/GO_LIVE.md` — paper→live readiness gates (Gate 2 = fee-adjusted profit is the blocker).
@@ -111,20 +116,22 @@ IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bo
 
 ## Strategy in one screen
 
-**Debit entry:** `ADX>25 AND rising` + price beyond VWAP + beyond ORB level (+buffer) +
-**path guard #31** (level crossed within 10 bars AND last-3-closes net-move agrees — never
-fade a bounce; the 5/5 bear-trap fix) → CALL/PUT vertical. Conviction score 0–5 sizes it;
-**skip if score < `MIN_CONVICTION_SCORE`(2)**. Condors DISABLED 07-10 (#28).
-**Debit exits (priority):** resting take-profit at +60% · hard stop −70% · VWAP-recross
-invalidation (3 bars) · trailing stop after +50% peak · EOD flatten 15:55 ET.
+Two **single-leg directional** strategies run together (`STRATEGY=trend,gex`), SPX, **1 contract**,
+buy ONE ATM (~50Δ) option — CALL bullish / PUT bearish. **NO spreads, NO condors** (deleted 2026-08-17).
 
-**Condor entry (fallback when no directional signal):** `ADX<22` + `≥8 VWAP crosses` +
-11:00–13:30 ET + price mid-range → sell iron condor around the day's high/low.
-**Condor exits:** buy back at 50% of credit · hard stop −70% (1.7× credit) · range-breach
-(2 closes beyond a short strike) · EOD flatten. Sized by max loss.
+**Trend entry:** Supertrend(7,3) flip INTO a direction + PSAR agrees + Kaufman-chop ≤ `TREND_KAUF_MAX`(50),
+only inside a `TREND_WINDOWS`(09:30–14:00) slot, + skip low-vol days (`TREND_SKIP_LOWIV`, entry-time
+realized vol). **Trend exits:** −50% hard stop (`HARD_STOP_LOSS_PCT`) · Supertrend reversal · EOD flatten
+15:55. **NO take-profit** (the convex tail is the edge).
 
-**Shared guards:** cooldown (30m), invalidation throttle (2 *losing* invalidations/signal),
-circuit breaker (5 consecutive losses), daily loss limit (−$400), 12 trades/day.
+**GEX entry:** negative-gamma regime (spot < Gflip) OR wall-breakout + 15-min opening-range breakout +
+short-term momentum, inside `GEX_WINDOWS`(09:30–15:55), + skip low-vol days. Gflip/walls computed **LIVE**
+from the IBKR chain. **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +50%
+peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE −80% catastrophe backstop
+(`GEX_CATASTROPHE_STOP`) · EOD flatten 15:55. **NO invalidation, NO fixed max-loss stop, NO take-profit.**
+
+**Shared guards:** cooldown (30m), circuit breaker (5 consecutive losses), daily loss limit (−$400),
+12 trades/day, anti-cascade (never stack on an untracked position). Exits route per `trade['strategy']`.
 
 ## Hard-won learnings (don't relearn these)
 

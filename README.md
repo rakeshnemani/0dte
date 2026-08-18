@@ -1,6 +1,8 @@
 # 0DTE Paper Trading Bot
 
-A Python algorithmic trading bot that paper trades 0DTE options spreads on Interactive Brokers (IBKR) using VWAP, ADX, and 30-minute Opening Range Breakout signals.
+A Python algorithmic bot that paper-trades **0DTE single-leg options** (SPX) on Interactive Brokers (IBKR), running two directional strategies together: **Trend** (Supertrend + PSAR + Kaufman-chop) and **GEX** (dealer gamma-flip momentum). Buys one ATM (~50Δ) CALL/PUT — no spreads, no condors.
+
+> **2026-08-17 cleanup:** the original breakout + iron-condor + spread machinery was deleted (only single-leg trend + gex remain). See [CLAUDE.md](CLAUDE.md) and [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) for the current system.
 
 ## Project Structure
 

@@ -67,8 +67,8 @@ def test_notify_submit_no_crash_single_leg():
     notifier.notify_submit('SPX', 'CALL', 7800, 7800, 11.60, 1, 5000,
                            _single_leg_indicators(), 'GEX wall-breakout @7800', 43315)
     assert len(sent) == 1
-    assert 'Single-leg' in sent[0] and 'ADX: 0.00' in sent[0]
-    print("✓ notify_submit renders single-leg without crashing on None indicators")
+    assert 'single-leg' in sent[0] and '7800' in sent[0]
+    print("✓ notify_submit renders single-leg cleanly")
 
 
 def test_notify_filled_no_crash_single_leg():
@@ -78,8 +78,8 @@ def test_notify_filled_no_crash_single_leg():
              'entry_indicators': _single_leg_indicators(), 'reason': 'GEX wall-breakout @7800'}
     notifier.notify_filled('SPX', trade, 11.60)   # no 'short_strike'/'tp_price' → must not KeyError
     assert len(sent) == 1
-    assert 'Single-leg' in sent[0]
-    print("✓ notify_filled handles single-leg (no short_strike KeyError, no None crash)")
+    assert 'single-leg' in sent[0]
+    print("✓ notify_filled handles single-leg (no short_strike KeyError)")
 
 
 if __name__ == '__main__':

@@ -4,13 +4,16 @@ Companion docs: [docs/RETROSPECTIVE.md](docs/RETROSPECTIVE.md) (daily journal + 
 [docs/BACKTESTING.md](docs/BACKTESTING.md) (the analysis tooling + how to reproduce every
 number below), [docs/GO_LIVE.md](docs/GO_LIVE.md) (paper→live gates).
 
-## Where we are (2026-07-28)
+## Where we are (2026-08-17)
 
-▶️ **RUNNING on SPX, BASELINE-flipped** (`FLIP_DIRECTION=true`; #41 fixed). After a month of
-losses, **fading our own breakout signals is the first positive-*gross* signal we've found**
-(#42). Not profitable yet — a paper experiment, watched daily. The whole game now: does the
-flip's thin (~+2 bp/trade) gross edge survive real SPX fees? SPX (10× notional/contract, tight
-$0.10 fills) is what makes that even plausible.
+▶️ **RUNNING single-leg trend + gex on SPX** (`STRATEGY=trend,gex`). The breakout + iron-condor +
+all spread/bag machinery was **DELETED 2026-08-17** (src 3,841 → 2,533 lines; only trend + gex
+remain). First clean single-leg trade booked 08-17 (GEX PUT, manual +$876.74 after a close-path
+tick bug — now fixed). GEX exits changed to "let the convex tail ride" (trailing + −80% catastrophe,
+no invalidation/stop). The whole game now: do these single-leg strategies clear SPX fees live?
+
+> Older breakout/condor/flip (#39/#42) items below are **obsolete** — that strategy is gone.
+> Kept as history of the investigation.
 
 ## Priority queue
 

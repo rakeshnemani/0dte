@@ -1,8 +1,15 @@
 # Backtesting & Analysis Tooling
 
 How we test hypotheses against history, what data feeds it, and the caveats every result
-must respect. **Read this before quoting or extending any backtest** — several of our wrong
-turns came from mixing up the caveats (e.g. cumulative vs rolling VWAP).
+must respect. **Read this before quoting or extending any backtest.**
+
+> **⚠️ 2026-08-17:** the breakout-era analysis scripts described below — `backtest_39.py`,
+> `flip_analysis.py`, `replay_invalidation.py`, `validate_xsp.py` — were **DELETED** with the
+> breakout strategy. The live system is single-leg **trend + gex**. The trend backtest is
+> `scripts/backtest_spread_dollars.py` (real Black-Scholes legs, per-quarter + per-trade CSV;
+> `pull_spx_2y.py` builds the 3-yr SPX 1-min cache). **GEX has no backtest** — no free historical
+> GEX data exists, so it is forward-test-only. The sections below are kept as history of the
+> breakout investigation.
 
 ## The scripts
 

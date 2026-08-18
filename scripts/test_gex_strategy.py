@@ -1,7 +1,7 @@
 """Unit tests for the GEX entry/exit logic in strategy.py (STRATEGY='gex').
 
 Pure — no IBKR. Feeds synthetic 1-min bars + synthetic Gflip/walls and checks the
-three-condition entry (regime · breakout · momentum) and the OR-reclaim invalidation.
+three-condition entry (regime · breakout · momentum).
 
 Run:  python scripts/test_gex_strategy.py
 """
@@ -82,18 +82,9 @@ def test_entry_all_conditions():
     check("no OR breakout → blocked", d5 is None)
 
 
-def test_invalidation():
-    print("\ngex_invalidated — 3 closes back inside the opening range")
-    inside = make_intraday(OR + [6015, 6005, 6000, 6002])       # last 3 all inside [5990,6010]
-    outside = make_intraday(OR + [6015, 6005, 6012, 6002])      # one close (6012) still outside
-    check("3 closes back inside OR → invalidated", strategy.gex_invalidated(inside, 6010.1, 5989.9, 3) is True)
-    check("a close still outside → not invalidated", strategy.gex_invalidated(outside, 6010.1, 5989.9, 3) is False)
-
-
 if __name__ == '__main__':
     test_opening_range()
     test_entry_all_conditions()
-    test_invalidation()
     print()
     if _fails:
         print(f"❌ {len(_fails)} FAILED: {_fails}")

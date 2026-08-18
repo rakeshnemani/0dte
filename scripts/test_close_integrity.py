@@ -62,9 +62,9 @@ def fresh_bot(pos):
 
 
 def trade(qty=6, status='ACTIVE'):
-    return {'status': status, 'qty': qty, 'direction': 'CONDOR', 'structure': 'CONDOR',
-            'entry_price': 0.30, 'bag_contract': None, 'long_conid': 111,
-            'max_profit_pct': 0.0, 'exit_reason': 'test'}
+    return {'status': status, 'qty': qty, 'direction': 'PUT', 'structure': 'SINGLE',
+            'entry_price': 0.30, 'option_contract': None, 'long_conid': 111,
+            'leg_conids': [111], 'max_profit_pct': 0.0, 'exit_reason': 'test'}
 
 
 def dead_order(filled, avg):

@@ -1,15 +1,15 @@
 """IBKRBroker — everything that talks to Interactive Brokers.
 
 Connection lifecycle, error routing, contract construction, market data
-(underlying price, intraday bars, option quotes, breadth indices), and order
-placement. No strategy logic lives here.
+(underlying price, intraday bars, option quotes), and order placement.
+No strategy logic lives here.
 """
 import datetime
 import logging
 from typing import Optional, Tuple
 
 import pandas as pd
-from ib_insync import IB, Stock, Option, Index, Contract, ComboLeg, LimitOrder, util
+from ib_insync import IB, Stock, Option, Index, Contract, LimitOrder, util
 
 import config
 import market_time
@@ -56,11 +56,6 @@ class IBKRBroker:
         # bot: no bars → no entries). bot wires on_farm_change to notify_data_farm.
         self._farm_down: set = set()
         self.on_farm_change = None
-        # Breadth data cache — TICK and VOLD are market-wide, shared across all
-        # symbols. Cache for 60 seconds to avoid redundant IBKR requests per loop.
-        self._breadth_cache_time: Optional[datetime.datetime] = None
-        self._tick_df_cache: pd.DataFrame = pd.DataFrame()
-        self._vold_df_cache: pd.DataFrame = pd.DataFrame()
 
     # ── Connection ───────────────────────────────────────────────────────────
 
@@ -168,31 +163,6 @@ class IBKRBroker:
         if not qualified:
             raise ValueError(f"Cannot qualify option: {root} {today_str} {right} {strike}")
         return qualified[0]
-
-    def make_bag(self, symbol: str, long_conid: int, short_conid: int) -> Contract:
-        """Build a 2-leg BAG combo contract (long leg BUY, short leg SELL)."""
-        return self.make_bag_multi(symbol, [(long_conid, 'BUY'), (short_conid, 'SELL')])
-
-    def make_bag_multi(self, symbol: str, legs: list) -> Contract:
-        """Build an N-leg BAG combo from [(conId, action), ...].
-
-        Convention: define the package so its market value is POSITIVE (each
-        vertical's expensive leg gets the BUY action). Then a BUY order opens a
-        debit position and a SELL order opens a credit position (e.g. an iron
-        condor), and limit prices stay plain positive numbers either way."""
-        exch = self.option_exchange(symbol)
-        bag = Contract()
-        # #41 (07-27): a BAG's symbol is the UNDERLYING, not the option root. For SPX
-        # the root is 'SPXW' but the legs are on underlying 'SPX' — using the root got
-        # IBKR error 478 ("Requested symbol SPXW, in legs SPX") and every SPX order was
-        # rejected. Unchanged for SPY/XSP (root == underlying); fixes SPX.
-        bag.symbol = symbol
-        bag.secType = 'BAG'
-        bag.currency = 'USD'
-        bag.exchange = exch
-        bag.comboLegs = [ComboLeg(conId=cid, ratio=1, action=action, exchange=exch)
-                         for cid, action in legs]
-        return bag
 
     # ── Orders / account ─────────────────────────────────────────────────────
 
@@ -480,104 +450,3 @@ class IBKRBroker:
         applied to EVERY option limit (entry AND close). See option_tick."""
         tick = self.option_tick(symbol, price)
         return round(round(price / tick) * tick, 2)
-
-    def get_spread_quote(self, symbol: str, direction: str,
-                         long_strike: float, short_strike: float):
-        """Net-debit (bid, mid, ask) for the long/short vertical, from ONE snapshot
-        of each leg. ask = marketable BUY (pay the long's ask, sell the short's bid);
-        bid = the reverse. Collapses to mid-only if a leg lacks a two-sided quote —
-        so the caller safely falls back to the old mid behavior. (0,0,0) on failure."""
-        try:
-            long_c = self.get_option_contract(symbol, direction, long_strike)
-            short_c = self.get_option_contract(symbol, direction, short_strike)
-            lb, lm, la = self._get_option_quote(long_c)
-            sb, sm, sa = self._get_option_quote(short_c)
-            if lm <= 0 or sm <= 0:
-                logger.warning(f"Could not price {symbol} {direction} {long_strike}/{short_strike}: "
-                               f"long_mid={lm} short_mid={sm}")
-                return 0.0, 0.0, 0.0
-            mid = max(lm - sm, 0.01)
-            if la > 0 and sa > 0:                     # both legs tradeable → real ask/bid
-                ask = max(la - sb, 0.01)              # buy long @ ask, sell short @ bid
-                bid = max(lb - sa, 0.01)              # sell long @ bid, buy short @ ask
-            else:
-                ask = bid = mid
-            return bid, mid, ask
-        except Exception as e:
-            logger.error(f"Error fetching spread quote for {symbol}: {e}")
-            return 0.0, 0.0, 0.0
-
-    def get_spread_value(self, symbol: str, direction: str, long_strike: float, short_strike: float) -> float:
-        """Fetch the current market value of the debit spread from IBKR."""
-        try:
-            long_c = self.get_option_contract(symbol, direction, long_strike)
-            short_c = self.get_option_contract(symbol, direction, short_strike)
-            long_mid = self._get_option_mid(long_c)
-            short_mid = self._get_option_mid(short_c)
-            if long_mid <= 0 or short_mid <= 0:
-                logger.warning(f"Could not price {symbol} {direction} {long_strike}/{short_strike}: long_mid={long_mid} short_mid={short_mid}")
-                return 0.0
-            return max(long_mid - short_mid, 0.01)
-        except Exception as e:
-            logger.error(f"Error fetching spread value for {symbol}: {e}")
-            return 0.0
-
-    def get_condor_value(self, symbol: str, short_call: float, wing_call: float,
-                         short_put: float, wing_put: float) -> float:
-        """Current market value of an iron condor package (positive number).
-
-        Value = (short_call − call_wing) + (short_put − put_wing) mids — i.e.
-        the credit collected to open (SELL) or the cost to close (BUY)."""
-        try:
-            sc = self._get_option_mid(self.get_option_contract(symbol, 'CALL', short_call))
-            wc = self._get_option_mid(self.get_option_contract(symbol, 'CALL', wing_call))
-            sp = self._get_option_mid(self.get_option_contract(symbol, 'PUT', short_put))
-            wp = self._get_option_mid(self.get_option_contract(symbol, 'PUT', wing_put))
-            if min(sc, sp) <= 0 or wc < 0 or wp < 0:
-                logger.warning(f"Could not price {symbol} condor {short_put}/{short_call}: "
-                               f"sc={sc} wc={wc} sp={sp} wp={wp}")
-                return 0.0
-            return max((sc - wc) + (sp - wp), 0.01)
-        except Exception as e:
-            logger.error(f"Error fetching condor value for {symbol}: {e}")
-            return 0.0
-
-    def fetch_breadth_data(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Fetch $TICK and $VOLD 1-min bars from IBKR, cached for 60 seconds.
-
-        Returns (tick_df, vold_df). On any error returns two empty DataFrames so
-        the caller can fail-open and not block the trade.
-        """
-        now = market_time.now_et()
-        if (self._breadth_cache_time is not None and
-                (now - self._breadth_cache_time).total_seconds() < 60):
-            return self._tick_df_cache, self._vold_df_cache
-
-        try:
-            today_open = market_time.market_open_today()
-
-            def _fetch_index(contract):
-                bars = self.ib.reqHistoricalData(
-                    contract, endDateTime='', durationStr='1 D',
-                    barSizeSetting='1 min', whatToShow='TRADES',
-                    useRTH=True, formatDate=1, timeout=30)
-                if not bars:
-                    return pd.DataFrame()
-                df = util.df(bars).copy()
-                df['date'] = pd.to_datetime(df['date'])
-                if df['date'].dt.tz is None:
-                    df['date'] = df['date'].dt.tz_localize('America/New_York')
-                else:
-                    df['date'] = df['date'].dt.tz_convert('America/New_York')
-                df = df.set_index('date')
-                return df[df.index >= today_open].dropna(subset=['close'])
-
-            tick_df = _fetch_index(Index('TICK', 'NYSE', 'USD'))
-            vold_df = _fetch_index(Index('VOLD', 'NYSE', 'USD'))
-            self._breadth_cache_time = now
-            self._tick_df_cache = tick_df
-            self._vold_df_cache = vold_df
-            return tick_df, vold_df
-        except Exception as e:
-            logger.warning(f"Failed to fetch breadth data: {e}")
-            return pd.DataFrame(), pd.DataFrame()
