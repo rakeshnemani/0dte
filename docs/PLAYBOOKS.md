@@ -1,8 +1,8 @@
 # Playbooks — entry / exit / P&L per strategy
 
-> **2026-08-17:** the bot is **single-leg only**. Buy ONE ATM (~50Δ) option — CALL bullish,
-> PUT bearish — for whichever strategy fires. **No spreads, no iron condors** (that machinery
-> was deleted). Two strategies run together (`STRATEGY=trend,gex`), each holding its own SPX
+> **2026-08-17:** the bot is **single-leg only** — one contract. Buy ONE ATM (~50Δ) option — CALL
+> bullish, PUT bearish — for whichever strategy fires (the multi-leg machinery was deleted). Two
+> strategies run together (`STRATEGY=trend,gex`), each holding its own SPX
 > position keyed `strategy:symbol`. Both are **1 contract, NO take-profit** (the convex tail is
 > the edge — a TP caps exactly the winner that pays for the losers).
 
@@ -11,7 +11,7 @@
 - **Half the fee.** One leg, not two — the per-contract fee is the existential drag on 0DTE,
   so halving the leg count directly improves the fee-adjusted edge.
 - **Uncapped convex tail.** A long option's payoff is convex; the rare big winner is where the
-  money is. A spread caps it (short leg), and a take-profit caps it (early exit) — both throw
+  money is. A second (short) leg would cap it, and a take-profit caps it (early exit) — both throw
   away the edge. So: single leg, no TP.
 - **The cost:** a long single leg decays (theta) and can lose 100% (full premium) on a bad day.
   That's the risk we accept for the tail — mitigated by the low-vol skip (don't pay theta on a

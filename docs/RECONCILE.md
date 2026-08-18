@@ -83,8 +83,8 @@ Audit booked: gross $-189.00   fees $107.73   net $-296.73
 | Column | Meaning |
 |--------|---------|
 | `permId` | IBKR's permanent order id — the join key. Big `1015…` numbers are bot orders; small numbers (e.g. `280…`) at end-of-day are **expiry/exercise settlements** |
-| `side` | `BOT` (bought) / `SLD` (sold) the spread package |
-| `price` | net spread price (debit paid / credit received / buy-back cost) |
+| `side` | `BOT` (bought) / `SLD` (sold) the option |
+| `price` | the option fill price |
 | `realized` | IBKR realized P&L on that order, **net of commissions** (0 on opening orders) |
 | `comm` | commissions on that order's fills |
 | `audit` | **`OK`** = matched to an audit row by permId · **`ORPHAN`** = *no audit row exists* — a fill the bot didn't book |

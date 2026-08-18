@@ -44,7 +44,7 @@ def orb_levels(df: pd.DataFrame, now: datetime.datetime) -> Optional[Tuple[float
 
 
 # ── Trend strategy (Supertrend + PSAR + Kaufman) ─────────────────────────────
-# Pure translations of scripts/backtest_spread_dollars.py, so the live bot places
+# Pure translations of scripts/backtest_dollars.py, so the live bot places
 # the same trades we backtested. Indicators use only high/low/close → they run on
 # SPX index bars directly (no volume needed). Used only when STRATEGY == "trend".
 

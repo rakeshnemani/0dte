@@ -188,7 +188,7 @@ def test_cancelled_with_fill_not_dropped():
 
 if __name__ == '__main__':
     print(f"config: ENTRY_ORDER_TIMEOUT_SECONDS={config.ENTRY_ORDER_TIMEOUT_SECONDS}s "
-          f"MIN_SPREAD_COST=${config.MIN_SPREAD_COST}")
+          f"MIN_OPTION_COST=${config.MIN_OPTION_COST}")
     test_not_yet_expired()
     test_expired_unfilled()
     test_expired_partial_fill_is_rescued()

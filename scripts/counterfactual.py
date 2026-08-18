@@ -52,4 +52,4 @@ if not after_df.empty:
     print(f"  Low  : {lo:.2f}  ({(lo/ref-1)*100:+.2f}%)")
     print(f"  Last : {last:.2f}  ({(last/ref-1)*100:+.2f}%)")
     print("\nRough verdict for a blocked CALL entry: sustained move above ref = guard cost us;")
-    print("flat/lower = guard saved us. (Spread P&L amplifies these small % moves ~30-50x.)")
+    print("flat/lower = guard saved us. (Option P&L amplifies these small % moves ~30-50x.)")

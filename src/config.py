@@ -20,14 +20,14 @@ MAX_POSITION_SIZE = float(os.getenv("MAX_POSITION_SIZE", "200.0"))   # budget sh
 #   gex   = dealer gamma-flip momentum (negative-γ / wall breakout + 15-min OR breakout).
 # Each holds its own position per symbol (trades keyed strategy:symbol); account-level
 # guards (cooldown, circuit breaker, daily loss, trade count) are shared. Both buy ONE
-# ATM (~50Δ) option — CALL bullish, PUT bearish. No spreads, no condors anywhere.
+# ATM (~50Δ) option — CALL bullish, PUT bearish. Single leg only.
 STRATEGY = os.getenv("STRATEGY", "trend,gex")
 ACTIVE_STRATEGIES = [s.strip() for s in STRATEGY.split(",") if s.strip()]
 
 # ── Trend strategy (STRATEGY='trend') ────────────────────────────────────────
 # Entry = Supertrend flip INTO a direction AND PSAR agrees AND kaufman-chop <= TREND_KAUF_MAX,
 # only inside a TREND_WINDOWS slot. Exits: hard stop (HARD_STOP_LOSS_PCT) + Supertrend
-# reversal + EOD flatten. Built on a 3-year SPX backtest (scripts/backtest_spread_dollars.py).
+# reversal + EOD flatten. Built on a 3-year SPX backtest (scripts/backtest_dollars.py).
 TREND_SUPERTREND_PERIOD = int(os.getenv("TREND_SUPERTREND_PERIOD", "7"))
 TREND_SUPERTREND_MULT = float(os.getenv("TREND_SUPERTREND_MULT", "3.0"))
 TREND_KAUF_N = int(os.getenv("TREND_KAUF_N", "14"))
@@ -75,7 +75,7 @@ MAX_TRADES_PER_DAY = int(os.getenv("MAX_TRADES_PER_DAY", "12"))
 SIGNAL_COOLDOWN_MINUTES = int(os.getenv("SIGNAL_COOLDOWN_MINUTES", "30"))
 # Skip a trade if the option mid is below this (a FEE floor, not a risk knob — a cheap
 # option buys the most contracts and therefore the most per-contract fees).
-MIN_SPREAD_COST = float(os.getenv("MIN_SPREAD_COST", "0.30"))
+MIN_OPTION_COST = float(os.getenv("MIN_OPTION_COST", "0.30"))
 # #34: an entry limit has a shelf life measured in bars, not hours — a resting limit only
 # fills once the option decays to our bid (the market moved AGAINST the thesis). Cancel an
 # unfilled entry after this many seconds and re-evaluate fresh. 0 disables (wait forever).

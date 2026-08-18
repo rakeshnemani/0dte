@@ -72,7 +72,7 @@ def orders_from_live():
         o = orders.setdefault(e.permId, {
             'symbol': c.symbol, 'time': f.time.astimezone(ET).strftime('%H:%M:%S'),
             'side': None, 'price': None, 'realized': 0.0, 'commission': 0.0})
-        if c.secType == 'BAG':          # the BAG line carries side + net price
+        if c.secType in ('BAG', 'OPT'):  # net price on a BAG combo, or the single OPT fill
             o['side'], o['price'] = e.side, e.price
         if cr:
             if cr.realizedPNL is not None and abs(cr.realizedPNL) < SENTINEL:

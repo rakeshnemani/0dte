@@ -55,14 +55,14 @@ New live-paper bet: **Supertrend(7,3) + PSAR(0.02,0.2) + Kaufman-chop ≤50**, S
 down-flip), **1 contract, NO take-profit**, 50% stop / Supertrend-reversal / EOD, **drop the power
 hour** (`TREND_WINDOWS=09:30-14:00` — theta kills naked longs late) and **skip quiet mornings**
 (`TREND_SKIP_LOWIV=0.082`, entry-time realized vol, no lookahead). Built on a **3-year SPX backtest**
-(`scripts/backtest_spread_dollars.py`, real BS legs): single-leg net **+$12,985/3yr (t≈1.3)** vs the
+(`scripts/backtest_dollars.py`, real BS legs): single-leg net **+$12,985/3yr (t≈1.3)** vs the
 $10 spread's +$1,328 — the fee-halving + convex uncapped tail is where the money is. **But it's
 in-sample, ~80% from 2025, still can't clear 2024, and t≈1.3 isn't significant** → a **forward
 paper-test of a promising-but-unproven candidate**, not a found edge. Portable findings: **single-leg
 ≫ spread (half fee, uncapped tail); no-TP for single-leg (a TP caps the convex tail that IS the edge);
-single-leg wants the OPEN not the power hour (theta); skip low-vol days.** ⚠️ **Known gap: startup
-adoption only reconstructs spreads, not a lone single leg** — don't restart with a single-leg position
-open. See `docs/GO_LIVE.md` and `docs/BACKTESTING.md`.
+single-leg wants the OPEN not the power hour (theta); skip low-vol days.** ⚠️ startup adoption is
+**alert-only** (it can't infer a lone leg's strategy) — don't restart with a position open.
+See `docs/GO_LIVE.md` and `docs/BACKTESTING.md`.
 
 ## Architecture (modular — refactored from one monolith)
 
@@ -72,7 +72,7 @@ open. See `docs/GO_LIVE.md` and `docs/BACKTESTING.md`.
 | `src/config.py` | All `.env` config |
 | `src/bot.py` | `TradingBot` — **state + orchestration + main loop only** (the conductor) |
 | `src/broker.py` | `IBKRBroker` — **all** IBKR calls (connect, market data, orders, positions, permId, commissions) |
-| `src/strategy.py` | **Pure functions** (no I/O): indicators, entry signal, conviction score, exit rules, condor logic — unit-testable |
+| `src/strategy.py` | **Pure functions** (no I/O): indicators, trend + gex entry signals, exit helpers — unit-testable |
 | `src/notifier.py` | Discord: transport + every message template |
 | `src/audit.py` | `audit.csv` writer (financials only) |
 | `src/market_time.py` | ET market-hours helpers |
@@ -97,7 +97,7 @@ restarted** (state is in-memory).
 - `scripts/backfill_permid.py` — retro-fill `PermId` on recent audit rows (~24h window).
 - `scripts/build_dashboard.py` — `audit.csv` → `dashboard.xlsx`.
 - `scripts/counterfactual.py SYMBOL HH:MM` — "what did SYMBOL do after this ET time?" (retro helper).
-- **Trend backtest** (`backtest_spread_dollars.py`, real BS legs, per-quarter + per-trade CSV;
+- **Trend backtest** (`backtest_dollars.py`, real BS legs, per-quarter + per-trade CSV;
   `pull_spx_2y.py` builds the 3-yr SPX 1-min cache) — **see `docs/BACKTESTING.md`** for inputs +
   caveats. **GEX has NO backtest** (no free historical GEX data) — it is forward-test-only.
   (The breakout-era analysis scripts were deleted with the breakout strategy on 2026-08-17.)
@@ -136,8 +136,8 @@ peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE �
 ## Hard-won learnings (don't relearn these)
 
 1. **Fees are the existential problem.** ~$100/day, charged per-contract, so *bigger*
-   positions don't improve the ratio — **wider spreads (TODO #20)** and **fewer/higher-
-   conviction trades** do. The edge is currently smaller than the transaction cost.
+   positions don't improve the ratio — **single-leg (half the leg count)** and **fewer,
+   higher-quality trades** do. The edge must clear the per-contract fee.
 2. **Reconcile AFTER settlement, never intraday.** 0DTE marks near expiry are unreliable.
    On 07-09 a pre-settlement run showed −$124; settled truth was **−$906**. Only account
    `dailyPnL` post-settlement is real.
@@ -146,8 +146,8 @@ peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE �
    2026-07-08 — retros before then reflect 15-min-delayed decisions.
 5. **Timezone:** strategy runs in **ET** (pytz America/New_York). Audit + logs are ET now.
    The machine is **Central (CDT)** — audit rows before 2026-07-05 are in CDT.
-6. **Don't restart with a condor open** — startup adoption reconstructs verticals but
-   *not* condors (alerts instead).
+6. **Don't restart with a position open** — startup adoption is alert-only (single-leg only;
+   the bot can't infer a lone leg's strategy on restart). The daily 3:55 flatten is the backstop.
 7. **The bot runs on a laptop** — needs an always-on host before live (TODO #16); laptop
    sleep has orphaned/killed it before.
 8. **Condors are a net drag so far** (1W/2L, structural 86% breakeven WR) — TODO #28 says
@@ -202,7 +202,7 @@ peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE �
   single-leg-aware notify templates. Tested (`test_single_leg_execution`). Lesson: **index
   options tick $0.10 at premium ≥ $3 — always snap limits to the price-aware tick.**
 - **#SL-CLOSE (2026-08-17, the SAME tick bug on the CLOSE path):** the entry fix was incomplete —
-  `close_position` passed `current_spread_value` (and the reprice passed `fresh`) **raw**, so the FIRST
+  `close_position` passed the option value (and the reprice passed `fresh`) **raw**, so the FIRST
   real single-leg fill (BUY SPXW 7775P @ 8.60, our first clean fill ✓) **could not be closed all day**:
   every SELL bounced with error 110, then error 103 (duplicate-id on the modify-a-rejected-order). 4
   attempts → give-up → "close manually" alert; the bot was helpless to honor invalidation, the −50% stop,
@@ -229,21 +229,18 @@ peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE �
 
 ## Current priorities (see TODO.md for detail)
 
-**🔄 TREND PIVOT (2026-08-08) — forward paper-test of the Supertrend strategy.** Live config
-(`STRATEGY=trend`, `.env` + `src/config.py`): **SPX $10** spread, **1 contract**, entry = Supertrend
-flip + PSAR agree + kauf ≤50, **only** in the 9:30–10:00 / 15:00–16:00 ET windows; exits = 50% hard
-stop · Supertrend reversal · 60% resting TP · EOD flatten. No condor/conviction/trail/VWAP-invalidation
-in trend mode. Code: `strategy.trend_entry_signal`/`trend_reversed`/`supertrend_dir`/`psar_dir`/
-`kaufman_chop` (pure, unit-tested in `scripts/test_trend_strategy.py`), wired via `bot._scan_trend_entries`
-/`evaluate_trend_entry`/`_trend_exit_check` + `market_time.in_trend_window`. **To activate: restart the
-bot** (state is in-memory; it's currently running the OLD breakout code).
+**🧹 CLEANUP DONE (2026-08-17) — single-leg trend + gex only.** The breakout + condor + spread/bag
+machinery is deleted; the bot runs the two single-leg strategies (`STRATEGY=trend,gex`). Code:
+`strategy.trend_entry_signal`/`gex_entry_signal`/`supertrend_dir`/`psar_dir`/`kaufman_chop` (pure,
+unit-tested), wired via `bot._scan_trend_entries`/`_scan_gex_entries`, `evaluate_*_entry`,
+`_trend_exit_check`/`_gex_exit_check` + `market_time.in_trend_window`/`in_gex_window`.
 
-**The one job:** does the trend strategy clear fees LIVE on SPX? Backtest = +$1,328/3yr at $10 but
-**within noise (t≈1.1), 7up/6down quarters, soft since 2025** — so read every trade; this is the real
-out-of-sample check. *Don't parameter-sweep to rescue it* (fits noise). Next structural idea (not a
-knob): **single-leg directional** — halves the ~$2,178 fee bill, uncaps winners; the BS engine already
-prices single legs. Backtest tooling: `scripts/backtest_spread_dollars.py` (real BS legs, per-quarter,
-per-trade CSV), 3-yr SPX cache `scripts/.spx_1min_2y_cache.pkl` (2023-07→2026-08, `pull_spx_2y.py`).
+**The one job:** do the single-leg trend + gex strategies clear SPX fees LIVE? The trend backtest
+(single-leg net **+$12,985/3yr, t≈1.3, in-sample**) is promising-but-unproven; **GEX has NO backtest**
+(forward-test only). First clean single-leg trade booked 2026-08-17 (GEX PUT, **+$876.74** — manual,
+after a close-path tick bug now fixed). *Don't parameter-sweep to rescue anything* (fits noise).
+Backtest tooling: `scripts/backtest_dollars.py` (real BS legs, per-quarter, per-trade CSV), 3-yr SPX
+cache `scripts/.spx_1min_2y_cache.pkl` (2023-07→present, `pull_spx_2y.py`).
 
 - **Housekeeping:** account isn't flat — paper still holds **−600 SPY / −400 QQQ** assigned-stock
   residue (learning #9); flatten before trusting the trend P&L. **#16 (always-on host)** still the one

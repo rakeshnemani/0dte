@@ -34,9 +34,9 @@ Everything before that is a different strategy.
 
 ## Gate 2 — Performance (fee-adjusted) ⚠️ THE REAL BAR
 
-Paper P&L ignores commissions. Real math: IBKR charges ~$0.65/contract/leg, and a
-vertical spread is 2 legs in + 2 legs out = **~$2.60 per contract round trip**.
-A typical 5-contract trade costs **~$13 in fees**; a 4-trade day ~$50.
+Paper P&L ignores commissions. Real math on SPX single-leg: ~$1.63/side, so **~$3.26 per
+contract round trip**. At 1 contract/trade that's ~$3.26/trade; a few trades a day is under $20.
+Single-leg halves the round-trip vs the old two-leg structure — the whole point of the pivot.
 
 **Confirmed by the actual IBKR paper account (YTD NAV report, 2026-07-07):**
 Fees & Commissions **−$275.28 actual**, MTM **−$148** → net trading YTD **≈ −$423**
@@ -46,12 +46,11 @@ experiments, orphaned/manually-closed positions the audit never captured, and th
 fact that **audit exit prices are limit-submission prices, never confirmed fills**
 (the entry side confirms `avgFillPrice`; the exit side assumes — see TODO #14).
 At current trade frequency and size, the edge does not yet clear the friction.
-Paths that fix this: fewer/higher-conviction trades, larger size per trade
-(fees scale linearly but conviction should concentrate them in winners), wider
-spreads (more premium per contract), or better win capture (TODO #13 slippage fix).
+Paths that fix this: fewer/higher-conviction trades, fewer/higher-quality trades
+(fees scale linearly), and better win capture (TODO #13 slippage fix).
 
 - [ ] **Fee-adjusted cumulative P&L > 0** over the full Gate-1 sample
-      (model: $0.65 × contracts × 4 per round trip; add ~$0.02/spread slippage haircut)
+      (model: $0.65 × contracts × 2 per round trip; add ~$0.02/leg slippage haircut)
 - [ ] **Profit factor ≥ 1.3 after fees** (dashboard KPI, manually fee-adjusted)
 - [ ] **Win rate ≥ 45%** sustained (breakeven is ~38–40% with current exits)
 - [ ] **3 of any 4 consecutive weeks profitable** after fees
@@ -86,14 +85,14 @@ The bot must survive (not necessarily profit from) every market type:
       manages it to a correct exit
 - [x] **Exit slippage fix (TODO #13)** — fast polling implemented 2026-07-07
       (60s → 15s while exits need watching, pre-armed at +35% profit). Native
-      BAG stop orders deferred to Gate 6 (combo stops trigger off noisy quotes;
+      stop orders deferred to Gate 6 (they trigger off noisy quotes;
       revisit with real-time data). Verify the Peak→Exit gap shrinks in retros
 - [ ] **Disconnect drill**: kill IB Gateway mid-session; verify reconnect + state intact
 
 ## Gate 5 — Risk controls
 
-- [x] Hard stop, invalidation exit, trailing stop — all observed working live
-- [x] Signal throttle + conviction down-sizing — observed working (07-07)
+- [x] Hard stop + trailing stop + wide catastrophe backstop — observed working live
+- [x] Signal cooldown — observed working
 - [ ] **Circuit breaker observed firing** (5 consecutive losses — never happened yet;
       if it never fires in 30 days, that's fine, but verify it in a forced test)
 - [x] **Daily dollar loss limit** — implemented 2026-07-07: `MAX_DAILY_LOSS=400`,
@@ -106,7 +105,7 @@ The bot must survive (not necessarily profit from) every market type:
 ## Gate 6 — Live-transition mechanics (start only after Gates 1–5 pass)
 
 - [ ] **Fill-quality validation**: 2 weeks of 1-contract live trades; compare live
-      fills vs paper mids; abort if average slippage > $0.03/spread per side
+      fills vs paper mids; abort if average slippage > $0.03/leg per side
 - [ ] **SPY → XSP decision executed** (TODO #3): tax + cash settlement vs liquidity;
       validated with the 1-contract phase
 - [ ] **Real-time market data subscribed** (live shouldn't run on delayed data)

@@ -34,18 +34,18 @@ except Exception as e:
 ib.reqExecutions(ExecutionFilter())
 ib.sleep(2)
 
-# One entry per permId: symbol, net BAG price, and execution time (ET, naive).
+# One entry per permId: symbol, fill price, and execution time (ET, naive).
 orders = {}
 for f in ib.fills():
     e, c = f.execution, f.contract
     o = orders.setdefault(e.permId, {'symbol': c.symbol, 'price': None,
                                      'time': f.time.astimezone(ET).replace(tzinfo=None)})
-    if c.secType == 'BAG':            # the BAG line carries the net spread price
+    if c.secType in ('BAG', 'OPT'):   # net price on a BAG combo, or the single OPT fill
         o['price'] = e.price
 ib.disconnect()
 
 orders = {k: v for k, v in orders.items() if v['price'] is not None}
-print(f"Pulled {len(orders)} IBKR orders with a net BAG price.")
+print(f"Pulled {len(orders)} IBKR orders with a fill price.")
 
 
 def find_permid(symbol, price, ts):

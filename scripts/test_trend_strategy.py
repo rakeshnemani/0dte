@@ -1,7 +1,7 @@
 """Unit tests for the trend strategy (STRATEGY='trend') — pure functions in strategy.py.
 
 Pins the Supertrend/PSAR/Kaufman indicators and the windowed entry/exit signals that
-the live bot uses in trend mode, so they keep matching scripts/backtest_spread_dollars.py.
+the live bot uses in trend mode, so they keep matching scripts/backtest_dollars.py.
 No IBKR connection — everything runs on synthetic bars.
 
 Run:  python scripts/test_trend_strategy.py

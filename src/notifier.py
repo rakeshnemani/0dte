@@ -36,14 +36,14 @@ def send(title: str, description: str, color: int):
 # ── Trade lifecycle alerts ───────────────────────────────────────────────────
 
 def notify_submit(symbol: str, direction: str, long_strike: float, short_strike: float,
-                  spread_cost: float, qty: int, budget: float, indicators: dict,
+                  limit_price: float, qty: int, budget: float, indicators: dict,
                   reason: str, order_id):
     iv = indicators.get('iv_entry')
     desc = (
         f"**📊 Ticker:** {symbol}\n"
         f"**🎯 Direction:** {direction} (single-leg)\n"
         f"**⚙️ Strike:** ${long_strike:.0f} — 1× long {direction}\n"
-        f"**💰 Limit Price:** ${spread_cost:.2f} per contract\n"
+        f"**💰 Limit Price:** ${limit_price:.2f} per contract\n"
         f"**📈 Quantity:** {qty}\n"
         + (f"**🌡️ Entry-vol:** {iv:.3f}\n" if iv is not None else "") +
         f"\n**📝 Signal:** {reason}\n"
@@ -83,7 +83,7 @@ def notify_closed(symbol: str, trade: dict, exit_price: float,
                   commission: float = 0.0):
     desc = (
         f"**📊 Ticker:** {symbol}\n"
-        f"**🎯 Direction:** {trade['direction']} Spread\n"
+        f"**🎯 Direction:** {trade['direction']}\n"
         f"**🚪 Exit Fill:** ${exit_price:.2f} per contract (IBKR-confirmed)\n\n"
         f"**📈 Performance:**\n"
         f"• Net Profit: {profit_pct*100:+.2f}%\n"
@@ -93,7 +93,7 @@ def notify_closed(symbol: str, trade: dict, exit_price: float,
         f"• Max Profit Reached: {trade.get('max_profit_pct', 0)*100:.2f}%\n\n"
         f"**📝 Exit Reason:** {reason}"
     )
-    send("🔵 CLOSED 0DTE SPREAD POSITION", desc, BLUE if profit_pct > 0 else RED)
+    send("🔵 CLOSED 0DTE POSITION", desc, BLUE if profit_pct > 0 else RED)
 
 
 # ── Risk / lifecycle events ──────────────────────────────────────────────────
@@ -149,7 +149,7 @@ def notify_signal_blocked(strategy: str, symbol: str, reason: str):
 def notify_closed_externally(symbol: str, direction: str):
     send(
         "⚠️ POSITION CLOSED EXTERNALLY",
-        f"**{symbol} {direction} Spread** is no longer held in your IBKR "
+        f"**{symbol} {direction}** is no longer held in your IBKR "
         f"account — it was closed outside the bot (Client Portal, mobile app, or TWS).\n"
         f"Removed from tracking; the bot will not manage it or record a P&L for it.",
         ORANGE
@@ -159,10 +159,10 @@ def notify_closed_externally(symbol: str, direction: str):
 def notify_entry_expired(symbol: str, trade: dict, waited_s: float):
     send(
         "⌛ ENTRY ORDER EXPIRED (stale signal)",
-        f"**{symbol} {trade.get('direction')} Spread** limit @ "
+        f"**{symbol} {trade.get('direction')}** limit @ "
         f"${trade.get('target_entry_price', 0):.2f} went unfilled for "
         f"{waited_s/60:.1f} min and was cancelled — no position opened.\n"
-        f"A resting limit only fills once the spread decays to our bid, i.e. once "
+        f"A resting limit only fills once the option decays to our bid, i.e. once "
         f"the market has moved *against* the thesis. The signal is stale; the bot "
         f"will re-evaluate fresh rather than buy a dead setup (#34).",
         ORANGE
@@ -183,8 +183,8 @@ def notify_untracked_holding(symbol: str, lines: list):
 def notify_unadoptable(lines: list):
     send(
         "⚠️ UNTRACKED POSITIONS NEED ATTENTION",
-        "These account positions could not be adopted (not a clean 0DTE spread "
-        "pair). The bot will NOT manage them — review manually:\n\n" + "\n".join(lines),
+        "These account positions could not be adopted (not a tracked 0DTE position). "
+        "The bot will NOT manage them — review manually:\n\n" + "\n".join(lines),
         RED
     )
 

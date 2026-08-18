@@ -123,8 +123,7 @@ class TradingBot:
     _RECONCILE_DROP_AFTER_S = 180
 
     def _trade_leg_conids(self, trade: dict) -> list:
-        """All option-leg conIds for a trade (2 for a vertical, 4 for a condor).
-        Falls back to the legacy long/short fields for trades opened pre-upgrade."""
+        """Option-leg conId(s) for a trade (one for a single long leg)."""
         legs = trade.get('leg_conids')
         if legs:
             return legs
@@ -155,7 +154,7 @@ class TradingBot:
             return True  # fail-open
 
         # FAIL OPEN on an empty option-positions feed. An account holding an open
-        # 0DTE spread always shows >= 2 option legs; an empty list means the feed
+        # 0DTE position shows its option leg; an empty list means the feed
         # isn't populated, NOT that everything closed. (This guard is the specific
         # fix for the orphaning bug.)
         held = {p.contract.conId for p in positions
@@ -418,12 +417,12 @@ class TradingBot:
 
         step = config.STRIKE_STEP.get(symbol, 1)
         atm_strike = round(underlying_price / step) * step
-        # Buy ONE ATM (~50Δ) option — CALL bullish, PUT bearish. No spread, no short leg.
+        # Buy ONE ATM (~50Δ) option — CALL bullish, PUT bearish. Single leg.
         self._place_single_leg(symbol, direction, atm_strike, indicators, reason, strategy)
 
     def _place_single_leg(self, symbol: str, direction: str, strike: float,
                           indicators: dict, reason: str, strategy: str = 'trend'):
-        """Buy ONE ATM directional option (structure='SINGLE'). No short leg, no BAG.
+        """Buy ONE ATM directional option (structure='SINGLE'). Single long leg.
         Priced mid + ENTRY_AGGRESSION×(ask−mid); fixed 1 contract; no resting TP. Tracked
         under 'strategy:symbol' so trend and gex can each hold one."""
         try:
@@ -432,8 +431,8 @@ class TradingBot:
             if mid <= 0:
                 logger.warning(f"[{symbol}] No valid quote for single-leg {direction} {strike:g}. Aborting.")
                 return
-            if mid < config.MIN_SPREAD_COST:
-                logger.warning(f"[{symbol}] Option mid ${mid:.2f} below min ${config.MIN_SPREAD_COST:.2f}. Skipping.")
+            if mid < config.MIN_OPTION_COST:
+                logger.warning(f"[{symbol}] Option mid ${mid:.2f} below min ${config.MIN_OPTION_COST:.2f}. Skipping.")
                 return
             raw_limit = mid + config.ENTRY_AGGRESSION * max(ask - mid, 0.0)
             # Snap BOTH the limit and the mid-floor to the price-aware tick — a
@@ -450,7 +449,7 @@ class TradingBot:
                 'status': 'PENDING_ENTRY',
                 'submitted_at': market_time.now_et(),   # #34 entry-timeout anchor
                 'ibkr_trade': ibkr_trade,
-                'option_contract': opt,                  # close + value use this (no bag)
+                'option_contract': opt,                  # close + value use this
                 'qty': 1,
                 'max_profit_pct': 0.0,
                 'long_strike': strike,
@@ -512,20 +511,20 @@ class TradingBot:
                     logger.info(f"[{symbol}] Legs still absent ({missing_for:.0f}/{self._RECONCILE_DROP_AFTER_S}s); re-checking.")
                 return  # skip exit eval while the position's status is uncertain
 
-        current_spread_value = self._current_value(symbol, trade)
-        if current_spread_value <= 0:
-            logger.warning(f"Could not fetch spread value for {symbol}. Skipping exit eval.")
+        current_value = self._current_value(symbol, trade)
+        if current_value <= 0:
+            logger.warning(f"Could not fetch option value for {symbol}. Skipping exit eval.")
             return
 
         if trade.get('status') == 'PENDING_ENTRY':
             self._check_pending_fill(key, trade)
             return
 
-        # side: +1 long premium (debit), −1 short premium (condor)
-        profit_pct = self._side(trade) * (current_spread_value - trade['entry_price']) / trade['entry_price']
+        # single long option: profit = (value − entry) / entry
+        profit_pct = self._side(trade) * (current_value - trade['entry_price']) / trade['entry_price']
 
         # Cache live P&L so the "today" summary can read it without extra IBKR calls
-        trade['current_value'] = current_spread_value
+        trade['current_value'] = current_value
         trade['current_profit_pct'] = profit_pct
 
         if profit_pct > trade['max_profit_pct']:
@@ -541,14 +540,14 @@ class TradingBot:
             exit_triggered, exit_reason = self._gex_exit_check(symbol, trade, profit_pct)
         if exit_triggered:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")
-            self.close_position(key, current_spread_value, exit_reason)
+            self.close_position(key, current_value, exit_reason)
 
     def _trend_exit_check(self, symbol: str, trade: dict, profit_pct: float):
         """Trend-mode exits: hard stop OR Supertrend reversal (EOD flatten by the
         main loop). The Supertrend check caches its bar fetch ~50s so fast-polling
         doesn't refetch."""
         if profit_pct <= -config.HARD_STOP_LOSS_PCT:
-            return True, f"Hard stop loss: spread lost {abs(profit_pct)*100:.1f}% of entry value"
+            return True, f"Hard stop loss: lost {abs(profit_pct)*100:.1f}% of entry value"
 
         reversed_ = trade.get('_trend_rev_last', False)
         checked_at = trade.get('_trend_checked_at')
@@ -577,7 +576,7 @@ class TradingBot:
     def _expire_stale_entry(self, symbol: str, trade: dict, ibkr_trade) -> bool:
         """#34 — an entry limit outlives its signal.
 
-        A resting limit only fills once the spread decays to our bid — i.e. once the
+        A resting limit only fills once the option decays to our bid — i.e. once the
         market has already moved AGAINST the thesis (adverse selection). 2026-07-15:
         an order sat 1h42m, filled, and invalidated 65s later for −$175. The signal's
         shelf life is bars, not hours: cancel and let it be re-evaluated fresh.
@@ -745,7 +744,7 @@ class TradingBot:
     _MAX_CLOSE_ATTEMPTS = 4
     _CLOSE_RETRY_COOLDOWN_S = 30
 
-    def close_position(self, key: str, current_spread_value: float, reason: str):
+    def close_position(self, key: str, current_value: float, reason: str):
         """Submit a closing order and mark the trade PENDING_EXIT.
 
         P&L is NOT booked here — it's booked in _check_pending_exit once IBKR
@@ -824,7 +823,7 @@ class TradingBot:
             # Snap the close limit to the valid tick — a $0.05 price ≥ $3 is rejected
             # by IBKR error 110, which blocked EVERY close on 2026-08-17 (the bot
             # could not exit all day). See broker.snap_to_tick / #SL-EXEC.
-            close_limit = self.broker.snap_to_tick(symbol, current_spread_value)
+            close_limit = self.broker.snap_to_tick(symbol, current_value)
             exit_ibkr_trade = self.broker.place_limit(
                 close_contract, close_action, trade['qty'], close_limit
             )
@@ -836,7 +835,7 @@ class TradingBot:
             trade['close_attempts'] = attempts + 1
             trade['last_close_attempt_at'] = market_time.now_et()
             logger.info(
-                f"[{symbol}] SUBMITTED CLOSING SPREAD ORDER to IBKR at LIMIT "
+                f"[{symbol}] SUBMITTED CLOSING ORDER to IBKR at LIMIT "
                 f"${close_limit:.2f} (OrderId: {exit_ibkr_trade.order.orderId}, "
                 f"attempt {attempts + 1}/{self._MAX_CLOSE_ATTEMPTS}). Awaiting fill confirmation."
             )
@@ -917,7 +916,7 @@ class TradingBot:
         sym = trade.get('symbol', symbol)
         strat = trade.get('strategy', 'trend')
         reason = trade.get('exit_reason', '')
-        side = self._side(trade)   # +1 debit, −1 condor (short premium)
+        side = self._side(trade)   # +1 — single long option
         profit_pct = side * (fill_price - trade['entry_price']) / trade['entry_price']
         dollar_pnl = side * (fill_price - trade['entry_price']) * trade['qty'] * 100
         logger.info(
@@ -1002,10 +1001,10 @@ class TradingBot:
                     logger.info(f"[{sym}] EOD: cancelled unfilled entry order.")
                     self.active_trades.pop(key, None)
                     continue
-                current_spread_value = self._current_value(sym, trade)
-                if current_spread_value <= 0:
-                    current_spread_value = 0.01  # still flatten — submit at minimum tick
-                self.close_position(key, current_spread_value, reason)
+                current_value = self._current_value(sym, trade)
+                if current_value <= 0:
+                    current_value = 0.01  # still flatten — submit at minimum tick
+                self.close_position(key, current_value, reason)
             except Exception as e:
                 logger.error(f"[{sym}] EOD flatten failed: {e}")
                 self.active_trades.pop(key, None)
@@ -1053,7 +1052,7 @@ class TradingBot:
         return 60
 
     def run(self):
-        logger.info("Starting 0DTE Options Spread Trading Bot (IBKR)...")
+        logger.info("Starting 0DTE Options Trading Bot (IBKR)...")
         while True:
             try:
                 self.broker.ensure_connected()

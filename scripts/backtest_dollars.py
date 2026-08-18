@@ -15,9 +15,9 @@ Strategy (the user's trend spec):
 (default: the 2-year cache if present, else the 120-day one). Writes EVERY trade to a CSV
 (--csv) for hands-on pattern-hunting, and prints a per-QUARTER summary.
 
-  python scripts/backtest_spread_dollars.py --width 10               # $10, quarterly, full CSV
-  python scripts/backtest_spread_dollars.py --width 10 --kauf 45 --cutoff 13
-  python scripts/backtest_spread_dollars.py --width 10 --ivmult 1.2  # harsher (realistic) theta
+  python scripts/backtest_dollars.py --width 10               # $10, quarterly, full CSV
+  python scripts/backtest_dollars.py --width 10 --kauf 45 --cutoff 13
+  python scripts/backtest_dollars.py --width 10 --ivmult 1.2  # harsher (realistic) theta
 """
 import argparse
 import os
