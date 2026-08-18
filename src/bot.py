@@ -57,6 +57,7 @@ class TradingBot:
         # occasionally and recompute Gflip intraday from it as spot moves.
         self._gex_chain: list = []
         self._gex_chain_at = None
+        self._gex_collect_at = None   # throttles the always-on GEX data collection (~60s)
         # Throttle "signal formed but skipped" transparency alerts (per strategy:symbol).
         self._blocked_alert_at: Dict[tuple, datetime.datetime] = {}
 
@@ -282,6 +283,63 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"[{symbol}] Could not save GEX chain snapshot: {e}")
 
+    def _collect_gex_data(self, symbol: str):
+        """ALWAYS-ON GEX data collection — runs every loop regardless of position state or
+        entry window, so the chain, Gflip and distance-to-flip are recorded even while a GEX
+        trade is open (on 2026-08-17 the bot went data-blind after entry because collection
+        was tied to the entry scan). Refreshes the chain (30-min throttle), and every ~5 min
+        logs the regime + distance-to-flip and appends it to data/gex/regime_YYYY-MM-DD.csv.
+        Data collection ONLY — it makes no trading decision and changes no entry/exit rule."""
+        now = market_time.now_et()
+        if self._gex_collect_at and (now - self._gex_collect_at).total_seconds() < 60:
+            return
+        self._gex_collect_at = now
+        self._refresh_gex_chain(symbol)              # 30-min throttle inside; also saves the chain
+        if not self._gex_chain:
+            return
+        last = getattr(self, '_gex_log_at', None)
+        if last is not None and (now - last).total_seconds() < 300:
+            return                                    # log/record the regime ~every 5 min
+        spot = self.broker.get_current_price(symbol)
+        if spot <= 0:
+            return
+        self._gex_log_at = now
+        gflip = gex.gamma_flip(self._gex_chain, spot)
+        zones = gex.concentration_zones(self._gex_chain, n=3)
+        reg = gex.gex_regime(spot, gflip)
+        gfs = f"{gflip:.1f}" if gflip else "n/a"
+        cw = zones.get('call_walls', [[0]])[0][0]; pw = zones.get('put_walls', [[0]])[0][0]
+        dist_pts = (spot - gflip) if gflip else None
+        dist_pct = (dist_pts / gflip * 100) if gflip else None
+        dstr = f"{dist_pts:+.1f}pt ({dist_pct:+.3f}%)" if dist_pts is not None else "n/a"
+        in_pos = self._tkey('gex', symbol) in self.active_trades
+        logger.info(f"[{symbol}] GEX regime: spot {spot:.1f} vs Gflip {gfs} → {reg} gamma"
+                    f" | dist {dstr} | walls C{cw:.0f}/P{pw:.0f}"
+                    f"{' | IN-POSITION' if in_pos else ''}")
+        self._save_gex_regime(symbol, spot, gflip, dist_pts, dist_pct, reg, cw, pw, in_pos)
+
+    def _save_gex_regime(self, symbol, spot, gflip, dist_pts, dist_pct, regime, cw, pw, in_pos):
+        """Append one distance-to-flip row to data/gex/regime_YYYY-MM-DD.csv — the evidence
+        dataset for 'does entering near Gflip chop?'. Written every ~5 min. Data only."""
+        try:
+            import csv
+            d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'gex')
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, f"regime_{market_time.now_et():%Y-%m-%d}.csv")
+            new = not os.path.isfile(path)
+            with open(path, 'a', newline='') as f:
+                w = csv.writer(f)
+                if new:
+                    w.writerow(['timestamp', 'symbol', 'spot', 'gflip', 'dist_pts',
+                                'dist_pct', 'regime', 'call_wall', 'put_wall', 'in_position'])
+                w.writerow([market_time.now_et().strftime('%Y-%m-%d %H:%M:%S'), symbol,
+                            round(spot, 2), round(gflip, 2) if gflip else '',
+                            round(dist_pts, 2) if dist_pts is not None else '',
+                            round(dist_pct, 4) if dist_pct is not None else '',
+                            regime, f"{cw:.0f}", f"{pw:.0f}", int(in_pos)])
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not save GEX regime row: {e}")
+
     @staticmethod
     def _tkey(strategy: str, symbol: str) -> str:
         """Composite active_trades key so multiple strategies can each hold a position in
@@ -323,16 +381,8 @@ class TradingBot:
         spot = float(df['close'].iloc[-1])
         gflip = gex.gamma_flip(self._gex_chain, spot)
         zones = gex.concentration_zones(self._gex_chain, n=3)
-        # Log the LIVE Gflip/regime every ~5 min so we can see exactly what the bot sees
-        # (needed to diagnose why GEX does/doesn't fire — the flip drifts intraday).
-        last = getattr(self, '_gex_log_at', None)
-        if last is None or (now - last).total_seconds() >= 300:
-            self._gex_log_at = now
-            reg = gex.gex_regime(spot, gflip)
-            gfs = f"{gflip:.1f}" if gflip else "n/a"
-            cw = zones.get('call_walls', [[0]])[0][0]; pw = zones.get('put_walls', [[0]])[0][0]
-            logger.info(f"[{symbol}] GEX regime: spot {spot:.1f} vs Gflip {gfs} → {reg} gamma "
-                        f"| walls C{cw:.0f}/P{pw:.0f}")
+        # (regime + distance-to-flip logging/recording is done every loop in
+        # _collect_gex_data — always-on, so it keeps running while a position is held.)
         direction, reason, indicators, _ = strategy.gex_entry_signal(
             symbol, df, now, gflip, zones)
         if direction and config.GEX_SKIP_LOWIV > 0:
@@ -1095,6 +1145,13 @@ class TradingBot:
                 if (market_time.is_eod_flatten_time() or gex_flatten) and self.active_trades:
                     logger.info("Flatten time reached — closing all open positions.")
                     self.close_all_positions("End of day — flattening 0DTE positions")
+
+                # ALWAYS collect GEX data (chain + Gflip + distance-to-flip), every loop —
+                # even while holding a position or outside the entry window. Never go
+                # data-blind again (08-17). Data only; makes no trading decision.
+                if 'gex' in config.ACTIVE_STRATEGIES:
+                    for symbol in config.SYMBOLS:
+                        self._collect_gex_data(symbol)
 
                 # Entry scanning stays on a ~60s cadence even when the loop
                 # fast-polls exits — no point re-fetching bars every 15s.
