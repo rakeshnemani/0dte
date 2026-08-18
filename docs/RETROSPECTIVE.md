@@ -149,6 +149,46 @@ regime's sample.
 
 ---
 
+## 2026-08-18 (Tue) — 🔴 first fully-automated GEX round-trip: a −$800 catastrophe-stop loss (the mirror of 08-17)
+
+**The close-path fix works — and today it closed a loser.** For the first time the bot executed AND
+managed a GEX trade end-to-end with no manual help: BUY SPXW PUT @ **10.00** (10:13), then **auto-closed
+at 2.00 (13:10) on the −80% catastrophe stop = −$800** (−$803 net). Yesterday the bot couldn't close (the
+tick bug); today it did. A milestone on the plumbing; a loss on the trade.
+
+**The setup — and how it mirrored 08-17:**
+
+| | 08-17 (PUT) | 08-18 (PUT) |
+|---|---|---|
+| Entry spot / Gflip | 7773 / 7777.5 | 7698.7 / 7775.1 |
+| **Distance to flip** | **−0.055% (AT the flip)** | **−0.98% (deep neg-γ)** |
+| Entry-vol | 0.094 | 0.119 (more active tape) |
+| Path | chopped to −53%, then rescued | peaked +4%, never armed the trail, bled straight to −80% |
+| Close | **manual** +$876.74 (tick bug) | **auto** −$800 (catastrophe stop) |
+
+Today was the **textbook** GEX setup the distance-to-flip idea likes — spot ~76 pts (−0.98%) below Gflip,
+decisively negative gamma, a clean OR breakdown, good vol — and it **lost**. Yesterday's marginal
+near-flip setup **won**. So across the two trades we have, distance-to-flip is **anti-predictive** (the
+"good" distance lost, the "bad" one won). Reinforces the call to just collect, not gate.
+
+**Why it lost:** even in deep negative gamma the breakdown **didn't follow through** — spot broke 7698
+then chopped/reverted around 7700 all day (regime CSV: spot 7696–7710, never fell). Negative gamma is a
+*prior* (odds favor follow-through), **not a guarantee**; today it didn't pay, and a naked PUT bleeding
+theta on a sideways tape goes to zero. The honest face of GEX-with-no-backtest.
+
+**The "let the tail ride" change (08-17) showed its downside today — exactly as flagged.** With the 50%
+stop and the invalidation exit removed, a straight-loser has no protection until −80%. **Both** removed
+exits would have saved money today: the invalidation cut would have exited early (the OR break failed
+minutes in), and the 50% stop would have capped it at ~−$500 vs −$800. On 08-17 those same exits would
+have cut a *winner*; today they'd have saved a *loser* — the asymmetry you can't escape with one rule.
+**Two GEX trades now: +$876.74 (manual) and −$800 (auto) = ~+$73 net** — one a manual rescue. No edge yet.
+
+**Wins today:** (1) the always-on GEX collection worked — `data/gex/regime_2026-08-18.csv` has 72
+snapshots all day including **34 while in-position** (exactly the in-trade data we lost on 08-17);
+(2) the close path auto-closed cleanly; (3) the catastrophe stop capped the loss at −80%, not −100%.
+
+---
+
 ## 2026-08-17 (Mon) — 🟢 FIRST clean fill + a manual +$876.74 win — but the bot couldn't close (fixed)
 
 **The first single-leg trade actually executed end-to-end on the entry side, booked a profit — and

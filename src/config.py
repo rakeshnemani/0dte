@@ -85,11 +85,6 @@ ENTRY_ORDER_TIMEOUT_SECONDS = int(os.getenv("ENTRY_ORDER_TIMEOUT_SECONDS", "120"
 ENTRY_AGGRESSION = float(os.getenv("ENTRY_AGGRESSION", "0.5"))
 STRIKE_STEP = {"SPY": 1, "QQQ": 1, "IWM": 1, "XSP": 1, "SPX": 5}   # SPX 0DTE lists 5-pt strikes ATM
 
-# Signal source: index products have thin/no-volume 1-min bars, so the exit-audit's
-# VWAP/ADX/ORB are computed from a liquid proxy (SPY). Strikes + orders still use the
-# execution symbol. A symbol absent from this map sources its own bars.
-SIGNAL_SOURCE = {"XSP": "SPY", "SPX": "SPY"}
-
 # ── Exit / risk guards (shared) ──────────────────────────────────────────────
 # Fast exit polling: the loop runs every 60s normally but drops to FAST_POLL_SECONDS when an
 # exit needs tight watching — a closing order in flight, or an ACTIVE trade with profit >=

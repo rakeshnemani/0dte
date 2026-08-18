@@ -1010,10 +1010,11 @@ class TradingBot:
         notifier.notify_closed(sym, trade, fill_price, profit_pct, dollar_pnl,
                                reason, commission=commission)
 
-        # Capture exit-time indicators for the audit log — from the signal source
-        # (#3: XSP → SPY), so exit indicators are comparable to the entry ones and
-        # aren't computed from thin XSP index bars.
-        df = self.broker.fetch_intraday_data(config.SIGNAL_SOURCE.get(sym, sym))
+        # Capture exit-time indicators (ADX/ORB/underlying) on the SELL row from the
+        # symbol's OWN bars — same scale as the entry row. (Historically proxied to SPY
+        # for a volume-weighted VWAP in the breakout era; trend/gex use HLC only, so we
+        # read SPX directly and the SELL underlying_price now matches the BUY row.)
+        df = self.broker.fetch_intraday_data(sym)
         exit_indicators = trade.get('entry_indicators', {}).copy()
         # >= 30 bars: ADX(14) raises "index out of bounds" below ~29 bars
         if not df.empty and len(df) >= 30:

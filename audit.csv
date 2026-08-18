@@ -1,3 +1,5 @@
 Timestamp,Strategy,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_High,ORB_Low,Breadth,Reason,Profit_Pct,Dollar_PnL,ADX_Slope,Peak_Pct,Conviction,Commission,PermId
 2026-08-17 10:00:19,gex,BUY,SPX,PUT,8.6,7773.27,,,7790.68,7774.12,,GEX PUT: neg-γ (spot<Gflip) | close 7773.27 < OR-level 7774.12 | 2-bar accel ↓,,,,,,1.63,137161803
 2026-08-17 14:25:59,gex,SELL,SPX,PUT,17.4,,,,,,,Manual close via IBKR — bot auto-close blocked by close-path tick bug (#SL-CLOSE); reconciled from permId 2083350234,102.33%,880.00,,,,1.63,2083350234
+2026-08-18 10:13:41,gex,BUY,SPX,PUT,10.0,7697.00,,,7713.95,7698.76,,GEX PUT: neg-γ (spot<Gflip) | close 7697.00 < OR-level 7698.76 | 2-bar accel ↓,,,,,,1.63,2386005
+2026-08-18 13:10:29,gex,SELL,SPX,PUT,2.0,768.71,13.66,768.58,769.50,767.90,,Catastrophe stop: lost 80%,-80.00%,-800.00,,4.00%,,3.26,2386006
