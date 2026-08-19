@@ -104,17 +104,19 @@ def gex_by_strike(spot: float, chain: List[dict], mult: int = 100) -> dict:
     return {k: v * spot * spot * 0.01 * mult for k, v in agg.items()}
 
 
-def gex_walls(spot: float, chain: List[dict], mult: int = 100):
-    """(call_wall_strike, call_wall_$, put_wall_strike, put_wall_$) — the strikes with the
-    largest POSITIVE (dealer resistance) and most NEGATIVE (dealer support) net GEX. This is
-    the 'GEX wall' in the dealer-gamma sense (matches external GEX providers), NOT raw-OI
-    concentration (that's concentration_zones, which the wall-breakout entry uses)."""
+def gex_ladders(spot: float, chain: List[dict], n: int = 3, mult: int = 100):
+    """Top-n resistance and support strikes by gamma-weighted net GEX. Returns
+    (call_ladder, put_ladder), each a list of (strike, $): call_ladder = the n most POSITIVE
+    (dealer resistance) strikes, most-positive first; put_ladder = the n most NEGATIVE
+    (dealer support) strikes, most-negative first. A support 'shelf' (several close strikes) is
+    what price actually interacts with — more faithful than a single wall (see docs/GEX_NOTES.md
+    H3). Gamma-weighted (matches external GEX providers), NOT raw-OI concentration_zones."""
     agg = gex_by_strike(spot, chain, mult)
     if not agg:
-        return (None, 0.0, None, 0.0)
-    cw = max(agg.items(), key=lambda kv: kv[1])   # most positive
-    pw = min(agg.items(), key=lambda kv: kv[1])   # most negative
-    return (cw[0], cw[1], pw[0], pw[1])
+        return [], []
+    calls = sorted(((k, v) for k, v in agg.items() if v > 0), key=lambda kv: -kv[1])[:n]
+    puts = sorted(((k, v) for k, v in agg.items() if v < 0), key=lambda kv: kv[1])[:n]
+    return calls, puts
 
 
 def near_a_wall(price: float, zones: dict, tol: float) -> bool:

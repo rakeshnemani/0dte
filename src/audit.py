@@ -17,9 +17,11 @@ _COLUMNS = [
     "Profit_Pct", "Dollar_PnL", "ADX_Slope", "Peak_Pct", "Conviction", "Commission",
     "PermId",
     # GEX context frozen at order time (blank for trend trades). Spot = Underlying_Price.
-    # Net GEX is our-convention $M (±5%/3-expiry window); walls are the gamma-weighted
-    # heaviest resistance/support strikes (see gex.gex_walls), not raw-OI concentration.
-    "Gflip", "Dist_Gflip_Pct", "Net_GEX_Total_M", "Net_GEX_0DTE_M", "Call_Wall", "Put_Wall",
+    # Net GEX is our-convention $M (±5%/3-expiry window). Ladders are the top-3 gamma-weighted
+    # resistance/support strikes, heaviest first, pipe-joined (see gex.gex_ladders). Setup_Tag
+    # buckets the entry vs the support ladder: Runway (room to run) / IntoWall (see GEX_NOTES.md H3).
+    "Gflip", "Dist_Gflip_Pct", "Net_GEX_Total_M", "Net_GEX_0DTE_M",
+    "Call_Ladder", "Put_Ladder", "Setup_Tag",
 ]
 
 
@@ -33,7 +35,8 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
            perm_id: Optional[int] = None, strategy: Optional[str] = None,
            gflip: Optional[float] = None, dist_gflip_pct: Optional[float] = None,
            net_gex_total: Optional[float] = None, net_gex_0dte: Optional[float] = None,
-           call_wall: Optional[float] = None, put_wall: Optional[float] = None):
+           call_ladder: Optional[str] = None, put_ladder: Optional[str] = None,
+           setup_tag: Optional[str] = None):
     file_exists = os.path.isfile(AUDIT_FILE)
     try:
         with open(AUDIT_FILE, mode='a', newline='') as file:
@@ -65,8 +68,9 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
                 f"{dist_gflip_pct:+.3f}%" if dist_gflip_pct is not None else "",
                 f"{net_gex_total:.0f}" if net_gex_total is not None else "",
                 f"{net_gex_0dte:.0f}" if net_gex_0dte is not None else "",
-                f"{call_wall:.0f}" if call_wall is not None else "",
-                f"{put_wall:.0f}" if put_wall is not None else "",
+                call_ladder or "",
+                put_ladder or "",
+                setup_tag or "",
             ])
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")

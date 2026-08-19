@@ -51,9 +51,15 @@ sat *overhead and were never traded*.
   wall still overhead*, i.e. wedged in the middle of a double support shelf rather than clear below it
   with room to run. That's a structurally weak spot for a PUT to continue.
 
-**Candidate metric (not yet captured):** a **"runway"** reading at entry = total negative GEX *below* the
-entry vs *above* it. Above-heavy = runway; below-heavy = into-support. Would make H3 testable across the
-forward test as a single number. (Data-only add if we decide to.)
+**Bucketing (now captured — `Setup_Tag`):** each GEX entry is auto-tagged into one of two buckets so we
+can group and compare later:
+- **`Runway`** — the lead support/resistance strike is *past* the entry (a PUT with heavy support *below*
+  spot, a CALL with heavy resistance *above*) → room to run into it.
+- **`IntoWall`** — entered *into/against* it (support at/above a PUT's entry) → no runway.
+
+So far: **08-17 = `Runway` → won; 08-18 = `IntoWall` → lost.** As the sample grows, group the audit by
+`Setup_Tag` and compare win-rate / avg P&L — *that* is the test of H3. (It's still a computed **label**,
+not a trading rule. A fuller "runway = net GEX below vs above the entry" number is a possible future add.)
 
 ---
 
@@ -72,7 +78,7 @@ forward test as a single number. (Data-only add if we decide to.)
   strike at **7755**, matching the external **−$40.08M @ 7755** reading — from a completely different,
   smaller chain subset.
 - **What we now freeze at every order** (audit + Discord submit alert): Gflip, spot, distance-to-flip %,
-  net GEX (total + 0DTE, $M), and the call/put walls. Historical 08-17/08-18 rows were backfilled.
+  net GEX (total + 0DTE, $M), the **top-3 support/resistance ladders** (`Put_Ladder`/`Call_Ladder`, gamma-weighted, heaviest first), and a one-word **`Setup_Tag`** bucket. Historical 08-17/08-18 rows were backfilled.
 
 ---
 

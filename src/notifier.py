@@ -41,16 +41,18 @@ def notify_submit(symbol: str, direction: str, long_strike: float, short_strike:
     iv = indicators.get('iv_entry')
     gex_block = ""
     if indicators.get('gflip') is not None:      # GEX trades carry the dealer-gamma context
+        def _lad(rows):
+            return " · ".join(f"{k:.0f}({v:+,.0f}M)" for k, v in (rows or [])) or "n/a"
+        tag = indicators.get('setup_tag')
         gex_block = (
             f"\n**📐 GEX context (at entry):**\n"
             f"• Spot ${indicators.get('current_price', 0):.0f} vs Gflip ${indicators['gflip']:.0f} "
             f"→ dist {indicators.get('dist_gflip_pct', 0):+.3f}%\n"
             f"• Net GEX: total {indicators.get('net_gex_total', 0):+,.0f}M · "
             f"0DTE {indicators.get('net_gex_0dte', 0):+,.0f}M\n"
-            f"• Walls: call ${indicators.get('call_wall') or 0:.0f} "
-            f"({indicators.get('call_wall_m', 0):+,.0f}M) / "
-            f"put ${indicators.get('put_wall') or 0:.0f} "
-            f"({indicators.get('put_wall_m', 0):+,.0f}M)\n"
+            f"• Resistance ladder: {_lad(indicators.get('call_ladder_full'))}\n"
+            f"• Support ladder: {_lad(indicators.get('put_ladder_full'))}\n"
+            + (f"• **Setup:** {tag}\n" if tag else "")
         )
     desc = (
         f"**📊 Ticker:** {symbol}\n"
