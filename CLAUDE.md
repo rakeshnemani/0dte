@@ -107,6 +107,7 @@ IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bo
 ## Docs map
 
 - `docs/STRATEGY.md` — **detailed strategy reference**: thesis, exact entry/exit criteria, indicators, GEX math, parameters.
+- `docs/GEX_NOTES.md` — **GEX forward-test notebook**: dealer-gamma observations + hypotheses under test (distance-to-flip, chain-direction, support-ladder/runway) with the evidence so far. Append each GEX day.
 - `docs/HOW_IT_WORKS.md` — full bot lifecycle + config reference table.
 - `docs/PLAYBOOKS.md` — entry/exit/P&L for the trend + GEX single-leg strategies.
 - `docs/RECONCILE.md` — how to use `reconcile_ibkr.py`.
