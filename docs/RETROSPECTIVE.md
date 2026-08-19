@@ -162,9 +162,20 @@ tick bug); today it did. A milestone on the plumbing; a loss on the trade.
 |---|---|---|
 | Entry spot / Gflip | 7773 / 7777.5 | 7698.7 / 7775.1 |
 | **Distance to flip** | **−0.055% (AT the flip)** | **−0.98% (deep neg-γ)** |
+| Put/call OI (our ±5% window) | 0.70 | **2.29 — far more put-heavy** |
+| Heaviest neg-γ strike (our calc) | **7755** (matches external −$40.08M) | 7720 |
+| Net dealer GEX | ≈ 0 (spot on the flip) | strongly negative (spot 62 pts below) |
 | Entry-vol | 0.094 | 0.119 (more active tape) |
 | Path | chopped to −53%, then rescued | peaked +4%, never armed the trail, bled straight to −80% |
 | Close | **manual** +$876.74 (tick bug) | **auto** −$800 (catastrophe stop) |
+
+**Chain structure didn't predict direction.** Today's book was *more* bearishly positioned than
+yesterday's (put/call OI 2.29 vs 0.70, net dealer GEX deeply negative vs ≈0 at the flip) — the stronger
+"down" setup of the two — and price went **up** (PUT lost). Yesterday's put-heavy chain → down → win;
+today's *more* put-heavy chain → up → loss. The GEX chain is a *prior*, not a forecast. (Nice cross-check
+though: our own GEX math independently put the heaviest neg-γ strike at **7755** on 08-17, matching the
+external −$40.08M reading — from a different, smaller chain subset. Numbers are our ±5%/3-expiry window,
+not the provider's full-chain $; 08-17 is a morning-only snapshot; trust the direction, not the decimals.)
 
 Today was the **textbook** GEX setup the distance-to-flip idea likes — spot ~76 pts (−0.98%) below Gflip,
 decisively negative gamma, a clean OR breakdown, good vol — and it **lost**. Yesterday's marginal
