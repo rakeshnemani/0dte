@@ -39,13 +39,27 @@ def notify_submit(symbol: str, direction: str, long_strike: float, short_strike:
                   limit_price: float, qty: int, budget: float, indicators: dict,
                   reason: str, order_id):
     iv = indicators.get('iv_entry')
+    gex_block = ""
+    if indicators.get('gflip') is not None:      # GEX trades carry the dealer-gamma context
+        gex_block = (
+            f"\n**📐 GEX context (at entry):**\n"
+            f"• Spot ${indicators.get('current_price', 0):.0f} vs Gflip ${indicators['gflip']:.0f} "
+            f"→ dist {indicators.get('dist_gflip_pct', 0):+.3f}%\n"
+            f"• Net GEX: total {indicators.get('net_gex_total', 0):+,.0f}M · "
+            f"0DTE {indicators.get('net_gex_0dte', 0):+,.0f}M\n"
+            f"• Walls: call ${indicators.get('call_wall') or 0:.0f} "
+            f"({indicators.get('call_wall_m', 0):+,.0f}M) / "
+            f"put ${indicators.get('put_wall') or 0:.0f} "
+            f"({indicators.get('put_wall_m', 0):+,.0f}M)\n"
+        )
     desc = (
         f"**📊 Ticker:** {symbol}\n"
         f"**🎯 Direction:** {direction} (single-leg)\n"
         f"**⚙️ Strike:** ${long_strike:.0f} — 1× long {direction}\n"
         f"**💰 Limit Price:** ${limit_price:.2f} per contract\n"
         f"**📈 Quantity:** {qty}\n"
-        + (f"**🌡️ Entry-vol:** {iv:.3f}\n" if iv is not None else "") +
+        + (f"**🌡️ Entry-vol:** {iv:.3f}\n" if iv is not None else "")
+        + gex_block +
         f"\n**📝 Signal:** {reason}\n"
         f"**⏳ Status:** Pending fill (Order #{order_id})"
     )

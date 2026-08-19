@@ -16,6 +16,10 @@ _COLUMNS = [
     "ADX", "VWAP", "ORB_High", "ORB_Low", "Breadth", "Reason",
     "Profit_Pct", "Dollar_PnL", "ADX_Slope", "Peak_Pct", "Conviction", "Commission",
     "PermId",
+    # GEX context frozen at order time (blank for trend trades). Spot = Underlying_Price.
+    # Net GEX is our-convention $M (±5%/3-expiry window); walls are the gamma-weighted
+    # heaviest resistance/support strikes (see gex.gex_walls), not raw-OI concentration.
+    "Gflip", "Dist_Gflip_Pct", "Net_GEX_Total_M", "Net_GEX_0DTE_M", "Call_Wall", "Put_Wall",
 ]
 
 
@@ -26,7 +30,10 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
            dollar_pnl: Optional[float] = None, breadth: Optional[str] = None,
            adx_slope: Optional[float] = None, peak_pct: Optional[float] = None,
            conviction: Optional[str] = None, commission: Optional[float] = None,
-           perm_id: Optional[int] = None, strategy: Optional[str] = None):
+           perm_id: Optional[int] = None, strategy: Optional[str] = None,
+           gflip: Optional[float] = None, dist_gflip_pct: Optional[float] = None,
+           net_gex_total: Optional[float] = None, net_gex_0dte: Optional[float] = None,
+           call_wall: Optional[float] = None, put_wall: Optional[float] = None):
     file_exists = os.path.isfile(AUDIT_FILE)
     try:
         with open(AUDIT_FILE, mode='a', newline='') as file:
@@ -54,6 +61,12 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
                 conviction or "",
                 f"{commission:.2f}" if commission is not None else "",
                 str(perm_id) if perm_id else "",
+                f"{gflip:.2f}" if gflip is not None else "",
+                f"{dist_gflip_pct:+.3f}%" if dist_gflip_pct is not None else "",
+                f"{net_gex_total:.0f}" if net_gex_total is not None else "",
+                f"{net_gex_0dte:.0f}" if net_gex_0dte is not None else "",
+                f"{call_wall:.0f}" if call_wall is not None else "",
+                f"{put_wall:.0f}" if put_wall is not None else "",
             ])
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")

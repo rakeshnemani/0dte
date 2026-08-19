@@ -85,6 +85,38 @@ def concentration_zones(chain: List[dict], n: int = 3) -> dict:
     }
 
 
+def net_gex_0dte(spot: float, chain: List[dict], mult: int = 100) -> float:
+    """Net dealer GEX from ONLY the nearest-expiry (0DTE) strikes in the chain — the
+    same units as net_gex, but restricted to today's expiry (T at its minimum)."""
+    if not chain:
+        return 0.0
+    min_T = min(c['T'] for c in chain)
+    return net_gex(spot, [c for c in chain if c['T'] <= min_T + 1e-9], mult)
+
+
+def gex_by_strike(spot: float, chain: List[dict], mult: int = 100) -> dict:
+    """Per-strike net dealer GEX ($, our convention), summed across expiries. Positive =
+    dealers dampen there (resistance / call wall); negative = amplify (support / put wall)."""
+    agg = {}
+    for c in chain:
+        g = bs_gamma(spot, c['strike'], c['T'], c['iv'])
+        agg[c['strike']] = agg.get(c['strike'], 0.0) + (c['oi_call'] - c['oi_put']) * g
+    return {k: v * spot * spot * 0.01 * mult for k, v in agg.items()}
+
+
+def gex_walls(spot: float, chain: List[dict], mult: int = 100):
+    """(call_wall_strike, call_wall_$, put_wall_strike, put_wall_$) — the strikes with the
+    largest POSITIVE (dealer resistance) and most NEGATIVE (dealer support) net GEX. This is
+    the 'GEX wall' in the dealer-gamma sense (matches external GEX providers), NOT raw-OI
+    concentration (that's concentration_zones, which the wall-breakout entry uses)."""
+    agg = gex_by_strike(spot, chain, mult)
+    if not agg:
+        return (None, 0.0, None, 0.0)
+    cw = max(agg.items(), key=lambda kv: kv[1])   # most positive
+    pw = min(agg.items(), key=lambda kv: kv[1])   # most negative
+    return (cw[0], cw[1], pw[0], pw[1])
+
+
 def near_a_wall(price: float, zones: dict, tol: float) -> bool:
     """True if `price` is within `tol` (price units) of any concentration wall — the
     choppy area the strategy wants to be BREAKING OUT of, not sitting inside."""

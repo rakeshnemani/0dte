@@ -396,6 +396,16 @@ class TradingBot:
                 return None, "", {}
             indicators['iv_entry'] = round(ive, 3)
         if direction:
+            # Freeze the GEX context at order time (for the audit + Discord + forward-testing).
+            cw_s, cw_v, pw_s, pw_v = gex.gex_walls(spot, self._gex_chain)
+            indicators['gflip'] = round(gflip, 2) if gflip else None
+            indicators['dist_gflip_pct'] = round((spot - gflip) / gflip * 100, 3) if gflip else None
+            indicators['net_gex_total'] = round(gex.net_gex(spot, self._gex_chain) / 1e6, 0)
+            indicators['net_gex_0dte'] = round(gex.net_gex_0dte(spot, self._gex_chain) / 1e6, 0)
+            indicators['call_wall'] = cw_s
+            indicators['call_wall_m'] = round(cw_v / 1e6, 0)
+            indicators['put_wall'] = pw_s
+            indicators['put_wall_m'] = round(pw_v / 1e6, 0)
             logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
         elif reason:                          # an OR breakout formed but regime/momentum blocked it
             self._alert_blocked('gex', symbol, reason)
@@ -734,6 +744,9 @@ class TradingBot:
                 commission=entry_commission,
                 perm_id=trade.get('entry_permId'),
                 strategy=strat,
+                gflip=ind.get('gflip'), dist_gflip_pct=ind.get('dist_gflip_pct'),
+                net_gex_total=ind.get('net_gex_total'), net_gex_0dte=ind.get('net_gex_0dte'),
+                call_wall=ind.get('call_wall'), put_wall=ind.get('put_wall'),
             )
             notifier.notify_filled(symbol, trade, filled_price)
         except Exception as e:
