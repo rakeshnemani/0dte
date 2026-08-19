@@ -67,14 +67,14 @@ not a trading rule. A fuller "runway = net GEX below vs above the entry" number 
 
 - **Gflip / regime.** Spot < Gflip → **negative gamma**: dealers hedge *with* the move (sell into
   weakness) → amplify → momentum-friendly. Spot > Gflip → **positive gamma**: dealers fade → dampen → chop.
-- **Walls (`gex.gex_walls`)** = the **gamma-weighted** heaviest resistance (most-positive GEX) and support
-  (most-negative GEX) strikes. This is the "GEX wall" external providers quote — **distinct from
-  `concentration_zones`** (raw-OI top strikes), which is what the bot's *wall-breakout entry* uses. The
-  audit's `Call_Wall`/`Put_Wall` columns are the gamma-weighted ones.
+- **Ladders (`gex.gex_ladders`)** = the top-3 **gamma-weighted** heaviest resistance (most-positive GEX)
+  and support (most-negative GEX) strikes. This is the "GEX wall" external providers quote — **distinct
+  from `concentration_zones`** (raw-OI top strikes), which is what the bot's *wall-breakout entry* uses.
+  The audit's `Call_Ladder`/`Put_Ladder` columns are the gamma-weighted top-3.
 - **Our net-GEX $ is our-own-convention** (±5% / 3-expiry / 50-strike window, $ per 1% move). It is
   **internally consistent** for our day-to-day comparison but **not comparable** to a provider's
   full-chain $ figure — don't line our −37,629M up against their "$38M".
-- **Cross-check that our math is sound:** our `gex_walls` independently put 08-17's heaviest put-support
+- **Cross-check that our math is sound:** our `gex_ladders` independently put 08-17's heaviest put-support
   strike at **7755**, matching the external **−$40.08M @ 7755** reading — from a completely different,
   smaller chain subset.
 - **What we now freeze at every order** (audit + Discord submit alert): Gflip, spot, distance-to-flip %,
