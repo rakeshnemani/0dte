@@ -1,0 +1,4 @@
+# Live command files + their processed archive are ephemeral runtime state, not source.
+# Keep this .gitignore and README.md tracked; ignore everything else the bot reads/writes here.
+/*.json
+/processed/

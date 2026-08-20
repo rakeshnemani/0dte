@@ -57,7 +57,10 @@ can group and compare later:
   spot, a CALL with heavy resistance *above*) → room to run into it.
 - **`IntoWall`** — entered *into/against* it (support at/above a PUT's entry) → no runway.
 
-So far: **08-17 = `Runway` → won; 08-18 = `IntoWall` → lost.** As the sample grows, group the audit by
+So far (real trades): **08-17 `Runway` → won +$877 · 08-18 `IntoWall` → lost −$800 · 08-19 `IntoWall` →
+lost −$1,115.** Plus 08-19's `Runway` CALL *thesis* (simulated, not booked) → +$947. **Real tally:
+`Runway` 1-0, `IntoWall` 0-2 (−$1,915).** Both `IntoWall`s hit the −80% catastrophe stop; both bought a
+PUT *below* the 7720 put-support wall (shorting into support). As the sample grows, group the audit by
 `Setup_Tag` and compare win-rate / avg P&L — *that* is the test of H3. (It's still a computed **label**,
 not a trading rule. A fuller "runway = net GEX below vs above the entry" number is a possible future add.)
 
@@ -83,6 +86,17 @@ not a trading rule. A fuller "runway = net GEX below vs above the entry" number 
 ---
 
 ## Daily observations *(newest on top — append here each GEX day)*
+
+### 2026-08-19 (PUT, −$1,115, catastrophe stop — 2nd straight `IntoWall`) + a `Runway` CALL thesis that would've won
+- **Bot trade:** PUT @ 13.80, entry 7706, Gflip 7732.8 (−0.34%), put ladder `7720|7685|7650` → **`IntoWall`**
+  (bought *below* the 7720 wall). Peaked +28% at the 7700 low, never armed the trail, rode to −80%.
+- **Same mistake as 08-18** (entry below 7720, shorting into support). Price bounced off ~7700, rallied to
+  7744 → the PUT was on the wrong side *and* into support.
+- **Contrast (H3):** the day's move was UP; a `Runway` CALL (entry ~7722 above the pivot, resistance
+  7725/7750 to run to) simulated **+$947** with the trailing exit. So today: `IntoWall` PUT −$1,115 (real)
+  vs `Runway` CALL +$947 (sim) — the tag pointed the right way on *both* sides.
+- **Read:** `IntoWall` = 0-2 real, both catastrophe-stopped. Buying a PUT below the heavy put-support strike
+  is shorting where dealers defend — price keeps bouncing back up (the magnet from H2/H3).
 
 ### 2026-08-18 (PUT, −$800, auto-closed on the −80% catastrophe stop)
 - **Setup:** entry 7697, Gflip 7768 (−0.98%, deep neg-γ), put/call OI 2.29 (heavily put-heavy), net GEX

@@ -15,6 +15,7 @@ import sys
 from typing import Dict
 
 import audit
+import commands
 import config
 import gex
 import market_time
@@ -60,6 +61,18 @@ class TradingBot:
         self._gex_collect_at = None   # throttles the always-on GEX data collection (~60s)
         # Throttle "signal formed but skipped" transparency alerts (per strategy:symbol).
         self._blocked_alert_at: Dict[tuple, datetime.datetime] = {}
+
+        # Thesis-GEX command rail (#44): a human-authorised thesis dropped as a JSON command
+        # in this dir → the bot watches its trigger and fires a single-leg 'thesis:SPX' trade.
+        # Pending arms/close-ifs are rebuilt from the files each loop (files are the source of
+        # truth, so a restart resumes them); one-shot close/cancel are executed then moved.
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self._thesis_dir = (config.THESIS_COMMAND_DIR
+                            if os.path.isabs(config.THESIS_COMMAND_DIR)
+                            else os.path.join(repo_root, config.THESIS_COMMAND_DIR))
+        self._thesis_arms: list = []       # pending armed orders  (rebuilt from files)
+        self._thesis_closers: list = []    # pending conditional closes (rebuilt from files)
+        self._thesis_seen: set = set()     # command ids already announced (notify each arm once)
 
         # A restart wipes active_trades — adopt any open option positions the
         # account still holds so they are managed instead of orphaned.
@@ -397,25 +410,38 @@ class TradingBot:
             indicators['iv_entry'] = round(ive, 3)
         if direction:
             # Freeze the GEX context at order time (for the audit + Discord + forward-testing).
-            calls, puts = gex.gex_ladders(spot, self._gex_chain, n=3)
-            indicators['gflip'] = round(gflip, 2) if gflip else None
-            indicators['dist_gflip_pct'] = round((spot - gflip) / gflip * 100, 3) if gflip else None
-            indicators['net_gex_total'] = round(gex.net_gex(spot, self._gex_chain) / 1e6, 0)
-            indicators['net_gex_0dte'] = round(gex.net_gex_0dte(spot, self._gex_chain) / 1e6, 0)
-            indicators['call_ladder'] = "|".join(f"{k:.0f}" for k, _ in calls)   # resistance, heaviest first
-            indicators['put_ladder'] = "|".join(f"{k:.0f}" for k, _ in puts)     # support, heaviest first
-            indicators['call_ladder_full'] = [(k, round(v / 1e6, 0)) for k, v in calls]
-            indicators['put_ladder_full'] = [(k, round(v / 1e6, 0)) for k, v in puts]
-            # Setup bucket (docs/GEX_NOTES.md H3): did we enter with runway to the lead
-            # support/resistance strike, or into it? A PUT wants heavy support BELOW spot;
-            # a CALL wants heavy resistance ABOVE. Auto-tag so future trades bucket themselves.
-            lead = (puts[0][0] if puts else None) if direction == 'PUT' else (calls[0][0] if calls else None)
-            indicators['setup_tag'] = ('' if lead is None else
-                                       ('Runway' if (lead < spot) == (direction == 'PUT') else 'IntoWall'))
+            indicators.update(self._freeze_gex_context(spot, direction))
             logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
         elif reason:                          # an OR breakout formed but regime/momentum blocked it
             self._alert_blocked('gex', symbol, reason)
         return direction, reason, indicators
+
+    def _freeze_gex_context(self, spot: float, direction: str) -> dict:
+        """Snapshot the dealer-gamma context at order time → the audit/Discord dict fragment
+        (Gflip, distance-to-flip, net GEX total+0DTE, the top-3 support/resistance ladders, and
+        the H3 `Setup_Tag` bucket). Shared by the mechanical GEX entry AND thesis trades so both
+        book the same columns. Returns {} when no chain is cached (thesis can fire chain-less)."""
+        if not self._gex_chain:
+            return {}
+        gflip = gex.gamma_flip(self._gex_chain, spot)
+        calls, puts = gex.gex_ladders(spot, self._gex_chain, n=3)
+        ind = {
+            'gflip': round(gflip, 2) if gflip else None,
+            'dist_gflip_pct': round((spot - gflip) / gflip * 100, 3) if gflip else None,
+            'net_gex_total': round(gex.net_gex(spot, self._gex_chain) / 1e6, 0),
+            'net_gex_0dte': round(gex.net_gex_0dte(spot, self._gex_chain) / 1e6, 0),
+            'call_ladder': "|".join(f"{k:.0f}" for k, _ in calls),   # resistance, heaviest first
+            'put_ladder': "|".join(f"{k:.0f}" for k, _ in puts),     # support, heaviest first
+            'call_ladder_full': [(k, round(v / 1e6, 0)) for k, v in calls],
+            'put_ladder_full': [(k, round(v / 1e6, 0)) for k, v in puts],
+        }
+        # Setup bucket (docs/GEX_NOTES.md H3): did we enter with runway to the lead
+        # support/resistance strike, or into it? A PUT wants heavy support BELOW spot;
+        # a CALL wants heavy resistance ABOVE. Auto-tag so trades bucket themselves.
+        lead = (puts[0][0] if puts else None) if direction == 'PUT' else (calls[0][0] if calls else None)
+        ind['setup_tag'] = ('' if lead is None else
+                            ('Runway' if (lead < spot) == (direction == 'PUT') else 'IntoWall'))
+        return ind
 
     def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):
         """GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE): no invalidation cut, no fixed
@@ -439,6 +465,178 @@ class TradingBot:
         if config.GEX_TAKE_PROFIT > 0 and profit_pct >= config.GEX_TAKE_PROFIT:
             return True, f"Take-profit +{config.GEX_TAKE_PROFIT*100:.0f}% hit"
         return False, ""
+
+    # ── Thesis-GEX command rail (#44) ─────────────────────────────────────────
+    # A human-authorised thesis, dropped as a JSON command file (see src/commands.py), becomes
+    # an armed order the bot watches and fires as a single-leg 'thesis:SPX' trade. Files are the
+    # source of truth: pending arms/close-ifs are rebuilt from them each loop (so a restart
+    # resumes them) and moved to processed/ once fired/closed/expired/cancelled. Thesis trades
+    # reuse ALL account guards + the GEX-style convex-tail exits (routed in the exit dispatcher).
+
+    def _process_thesis_commands(self):
+        """Scan the command dir, reject malformed files, refresh the pending arm/close-if lists
+        from what's there, announce newly-seen commands once, then run one-shot close/cancel."""
+        if not config.THESIS_ENABLED:
+            return
+        arms, closers, oneshots = [], [], []
+        for c in commands.scan(self._thesis_dir):
+            ok, err = commands.validate(c)
+            if not ok:
+                self._thesis_reject(c, err)
+                continue
+            kind = c['cmd']
+            if kind == 'arm':
+                arms.append(c)
+            elif kind == 'close_if':
+                closers.append(c)
+            else:                                   # close, cancel — one-shot
+                oneshots.append(c)
+        self._thesis_arms, self._thesis_closers = arms, closers
+
+        for c in arms + closers:                    # confirm each new arm/close-if once
+            if c['id'] not in self._thesis_seen:
+                self._thesis_seen.add(c['id'])
+                sym = c.get('symbol', config.SYMBOLS[0])
+                notifier.notify_thesis_action('armed', sym, self._tkey('thesis', sym),
+                                              commands.describe(c))
+                logger.info(f"[thesis] {commands.describe(c)} (id={c['id']})")
+
+        for c in oneshots:
+            if c['cmd'] == 'close':
+                self._thesis_close_now(c)
+            elif c['cmd'] == 'cancel':
+                self._thesis_cancel(c)
+
+    def _watch_thesis_triggers(self):
+        """Evaluate pending arms + close-ifs against the latest spot (and 1-min closes for
+        confirmation). Fire arms whose trigger is met, expire the stale ones, and close the
+        thesis position when a close-if condition trips. Fetches bars only when something is
+        actually pending — zero cost when the rail is idle."""
+        if not config.THESIS_ENABLED or (not self._thesis_arms and not self._thesis_closers):
+            return
+        now = market_time.now_et()
+        default_sym = config.SYMBOLS[0]
+        for symbol in config.SYMBOLS:
+            arms = [a for a in self._thesis_arms if a.get('symbol', default_sym) == symbol]
+            closers = [c for c in self._thesis_closers if c.get('symbol', default_sym) == symbol]
+            # Expire without needing a market fetch
+            for arm in list(arms):
+                if commands.is_expired(arm, now):
+                    self._thesis_consume(arm, 'expired', 'trigger not met before expires_at')
+                    notifier.notify_thesis_action('expired', symbol, self._tkey('thesis', symbol),
+                                                  commands.describe(arm))
+                    arms.remove(arm)
+            for closer in list(closers):
+                if commands.is_expired(closer, now):
+                    self._thesis_consume(closer, 'expired', 'condition not met before expires_at')
+                    closers.remove(closer)
+            if not arms and not closers:
+                continue
+            df = self.broker.fetch_intraday_data(symbol)
+            if df is None or df.empty:
+                continue
+            spot = float(df['close'].iloc[-1])
+            recent = [float(x) for x in df['close'].tolist()[-10:]]
+            for arm in list(arms):
+                if commands.arm_should_fire(arm, spot, recent):
+                    self._fire_thesis_arm(symbol, arm, spot)
+            key = self._tkey('thesis', symbol)
+            for closer in list(closers):
+                trade = self.active_trades.get(key)
+                if not trade or trade.get('status') != 'ACTIVE':
+                    continue                        # nothing open to protect yet — keep it pending
+                if commands.closer_should_fire(closer, spot):
+                    reason = f"THESIS close_if: {commands.describe(closer)}"
+                    logger.info(f"[thesis] close_if fired (spot {spot:.1f}) — {reason}")
+                    self.close_position(key, self._current_value(symbol, trade), reason)
+                    self._thesis_consume(closer, 'closed', reason)
+                    notifier.notify_thesis_action('close', symbol, key, reason)
+
+    def _fire_thesis_arm(self, symbol: str, arm: dict, spot: float):
+        """A trigger fired: place the single-leg thesis trade via the normal path (all account
+        guards + ATM strike + tick-snapped limit apply). Fire-once — the arm is consumed whatever
+        the outcome, so a guard block or a re-crossing level can't loop; the user re-arms if needed."""
+        key = self._tkey('thesis', symbol)
+        side = arm['side']
+        if key in self.active_trades:
+            self._thesis_consume(arm, 'skipped', 'already holding a thesis position')
+            return
+        if (self.circuit_breaker_tripped or self.daily_loss_limit_hit
+                or self.daily_trade_count >= config.MAX_TRADES_PER_DAY):
+            self._thesis_consume(arm, 'blocked', 'account risk guard active (breaker/daily-loss/trade-cap)')
+            notifier.notify_thesis_action('blocked', symbol, key, 'account risk guard active')
+            return
+        reason = f"THESIS: {arm.get('note') or arm.get('id')}"
+        indicators = self._thesis_indicators(symbol, spot, side, arm)
+        self.execute_trade(symbol, side, reason, indicators, 'thesis')
+        fired = key in self.active_trades
+        self._thesis_consume(arm, 'fired' if fired else 'blocked', reason)
+        if fired:
+            logger.info(f"[thesis] ARMED ORDER FIRED: {side} {symbol} @spot {spot:.1f} — {reason}")
+            notifier.notify_thesis_action('fired', symbol, key, f"{side} — {commands.describe(arm)}")
+        else:
+            logger.warning(f"[thesis] arm {arm.get('id')} fired but no position opened "
+                           f"(guard/quote) — see log.")
+            notifier.notify_thesis_action('blocked', symbol, key, commands.describe(arm))
+
+    def _thesis_close_now(self, cmd: dict):
+        """One-shot `close`: close the target thesis position now if it's ACTIVE."""
+        symbol = cmd.get('symbol', config.SYMBOLS[0])
+        key = cmd.get('target', self._tkey('thesis', symbol))
+        trade = self.active_trades.get(key)
+        if trade and trade.get('status') == 'ACTIVE':
+            reason = f"THESIS close: {cmd.get('note') or cmd.get('id')}"
+            self.close_position(key, self._current_value(symbol, trade), reason)
+            self._thesis_mark(cmd, 'closed', reason)
+            notifier.notify_thesis_action('close', symbol, key, reason)
+        else:
+            self._thesis_mark(cmd, 'noop', f"no ACTIVE {key} to close")
+
+    def _thesis_cancel(self, cmd: dict):
+        """One-shot `cancel`: drop a pending arm/close-if by id (moves its file to processed/)."""
+        target = cmd.get('cancel_id')
+        found = False
+        for lst in (self._thesis_arms, self._thesis_closers):
+            for pending in list(lst):
+                if pending.get('id') == target:
+                    self._thesis_mark(pending, 'cancelled', f"by {cmd.get('id')}")
+                    lst.remove(pending)
+                    found = True
+        self._thesis_mark(cmd, 'done' if found else 'noop',
+                          f"cancel {target}{'' if found else ' — not found'}")
+
+    def _thesis_indicators(self, symbol: str, spot: float, side: str, arm: dict) -> dict:
+        """Audit/Discord indicator dict for a thesis trade: the human note + the frozen GEX
+        context (so thesis trades book the same Gflip/ladder/Setup_Tag columns as GEX). Refreshes
+        the chain if none is cached so a thesis trade is never GEX-blind when a chain is available."""
+        if not self._gex_chain:
+            try:
+                self._refresh_gex_chain(symbol)
+            except Exception as e:
+                logger.warning(f"[thesis] GEX chain refresh failed (trade proceeds context-less): {e}")
+        ind = {'current_price': round(spot, 2), 'thesis_note': arm.get('note', '')}
+        ind.update(self._freeze_gex_context(spot, side))
+        return ind
+
+    def _thesis_consume(self, cmd: dict, status: str, detail: str = ''):
+        """Mark a command processed AND drop it from the in-memory pending lists (so the
+        same loop's watcher can't act on it again)."""
+        self._thesis_mark(cmd, status, detail)
+        for lst in (self._thesis_arms, self._thesis_closers):
+            if cmd in lst:
+                lst.remove(cmd)
+
+    def _thesis_mark(self, cmd: dict, status: str, detail: str = ''):
+        dest = commands.mark_processed(cmd, self._thesis_dir, status)
+        logger.info(f"[thesis] command {cmd.get('id')} → {status}"
+                    f"{': ' + detail if detail else ''}"
+                    f"{' (' + os.path.basename(dest) + ')' if dest else ''}")
+
+    def _thesis_reject(self, cmd: dict, err: str):
+        logger.warning(f"[thesis] rejecting command {cmd.get('id')}: {err}")
+        notifier.notify_thesis_action('rejected', cmd.get('symbol', config.SYMBOLS[0]),
+                                      cmd.get('id', '?'), err)
+        self._thesis_mark(cmd, 'rejected', err)
 
     def execute_trade(self, symbol: str, direction: str, reason: str, indicators: dict,
                       strategy: str = 'trend'):
@@ -602,7 +800,8 @@ class TradingBot:
             # Trend exits: hard stop + Supertrend reversal (EOD flatten by the main loop).
             exit_triggered, exit_reason = self._trend_exit_check(symbol, trade, profit_pct)
         else:
-            # GEX exits: trailing stop + wide catastrophe backstop (EOD flatten by the loop).
+            # GEX *and* thesis exits: trailing stop + wide catastrophe backstop (EOD flatten by
+            # the loop). Thesis trades additionally honour any `close`/`close_if` command.
             exit_triggered, exit_reason = self._gex_exit_check(symbol, trade, profit_pct)
         if exit_triggered:
             logger.info(f"[{symbol}] EXIT TRIGGERED: {exit_reason}")
@@ -1185,6 +1384,12 @@ class TradingBot:
                         self._scan_trend_entries()
                     if 'gex' in config.ACTIVE_STRATEGIES:
                         self._scan_gex_entries()
+
+                # Thesis-GEX command rail (#44): process human-authorised command files and watch
+                # armed triggers EVERY loop (responsive), independently of the trend/gex windows.
+                # The mechanical scanners above are untouched; this only adds the 'thesis:SPX' slot.
+                self._process_thesis_commands()
+                self._watch_thesis_triggers()
 
                 interval = self._loop_interval()
                 if interval != self._last_interval:

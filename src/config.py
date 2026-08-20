@@ -68,6 +68,16 @@ GEX_CHAIN_EXPIRIES = int(os.getenv("GEX_CHAIN_EXPIRIES", "3"))        # nearest 
 GEX_CHAIN_MAX_STRIKES = int(os.getenv("GEX_CHAIN_MAX_STRIKES", "50")) # cap strikes nearest ATM (data-line budget)
 GEX_REFRESH_MIN = int(os.getenv("GEX_REFRESH_MIN", "30"))            # re-fetch OI chain every N min (OI is ~static intraday)
 
+# ── Thesis-GEX command rail (TODO #44) ───────────────────────────────────────
+# A human-in-the-loop channel: an approved thesis is dropped as a JSON command file in
+# THESIS_COMMAND_DIR; the bot watches the trigger and executes a single-leg SPX option under
+# 'thesis:SPX'. Exits default to the SAME convex-tail rules as GEX (trailing arm/giveback +
+# catastrophe backstop + EOD flatten); the user can also close early via a `close`/`close_if`
+# command. The mechanical trend+gex scanners keep running unchanged in parallel. Claude is the
+# analyst/translator, the bot is the executor, the user authorises the arm. See src/commands.py.
+THESIS_ENABLED = os.getenv("THESIS_ENABLED", "true").lower() in ("1", "true", "yes")
+THESIS_COMMAND_DIR = os.getenv("THESIS_COMMAND_DIR", "data/commands")   # relative → resolved to repo root
+
 # ── Shared entry/order settings ──────────────────────────────────────────────
 # Each (symbol, direction) cools down for SIGNAL_COOLDOWN_MINUTES after a trade, then can
 # re-trigger. MAX_TRADES_PER_DAY is the overall daily cap across all symbols/strategies.

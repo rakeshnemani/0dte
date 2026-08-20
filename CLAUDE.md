@@ -73,6 +73,7 @@ See `docs/GO_LIVE.md` and `docs/BACKTESTING.md`.
 | `src/bot.py` | `TradingBot` — **state + orchestration + main loop only** (the conductor) |
 | `src/broker.py` | `IBKRBroker` — **all** IBKR calls (connect, market data, orders, positions, permId, commissions) |
 | `src/strategy.py` | **Pure functions** (no I/O): indicators, trend + gex entry signals, exit helpers — unit-testable |
+| `src/commands.py` | **Pure** thesis-rail command model (#44): load/validate/trigger-eval/expiry of `data/commands/*.json` — unit-testable |
 | `src/notifier.py` | Discord: transport + every message template |
 | `src/audit.py` | `audit.csv` writer (financials only) |
 | `src/market_time.py` | ET market-hours helpers |
@@ -108,6 +109,7 @@ IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bo
 
 - `docs/STRATEGY.md` — **detailed strategy reference**: thesis, exact entry/exit criteria, indicators, GEX math, parameters.
 - `docs/GEX_NOTES.md` — **GEX forward-test notebook**: dealer-gamma observations + hypotheses under test (distance-to-flip, chain-direction, support-ladder/runway) with the evidence so far. Append each GEX day.
+- `docs/THESIS_GEX.md` — **human-in-the-loop trading** (TODO #44): the `thesis:SPX` command rail (`arm`/`close`/`close_if`/`cancel` via `data/commands/`), the analyst→bot boundary, and the roadmap. Schema in `data/commands/README.md`.
 - `docs/HOW_IT_WORKS.md` — full bot lifecycle + config reference table.
 - `docs/PLAYBOOKS.md` — entry/exit/P&L for the trend + GEX single-leg strategies.
 - `docs/RECONCILE.md` — how to use `reconcile_ibkr.py`.
@@ -216,6 +218,9 @@ peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE �
 
 ## How we work (conventions the user expects)
 
+- **Git: the user commits manually — NEVER run `git commit`/`git push` automatically** (stated
+  2026-08-18). Make the change, run tests, update docs, then say what's ready to commit and leave
+  the commit to the user. Only commit if they explicitly ask in that message.
 - **After each trading day:** write a retro entry in `docs/RETROSPECTIVE.md`, and run
   `reconcile_ibkr.py` *after settlement* for the true P&L.
 - **Every code change:** keep `README.md`, `docs/HOW_IT_WORKS.md`, and relevant docs in

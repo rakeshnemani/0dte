@@ -149,6 +149,39 @@ regime's sample.
 
 ---
 
+## 2026-08-19 (Wed) — 🔴 SECOND straight IntoWall PUT loss (−$1,115): the bot shorted the day's low
+
+**Same mistake as 08-18, bigger loss.** GEX **PUT @ $13.80 (09:50, spot 7706.63)** — a dip below the
+OR-low 7711.62 — **auto-closed on the −80% catastrophe stop @ $2.65 (10:54) = −$1,115.** Setup_Tag at
+entry: **`IntoWall`**.
+
+**The mistake (user's read, confirmed):** we bought the PUT at 7706, **below the 7720 put-support wall**
+(put ladder `7720|7685|7650`). We shorted *into* the support — price had dipped to the day's low (7700.1)
+right as we entered, then **bounced off ~7700 and rallied 44 pts to 7744** before closing 7708. Buying a
+PUT below the heaviest put-support strike = shorting where dealers defend = the `IntoWall` trap.
+
+**Two days, same wall, same tag, same result:**
+| Day | Entry | Put wall | Setup_Tag | Result |
+|---|---|---|---|---|
+| 08-18 | 7697 | 7720 | `IntoWall` | −$800 |
+| 08-19 | 7706 | 7720 | `IntoWall` | −$1,115 |
+
+**Direction was backwards.** The day's real move was UP (7700→7744); the user's **bullish thesis (CALL
+above 7700) was correct** — a ~+$947 winner in simulation. The bot took the opposite side, and then
+**skipped its own later CALL signals** (positive-gamma / no-momentum) — locked out of the right direction
+while holding the wrong one.
+
+**Exit couldn't help — again.** The PUT peaked only **+28%** (at the 7700 low), below the +50% trail-arm,
+so the trail never armed and it rode to −80%. Same "never armed → catastrophe" as 08-18. *(Watch, don't
+act: is +50% too high to protect these quick pops? Twice now a real in-our-favor move didn't reach it.)*
+
+**Tally:** GEX is now **3 real trades: +$877 · −$800 · −$1,115 = net −$1,038.** The 1 `Runway` won; both
+`IntoWall`s lost big. Tiny sample, but consistent and mechanistically sensible. **This is the case for the
+mobile channel in one day** — the bot lost $1,115 on an `IntoWall` PUT while the user's `Runway` CALL read
+would have won; the intelligence existed, the pipe to act didn't.
+
+---
+
 ## 2026-08-18 (Tue) — 🔴 first fully-automated GEX round-trip: a −$800 catastrophe-stop loss (the mirror of 08-17)
 
 **The close-path fix works — and today it closed a loser.** For the first time the bot executed AND

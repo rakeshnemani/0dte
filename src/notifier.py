@@ -162,6 +162,24 @@ def notify_signal_blocked(strategy: str, symbol: str, reason: str):
     send(f"⏸️ {strategy.upper()} signal skipped — {symbol}", reason, GREY)
 
 
+def notify_thesis_action(action: str, symbol: str, key: str, detail: str = ''):
+    """Thesis-GEX command rail (#44) lifecycle alert — one template for the whole rail:
+    armed / fired / close / cancelled / expired / blocked / rejected. Colour-coded so a
+    phone glance reads the state instantly."""
+    style = {
+        'armed':     ('🟡 THESIS ARMED', BLUE),
+        'fired':     ('🟢 THESIS FIRED', GREEN),
+        'close':     ('🔵 THESIS CLOSE', BLUE),
+        'cancelled': ('⚪ THESIS CANCELLED', GREY),
+        'expired':   ('⚪ THESIS EXPIRED', GREY),
+        'blocked':   ('🟠 THESIS BLOCKED', ORANGE),
+        'rejected':  ('🔴 THESIS REJECTED', RED),
+    }
+    title, color = style.get(action, (f"THESIS {action.upper()}", GREY))
+    body = f"**{key}**" + (f"\n{detail}" if detail else "")
+    send(f"{title} — {symbol}", body, color)
+
+
 def notify_closed_externally(symbol: str, direction: str):
     send(
         "⚠️ POSITION CLOSED EXTERNALLY",

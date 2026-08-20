@@ -21,7 +21,8 @@ no invalidation/stop). The whole game now: do these single-leg strategies clear 
 |---|---|
 | **P0 — live experiment** | **#42** flip — capture real SPX fill costs (the fee-edge gate); watch for trend-day bleed |
 | **P1 — soon** | **#36** cross-day circuit breaker · **#38** trail-trigger 0.50→0.45 · **#20/#35** fee ratio (wider spreads / contract cap) · **#2** total-exposure cap · **#16** always-on host |
-| **P2 — evidence-gated** | **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
+| **P2 — evidence-gated** | **#43** IntoWall entry guard (mechanical GEX; n=2, don't build yet) · **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
+| **Design track (parallel)** | **#44** Thesis-GEX — human-thesis Discord channel + bot command rail (analyst = Claude, executor = bot) |
 | **P3 — parked** | **#4** GLD/TLT · **#8** VIX1D |
 | **Resolved by evidence — do not reopen** | **#39** (filters aren't the bottleneck) · **#37** (→ #42) · **regime-router** (tested 07-28, not justified) |
 
@@ -96,6 +97,37 @@ moved >80% of it (exhaustion). Also usable for strike/target selection.
 re-enabled: breach exit fires too late (#22, exited −67% not −25%), and the R:R needs an 86% WR
 (#28). Also latent: condor strikes are computed from SPY (signal) levels but placed on the
 execution symbol — broken for index symbols until fixed. Leave off.
+
+**43. IntoWall entry guard for the MECHANICAL gex strategy (evidence-gated, n=2 — DO NOT build yet).**
+Both GEX PUT losses share one structural shape: entry sat *below* the heaviest put-support strike
+(7720) → `Setup_Tag=IntoWall` → price bounced off support, reverted up, hit the −80% catastrophe
+stop. **08-18 −$800 · 08-19 −$1,115** (`Runway` is 1-0). Candidate rule: **skip or downsize a
+mechanical GEX entry tagged `IntoWall`** — a PUT entered below the lead put-support strike, or a CALL
+above the lead call-resistance (i.e. buying/shorting *into* the wall dealers defend, no runway).
+Pure entry-filter on data we **already log** (`Setup_Tag` + `Put_Ladder`/`Call_Ladder` frozen at
+every order). **Gate:** n=2 is noise (learning #10 — never tune on a tiny sample). Let `Setup_Tag`
+accumulate; group `audit.csv` by it and promote to a coded guard **only if `IntoWall` stays clearly
+negative across a real sample.** ⚠️ **This guards the *mechanical* gex strategy — a different category
+from "thesis GEX" (#44).** The bot has no IntoWall check today, so it will keep taking these until this
+lands. See [docs/GEX_NOTES.md](docs/GEX_NOTES.md) H3.
+
+**44. Thesis-GEX — hand the bot a human thesis + Claude's judgment (design track).** The gap 08-18/08-19
+exposed: the bot's read was wrong while the user's was right, and there was no rail to act on the human
+call. Flow: **user sends a concrete thesis (from mobile) → Claude vets it against live GEX
+(go / no-go / modify) → an approved thesis becomes a mechanical *armed order* → the bot watches the
+trigger and executes → user can ask Claude to exit anytime.** **Boundary:** Claude stays analyst +
+translator, the *bot* is the executor, the *user* authorizes the arm — Claude does not discretionarily
+fire live orders. The mechanical trend+gex logic keeps running **unchanged** in parallel.
+- **(c) command rail — ✅ BUILT + tested 2026-08-19.** `src/commands.py` (pure: validate/trigger/expiry/
+  processed-move) + `bot._process_thesis_commands`/`_watch_thesis_triggers`/`_fire_thesis_arm`/
+  `_thesis_close_now`/`_thesis_cancel`; new `thesis:SPX` slot; `arm`/`close`/`close_if`/`cancel` verbs
+  polled from `data/commands/` each loop; GEX context frozen at fire (shared `_freeze_gex_context`);
+  GEX-style convex-tail exits + `close`/`close_if`. `scripts/test_thesis_commands.py` (47 checks).
+  Config `THESIS_ENABLED`/`THESIS_COMMAND_DIR`. **Usable through chat now.** See [docs/THESIS_GEX.md](docs/THESIS_GEX.md).
+- **(b) the analyst (Claude) — ✅ works** (08-20 thesis eval).
+- **(a) Discord channel — ⏳ NEXT.** Dedicated channel routed to a 0dte Claude session (separate from
+  the *ImpliedMoveBasedOptionSelector* pairing) so theses come from mobile. Convenience layer on a
+  working engine, not a prerequisite.
 
 ---
 
