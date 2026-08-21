@@ -149,6 +149,64 @@ regime's sample.
 
 ---
 
+## 2026-08-20 (Thu) — 🟢 +$810: the first end-to-end GEX win the SYSTEM captured (Runway PUT, trailing stop)
+
+**A green day, three firsts.** GEX **PUT @ $12.80 (10:17, spot 7675.24)** → **auto-closed by the trailing
+stop @ $20.90 (14:12) = +$810 (+63.28%, peaked +79.30%).** Setup_Tag at entry: **`Runway`**. Separately,
+the human **bullish CALL thesis correctly never fired and expired** — the day was bearish.
+
+**The day.** Gapped down and trended down all session: open 7684, high **only 7695**, low 7642, close 7642 —
+**deep negative gamma the whole day** (spot 44→87 pts *below* Gflip ~7729, −0.57% → −1.13%, deepening into
+the close). Dealers sell into weakness in neg-γ → the downmove was amplified. Textbook GEX momentum tape.
+
+**Why the PUT won — `Runway` + the trailing stop:**
+- Entry 7675 sat *above* a put-support ladder of **7650/7640/7645** → genuine runway to fall *into*. Broke
+  below the OR-low (7679) with 2-bar downward acceleration, deep neg-γ. Spot fell 7675 → 7652, right into
+  the support zone.
+- Peaked **+79%**; the trail (arms +50%, gives back 20% of peak) exited at **+63% = +$810**. **No take-profit
+  cap clipped it** — the "let the convex tail ride" design worked exactly as intended. Contrast 08-19, which
+  peaked only +28% (never armed the trail) and bled to −80%.
+
+**Three firsts:**
+1. **First GEX winner the *system* actually captured end-to-end.** 08-17 won but was a *manual* close (tick
+   bug); the two IntoWall losses were catastrophe-stops. Today the trailing stop did its job unattended.
+2. **H3 (Runway vs IntoWall) is now 3-for-3 in the predicted direction:** `Runway` **2-0** (+$877, +$810 =
+   **+$1,687**) · `IntoWall` **0-2** (−$800, −$1,115 = **−$1,915**). Today's PUT was the *same instrument*
+   that lost twice last week — the **only** difference was the Setup_Tag (entry above the support ladder with
+   room to fall, vs below the wall shorting into support). Sharpens the **IntoWall guard (#43)**: had it been
+   live, GEX over these four trades would be **+$1,687, not −$228**. Still n=4 — keep collecting, don't code it.
+3. **The two-system architecture justified itself by disagreeing.** Today the *human* read was wrong (bullish)
+   and the *machine* was right (PUT); on 08-18/08-19 it was the mirror. Neither is reliably better — which is
+   exactly why running both (mechanical + trigger-gated human thesis) is right. The OR-breakout trigger made
+   the wrong thesis **cost nothing** (it required an up-break that never came → expired harmlessly). That is
+   the thesis rail's first live outing, and it worked — by *not* firing.
+
+**Running GEX P&L: +877 −800 −1,115 +810 = −$228** over four trades. Still red, but cleanly split: both
+`Runway` trades won, both `IntoWall` trades lost. **Reconciled: settled `dailyPnL` = +$806.74** (gross
+$810, fees $4.89, net $805.11; 2 orders, 0 orphans).
+
+**⭐ The no-fixed-stop decision (08-17) earned its keep today.** The winner spent **~3 hours underwater**:
+entered 10:17 @ spot 7675, spot then *rose* to **7692.88 by 11:01 (+17.6 pts against us)** and chopped above
+the entry until ~13:12 — max profit was +0.78% at 10:20, and didn't make a new high until +8.98% at **13:38**.
+Estimated option drawdown at the low ≈ **−50% to −60%** (marks not logged), and it **never hit the −80%
+catastrophe stop** before reversing to +79%. **Under the OLD −50% fixed stop this trade would have been cut
+around 11:00 → today's +$810 winner becomes a ~−$640 loss.** A ~$1,450 swing, straight from the 08-17 call
+to let the convex tail ride. (The flip side, 08-19, shows the cost side of the same rule — but net, letting
+it ride is paying: it's what separated the +79% here from a mid-morning stop-out.)
+
+**The bearish case we skipped (from the 08-19 thesis) would have worked — and we didn't miss it.** We armed
+only the bullish CALL and skipped the "break <7700" PUT because 7700 had held 2 days. Today 7700 **gapped and
+broke hard** (opened 7684, fell to 7642; targets 7685/7650 both hit) — a bearish OR-break PUT would have fired
+~10:17 @ 7675, i.e. the **exact trade the mechanical GEX already took (+$810)**. So arming it would only have
+*stacked a 2nd PUT* (thesis + gex = 2 contracts, 2× fees, 2× the −55% drawdown), not added edge. **The real
+lesson: 7700 was never the rule — Runway-vs-IntoWall is.** Last week a downside entry was IntoWall (support
+sat at 7700/7720, right there); today the market gapped *through* 7700 and the support ladder moved down to
+7650, so a downside entry at 7675 was `Runway`. Same "PUT below 7700" idea, opposite structure, opposite
+result — and the auto-tag caught it (Runway today, IntoWall last week). *Open design Q for the thesis rail:
+when a thesis agrees with the mechanical strategy, do we want it to stack a 2nd position, or defer?*
+
+---
+
 ## 2026-08-19 (Wed) — 🔴 SECOND straight IntoWall PUT loss (−$1,115): the bot shorted the day's low
 
 **Same mistake as 08-18, bigger loss.** GEX **PUT @ $13.80 (09:50, spot 7706.63)** — a dip below the

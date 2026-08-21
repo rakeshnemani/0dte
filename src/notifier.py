@@ -106,7 +106,8 @@ def notify_closed(symbol: str, trade: dict, exit_price: float,
         f"• Dollar PnL: ${dollar_pnl:+.2f}\n"
         + (f"• Commissions (round trip): ${commission:.2f} → net ${dollar_pnl - commission:+.2f}\n"
            if commission else "") +
-        f"• Max Profit Reached: {trade.get('max_profit_pct', 0)*100:.2f}%\n\n"
+        f"• Max Profit Reached: {trade.get('max_profit_pct', 0)*100:.2f}%\n"
+        f"• Max Adverse (deepest dip): {trade.get('max_adverse_pct', 0)*100:.2f}%\n\n"
         f"**📝 Exit Reason:** {reason}"
     )
     send("🔵 CLOSED 0DTE POSITION", desc, BLUE if profit_pct > 0 else RED)

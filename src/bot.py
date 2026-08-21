@@ -538,7 +538,8 @@ class TradingBot:
             spot = float(df['close'].iloc[-1])
             recent = [float(x) for x in df['close'].tolist()[-10:]]
             for arm in list(arms):
-                if commands.arm_should_fire(arm, spot, recent):
+                or_levels = self._arm_or_levels(arm, df, now)
+                if commands.arm_should_fire(arm, spot, recent, or_levels=or_levels):
                     self._fire_thesis_arm(symbol, arm, spot)
             key = self._tkey('thesis', symbol)
             for closer in list(closers):
@@ -551,6 +552,20 @@ class TradingBot:
                     self.close_position(key, self._current_value(symbol, trade), reason)
                     self._thesis_consume(closer, 'closed', reason)
                     notifier.notify_thesis_action('close', symbol, key, reason)
+
+    def _arm_or_levels(self, arm: dict, df, now):
+        """For an `or_breakout` arm, return the (OR_high, OR_low) of the 15-min opening range —
+        computed exactly like the mechanical GEX entry (strategy.opening_range_levels). Returns
+        None for any other trigger, OR while the opening-range window is still forming (before
+        9:30+or_minutes), OR if there are no bars in the window — so the arm can't fire early."""
+        trig = arm.get('trigger') or {}
+        if trig.get('type') != 'or_breakout':
+            return None
+        minutes = int(trig.get('or_minutes', config.GEX_OR_MINUTES))
+        open_t = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        if now < open_t + datetime.timedelta(minutes=minutes):
+            return None                              # opening range not complete yet
+        return strategy.opening_range_levels(df, now, minutes)
 
     def _fire_thesis_arm(self, symbol: str, arm: dict, spot: float):
         """A trigger fired: place the single-leg thesis trade via the normal path (all account
@@ -716,6 +731,7 @@ class TradingBot:
                 'option_contract': opt,                  # close + value use this
                 'qty': 1,
                 'max_profit_pct': 0.0,
+                'max_adverse_pct': 0.0,   # max adverse excursion (MAE) — deepest drawdown of the hold
                 'long_strike': strike,
                 'long_conid': opt.conId,                 # reconciliation reference leg
                 'leg_conids': [opt.conId],
@@ -795,6 +811,12 @@ class TradingBot:
             trade['max_profit_pct'] = profit_pct
             if profit_pct > 0:
                 logger.info(f"[{symbol}] New Max Profit: {profit_pct*100:.2f}%")
+        # Max adverse excursion (MAE) — the deepest drawdown seen during the hold, the
+        # mirror of max_profit_pct. Recorded on the exit row so we can see how far a
+        # winner dipped before it paid (e.g. 08-20's +$810 sat ~-55% for ~3h first).
+        if profit_pct < trade.get('max_adverse_pct', 0.0):
+            trade['max_adverse_pct'] = profit_pct
+            logger.info(f"[{symbol}] New Max Adverse: {profit_pct*100:.2f}%")
 
         if trade.get('strategy') == 'trend':
             # Trend exits: hard stop + Supertrend reversal (EOD flatten by the main loop).
@@ -991,7 +1013,8 @@ class TradingBot:
         audit.record(
             "SELL", sym, trade['direction'], fill_price, reason,
             profit_pct=profit_pct, dollar_pnl=dollar_pnl,
-            peak_pct=trade.get('max_profit_pct'), commission=commission,
+            peak_pct=trade.get('max_profit_pct'),
+            max_adverse_pct=trade.get('max_adverse_pct'), commission=commission,
             perm_id=self.broker.order_perm_id(exit_trade),
             strategy=strat,
         )
@@ -1253,6 +1276,7 @@ class TradingBot:
             underlying_price=exit_indicators.get('current_price'),
             profit_pct=profit_pct, dollar_pnl=dollar_pnl,
             peak_pct=trade.get('max_profit_pct'),
+            max_adverse_pct=trade.get('max_adverse_pct'),
             commission=commission,
             perm_id=trade.get('exit_permId'),
             strategy=strat,

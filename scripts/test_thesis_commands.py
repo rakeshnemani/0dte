@@ -188,6 +188,73 @@ def test_triggers():
           not commands.is_expired({'expires_at': '2099-01-01T00:00:00'}, now))
 
 
+def test_or_breakout_pure():
+    print("\narm_should_fire() — type='or_breakout' (level derived from the opening range)")
+    call = {'side': 'CALL', 'trigger': {'type': 'or_breakout', 'confirm_bars': 1}}
+    check("OR not ready (or_levels=None) → no fire",
+          not commands.arm_should_fire(call, 7720, [7720], or_levels=None))
+    check("CALL: close above OR high (7715) → fire",
+          commands.arm_should_fire(call, 7717, [7717], or_levels=(7715, 7708)))
+    check("CALL: close below OR high → no fire",
+          not commands.arm_should_fire(call, 7714, [7714], or_levels=(7715, 7708)))
+
+    callf = {'side': 'CALL', 'trigger': {'type': 'or_breakout', 'confirm_bars': 1, 'min_level': 7716}}
+    check("min_level floor: OR high 7712 but 7714 < 7716 floor → no fire",
+          not commands.arm_should_fire(callf, 7714, [7714], or_levels=(7712, 7705)))
+    check("min_level floor: 7717 ≥ 7716 → fire",
+          commands.arm_should_fire(callf, 7717, [7717], or_levels=(7712, 7705)))
+
+    put = {'side': 'PUT', 'trigger': {'type': 'or_breakout', 'confirm_bars': 1}}
+    check("PUT: close below OR low (7705) → fire",
+          commands.arm_should_fire(put, 7703, [7703], or_levels=(7715, 7705)))
+    putc = {'side': 'PUT', 'trigger': {'type': 'or_breakout', 'confirm_bars': 1, 'max_level': 7700}}
+    check("PUT max_level: 7703 > 7700 floor → no fire",
+          not commands.arm_should_fire(putc, 7703, [7703], or_levels=(7715, 7705)))
+    check("PUT max_level: 7699 ≤ 7700 → fire",
+          commands.arm_should_fire(putc, 7699, [7699], or_levels=(7715, 7705)))
+
+    # validation
+    ok, _ = commands.validate({'id': 'a', 'cmd': 'arm', 'side': 'CALL',
+                               'trigger': {'type': 'or_breakout', 'or_minutes': 15, 'min_level': 7716}})
+    check("or_breakout arm (no op/level) is valid", ok)
+    ok, err = commands.validate({'id': 'a', 'cmd': 'arm', 'side': 'CALL',
+                                 'trigger': {'type': 'or_breakout', 'or_minutes': 0}})
+    check("or_minutes < 1 rejected", not ok)
+    ok, err = commands.validate({'id': 'a', 'cmd': 'arm', 'side': 'CALL',
+                                 'trigger': {'type': 'or_breakout', 'min_level': 'x'}})
+    check("non-numeric min_level rejected", not ok)
+    ok, err = commands.validate({'id': 'a', 'cmd': 'arm', 'side': 'CALL',
+                                 'trigger': {'type': 'bogus'}})
+    check("unknown trigger.type rejected", not ok)
+
+
+def test_or_breakout_bot():
+    print("\nbot._arm_or_levels() — computes the 15-min OR like the mechanical GEX entry")
+    tmp = tempfile.mkdtemp()
+    try:
+        b = _make_bot(tmp)
+        now = market_time.now_et().replace(hour=10, minute=0, second=0, microsecond=0)
+        tz, day = now.tzinfo, now.date()
+
+        def ts(h, m):
+            return pd.Timestamp(datetime.datetime(day.year, day.month, day.day, h, m), tz=tz)
+
+        # OR window 9:30–9:45 → high max(7714,7715,7713)=7715, low min(7708,7709,7710)=7708
+        df = pd.DataFrame(
+            {'high': [7714, 7715, 7713, 7719], 'low': [7708, 7709, 7710, 7716],
+             'close': [7712, 7713, 7712, 7718]},
+            index=[ts(9, 30), ts(9, 35), ts(9, 40), ts(9, 55)])
+        arm_or = {'side': 'CALL', 'trigger': {'type': 'or_breakout', 'or_minutes': 15}}
+        check("returns (OR high, OR low) once past 9:45",
+              b._arm_or_levels(arm_or, df, now) == (7715.0, 7708.0))
+        check("None before the OR window completes (9:40)",
+              b._arm_or_levels(arm_or, df, now.replace(hour=9, minute=40)) is None)
+        price_arm = {'side': 'CALL', 'trigger': {'op': '>=', 'level': 7710}}
+        check("None for a plain price trigger", b._arm_or_levels(price_arm, df, now) is None)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ── 3. Pure: scan + mark_processed round-trip ────────────────────────────────
 
 def test_scan_and_processed():
@@ -345,6 +412,8 @@ def test_expiry_and_reject():
 if __name__ == '__main__':
     test_validate()
     test_triggers()
+    test_or_breakout_pure()
+    test_or_breakout_bot()
     test_scan_and_processed()
     test_arm_fires_on_trigger()
     test_immediate_and_stack_guard()

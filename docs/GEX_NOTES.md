@@ -58,11 +58,14 @@ can group and compare later:
 - **`IntoWall`** — entered *into/against* it (support at/above a PUT's entry) → no runway.
 
 So far (real trades): **08-17 `Runway` → won +$877 · 08-18 `IntoWall` → lost −$800 · 08-19 `IntoWall` →
-lost −$1,115.** Plus 08-19's `Runway` CALL *thesis* (simulated, not booked) → +$947. **Real tally:
-`Runway` 1-0, `IntoWall` 0-2 (−$1,915).** Both `IntoWall`s hit the −80% catastrophe stop; both bought a
-PUT *below* the 7720 put-support wall (shorting into support). As the sample grows, group the audit by
-`Setup_Tag` and compare win-rate / avg P&L — *that* is the test of H3. (It's still a computed **label**,
-not a trading rule. A fuller "runway = net GEX below vs above the entry" number is a possible future add.)
+lost −$1,115 · 08-20 `Runway` → won +$810.** **Real tally: `Runway` 2-0 (+$1,687), `IntoWall` 0-2
+(−$1,915).** Both `IntoWall`s bought a PUT *below* the 7720 put-support wall (shorting into support) and
+hit the −80% catastrophe stop; both `Runway`s entered *above* the support ladder with room to fall, and
+paid. **3-for-3 in the predicted direction.** Note 08-20 is the sharpest test yet: the *same instrument*
+(a GEX PUT in deep neg-γ) that lost twice last week **won** — the only difference was the `Setup_Tag`.
+Had the IntoWall guard ([TODO #43](../TODO.md)) been live, GEX over these four would be **+$1,687 not −$228**.
+Still n=4 — keep collecting, don't code it. As the sample grows, group the audit by `Setup_Tag` and compare
+win-rate / avg P&L — *that* is the test of H3.
 
 ---
 
@@ -86,6 +89,21 @@ not a trading rule. A fuller "runway = net GEX below vs above the entry" number 
 ---
 
 ## Daily observations *(newest on top — append here each GEX day)*
+
+### 2026-08-20 (PUT, +$810, trailing stop — first `Runway` win the SYSTEM captured end-to-end)
+- **Setup:** entry 7675, Gflip 7728 (−0.69%, deep neg-γ), broke below OR-low 7679 w/ 2-bar down-accel.
+  Put ladder `7650|7640|7645` (all *below* the entry) → **`Runway`**. Spot fell 7675 → 7642 (day's low),
+  right into the support zone. Peaked +79%, trailing stop booked **+63% = +$810**.
+- **The clean H3 test:** the *same instrument* that lost twice last week (a GEX PUT in deep neg-γ) **won**
+  today — the only difference was the tag. 08-18/19 = `IntoWall` (PUT below the 7720 wall, into support,
+  bounced up); 08-20 = `Runway` (PUT above the 7650 ladder, room to fall, followed through). `Runway` 2-0,
+  `IntoWall` 0-2, 3-for-3.
+- **Trailing stop's first real win** — no TP cap, let it run to +79%, gave back 20% to book +63%. The
+  "convex tail" design working as intended (vs 08-19: peaked +28%, never armed, rode to −80%).
+- **H1 footnote:** entry was −0.69% from flip ("deep" neg-γ) and **won**; 08-18 was also deep (−0.98%) and
+  **lost**. Distance-to-flip doesn't separate them — the `Setup_Tag` does. Consistent with H1 weak, H3 the signal.
+- **Thesis rail (first live day):** the bullish CALL arm (break >7716) **correctly never fired** — the day
+  was bearish, spot never got within 20 pts of the trigger, arm expired 15:55. The wrong human read cost $0.
 
 ### 2026-08-19 (PUT, −$1,115, catastrophe stop — 2nd straight `IntoWall`) + a `Runway` CALL thesis that would've won
 - **Bot trade:** PUT @ 13.80, entry 7706, Gflip 7732.8 (−0.34%), put ladder `7720|7685|7650` → **`IntoWall`**

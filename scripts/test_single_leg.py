@@ -99,6 +99,30 @@ def test_lowvol_gate():
     check("too-few bars → 0.0 (no crash)", strategy.entry_realized_vol(pd.DataFrame({'close': [1, 2]})) == 0.0)
 
 
+def test_mae_tracking():
+    print("\nMAE tracking — evaluate_exit_conditions records the trough AND the peak")
+    import market_time
+    b = _make_bot(); b.broker = FakeBroker()
+    b.broker.positions = lambda: []                 # fail-open (also covered by activated_at grace)
+    opt = FakeContract(777)
+    b.active_trades['gex:SPX'] = {
+        'strategy': 'gex', 'symbol': 'SPX', 'structure': 'SINGLE', 'direction': 'PUT',
+        'status': 'ACTIVE', 'entry_price': 10.0, 'qty': 1,
+        'option_contract': opt, 'long_conid': 777, 'leg_conids': [777],
+        'max_profit_pct': 0.0, 'max_adverse_pct': 0.0,
+        'activated_at': market_time.now_et(),
+    }
+    tr = b.active_trades['gex:SPX']
+    # entry 10.0 → -45% → -30% → +40% → +20% (dips deep, then recovers — the 08-20 shape)
+    for v in (10.0, 5.5, 7.0, 14.0, 12.0):
+        b.broker.mid_now = v
+        b.evaluate_exit_conditions_for_symbol('gex:SPX')
+    check("max_adverse_pct captured the trough (−45%)", abs(tr['max_adverse_pct'] - (-0.45)) < 1e-9)
+    check("max_profit_pct captured the peak (+40%)", abs(tr['max_profit_pct'] - 0.40) < 1e-9)
+    check("recovery didn't erase the trough (MAE is a low-watermark)", tr['max_adverse_pct'] == -0.45)
+    check("trade still ACTIVE (−45% & +40% don't trip gex trail/catastrophe)", tr['status'] == 'ACTIVE')
+
+
 def test_gex_exit_rules():
     print("\n_gex_exit_check — trailing + catastrophe ONLY (no invalidation, no 50% stop)")
     b = _make_bot()
@@ -117,6 +141,7 @@ def test_gex_exit_rules():
 if __name__ == '__main__':
     test_single_leg_order()
     test_lowvol_gate()
+    test_mae_tracking()
     test_gex_exit_rules()
     print()
     if _fails:

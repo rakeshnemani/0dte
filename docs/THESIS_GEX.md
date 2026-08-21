@@ -35,7 +35,7 @@ moves it to `data/commands/processed/` so it never runs twice. **Full schema + c
 
 | `cmd` | Effect |
 |-------|--------|
-| `arm` | Watch a price trigger (`op`/`level`/`confirm_bars`); when met, buy ONE ATM CALL/PUT under `thesis:SPX`. No trigger = fire now. `expires_at` drops it if untriggered. |
+| `arm` | Watch a trigger; when met, buy ONE ATM CALL/PUT under `thesis:SPX`. Trigger is either a **price level** (`op`/`level`) or an **`or_breakout`** — a break of the 15-min opening-range high (CALL) / low (PUT), computed the same way the mechanical GEX entry does, only after the OR completes, with an optional `min_level`/`max_level` noise floor. No trigger = fire now. `expires_at` drops it if untriggered. |
 | `close` | Close `thesis:SPX` now (if ACTIVE). |
 | `close_if` | Close `thesis:SPX` when a spot condition (`when`) is met — a conditional stop/exit. |
 | `cancel` | Drop a still-pending `arm`/`close_if` by id. |

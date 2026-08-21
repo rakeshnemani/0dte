@@ -86,9 +86,22 @@ def validate(cmd: dict):
             return False, "arm needs 'side' = CALL or PUT"
         trig = cmd.get("trigger")
         if trig is not None:
-            ok, err = _validate_condition(trig, "trigger")
-            if not ok:
-                return False, err
+            if not isinstance(trig, dict):
+                return False, "'trigger' must be an object"
+            ttype = trig.get("type", "price")
+            if ttype not in ("price", "or_breakout"):
+                return False, "trigger.type must be 'price' or 'or_breakout'"
+            if ttype == "price":
+                ok, err = _validate_condition(trig, "trigger")   # requires op + level
+                if not ok:
+                    return False, err
+            else:  # or_breakout — level is DERIVED from the opening range at eval time
+                om = trig.get("or_minutes")
+                if om is not None and (not isinstance(om, int) or om < 1):
+                    return False, "trigger.or_minutes must be an int >= 1"
+                for bound in ("min_level", "max_level"):
+                    if trig.get(bound) is not None and not isinstance(trig[bound], (int, float)):
+                        return False, f"trigger.{bound} must be a number"
             cb = trig.get("confirm_bars", 1)
             if not isinstance(cb, int) or cb < 1:
                 return False, "trigger.confirm_bars must be an int >= 1"
@@ -117,20 +130,47 @@ def _validate_condition(cond, name: str):
 
 # ── Trigger evaluation (pure) ────────────────────────────────────────────────
 
-def arm_should_fire(arm: dict, spot: float, recent_closes: list) -> bool:
-    """True when an arm's price trigger is met. No trigger → fire immediately. A
-    ``confirm_bars`` of N requires the last N 1-minute closes to ALL satisfy the condition
-    (so a one-tick wick past the level doesn't fire it)."""
+def arm_should_fire(arm: dict, spot: float, recent_closes: list, or_levels=None) -> bool:
+    """True when an arm's trigger is met. No trigger → fire immediately.
+
+    A ``confirm_bars`` of N requires the last N 1-minute closes to ALL satisfy the condition
+    (so a one-tick wick past the level doesn't fire it).
+
+    ``type='or_breakout'`` fires on a break of the 15-min opening-range high (CALL) / low (PUT).
+    The OR high/low are dynamic and must be supplied by the caller as ``or_levels=(or_high,
+    or_low)`` — the bot computes them from the intraday bars (``strategy.opening_range_levels``)
+    and passes ``None`` while the OR window is still forming, so a not-yet-complete OR never fires.
+    Optional ``min_level`` (CALL) / ``max_level`` (PUT) clamp the derived level to also 'wait out
+    the noise' — e.g. a CALL fires on a break above ``max(OR_high, min_level)``."""
     trig = arm.get("trigger")
     if not trig:
         return True                                  # immediate arm ("buy now")
-    op = _OPS[trig["op"]]
-    level = trig["level"]
-    confirm = trig.get("confirm_bars", 1)
+    ttype = trig.get("type", "price")
+    if ttype == "or_breakout":
+        if or_levels is None:                        # OR not complete / no bars → can't fire yet
+            return False
+        or_high, or_low = or_levels
+        if arm.get("side") == "CALL":
+            level = or_high
+            if trig.get("min_level") is not None:
+                level = max(level, trig["min_level"])
+            op = ">="
+        else:
+            level = or_low
+            if trig.get("max_level") is not None:
+                level = min(level, trig["max_level"])
+            op = "<="
+        return _confirm(op, level, trig.get("confirm_bars", 1), recent_closes)
+    return _confirm(trig["op"], trig["level"], trig.get("confirm_bars", 1), recent_closes)
+
+
+def _confirm(op_str: str, level: float, confirm_bars: int, recent_closes: list) -> bool:
+    """The last ``confirm_bars`` 1-min closes must ALL satisfy ``close <op> level``."""
+    op = _OPS[op_str]
     closes = list(recent_closes or [])
-    if len(closes) < confirm:
+    if len(closes) < confirm_bars:
         return False
-    return all(op(c, level) for c in closes[-confirm:])
+    return all(op(c, level) for c in closes[-confirm_bars:])
 
 
 def closer_should_fire(closer: dict, spot: float) -> bool:
@@ -186,10 +226,19 @@ def describe(cmd: dict) -> str:
     kind = cmd.get("cmd")
     sym = cmd.get("symbol", "SPX")
     if kind == "arm":
+        side = cmd.get("side")
         trig = cmd.get("trigger")
-        when = "now" if not trig else f"{sym} {trig['op']} {trig['level']}"
+        if not trig:
+            when = "now"
+        elif trig.get("type") == "or_breakout":
+            om = trig.get("or_minutes", 15)
+            edge = "OR high" if side == "CALL" else "OR low"
+            floor = trig.get("min_level" if side == "CALL" else "max_level")
+            when = f"break {sym} {om}-min {edge}" + (f" (≥{floor} floor)" if floor is not None else "")
+        else:
+            when = f"{sym} {trig['op']} {trig['level']}"
         cb = f" x{trig['confirm_bars']}" if trig and trig.get("confirm_bars", 1) > 1 else ""
-        return f"ARM {cmd.get('side')} when {when}{cb}"
+        return f"ARM {side} when {when}{cb}"
     if kind == "close_if":
         w = cmd.get("when", {})
         return f"CLOSE {cmd.get('target', f'thesis:{sym}')} if {sym} {w.get('op')} {w.get('level')}"

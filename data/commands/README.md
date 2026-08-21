@@ -27,26 +27,38 @@ giving back 20% of peak), a −80% catastrophe backstop, and the EOD flatten —
 
 ## Examples
 
-**Arm a CALL on an OR-break above 7710, 1-min confirmation (tomorrow's bullish case):**
+**Arm a CALL on a break of the 15-min opening-range high (the faithful "OR breakout"):**
+```json
+{
+  "id": "arm-call-or",
+  "cmd": "arm",
+  "side": "CALL",
+  "note": "Bullish: 1m break above the 15-min OR high → runway to gflip 7731",
+  "trigger": { "type": "or_breakout", "or_minutes": 15, "min_level": 7715, "confirm_bars": 1 },
+  "expires_at": "2026-08-20T15:55:00"
+}
+```
+The bot waits until the 15-min opening range completes (9:45), computes the OR high the same way
+the mechanical GEX entry does, then fires when a 1-min close breaks it. `min_level` clamps the
+trigger up so it also waits out a noise band (fires on `close ≥ max(OR_high, 7715)`).
+
+**Arm a CALL on a fixed price level instead (no OR):**
 ```json
 {
   "id": "arm-call-7710",
-  "cmd": "arm",
-  "side": "CALL",
-  "note": "Bullish: break >7710 → runway to gflip 7731",
-  "trigger": { "op": ">=", "level": 7710, "confirm_bars": 1 },
-  "expires_at": "2026-08-20T13:00:00"
+  "cmd": "arm", "side": "CALL",
+  "trigger": { "op": ">=", "level": 7710, "confirm_bars": 1 }
 }
 ```
 
-**Arm a PUT only on a decisive break-and-hold below 7700 (2-bar confirm):**
+**Arm a PUT only on a decisive break of the OR low, floored below 7700 (2-bar confirm):**
 ```json
 {
-  "id": "arm-put-7700",
+  "id": "arm-put-or",
   "cmd": "arm",
   "side": "PUT",
-  "note": "Bearish: only if 7700 truly breaks (it has held twice)",
-  "trigger": { "op": "<=", "level": 7700, "confirm_bars": 2 }
+  "note": "Bearish: only if the OR low AND 7700 truly break (7700 has held twice)",
+  "trigger": { "type": "or_breakout", "max_level": 7700, "confirm_bars": 2 }
 }
 ```
 
@@ -74,6 +86,13 @@ giving back 20% of peak), a −80% catastrophe backstop, and the EOD flatten —
 - `id` (required, unique) — dedupe + reference key. Also the default filename stem.
 - `symbol` (optional) — defaults to the bot's first symbol (`SPX`).
 - `note` (optional) — free text; shows in Discord + the audit `Reason`.
-- `trigger` / `when` — `{ "op": ">="|">"|"<="|"<", "level": <number>, "confirm_bars": <int≥1> }`.
-  `confirm_bars` (arm only) requires the last N 1-min closes to ALL satisfy the condition.
+- `trigger` (arm) — one of:
+  - **price** (default): `{ "op": ">="|">"|"<="|"<", "level": <number>, "confirm_bars": <int≥1> }`
+  - **OR breakout**: `{ "type": "or_breakout", "or_minutes": 15, "confirm_bars": 1, "min_level": <num>, "max_level": <num> }`
+    — fires when a close breaks the 15-min opening-range **high** (CALL) / **low** (PUT), only after
+    the OR window completes. Optional `min_level` (CALL) / `max_level` (PUT) clamp the derived level
+    to also wait out a noise band. `or_minutes` defaults to `GEX_OR_MINUTES` (15).
+  - Omit `trigger` entirely to **fire immediately** ("buy now").
+- `when` (close_if) — a price condition: `{ "op": "<="|..., "level": <number> }`.
+- `confirm_bars` — requires the last N 1-min closes to ALL satisfy the condition (filters a wick).
 - `expires_at` (optional) — ISO ET (`YYYY-MM-DDTHH:MM:SS`); an untriggered arm/close_if is dropped after this.
