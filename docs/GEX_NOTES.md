@@ -90,6 +90,16 @@ win-rate / avg P&L — *that* is the test of H3.
 
 ## Daily observations *(newest on top — append here each GEX day)*
 
+### 2026-08-21 (mechanical GEX did NOT trade — near the flip, chop; the thesis CALL won +$590)
+- **Regime: NEAR the flip, not deep neg-γ.** Gap up from 7642 → spot ~7679 vs Gflip **7695.91 = −0.22%**
+  (vs −1%+ the prior days). The mechanical GEX formed OR-breakouts all day but **skipped every one**
+  (no-momentum gate + low-vol gate) → **zero GEX trades.** The filters did their job on a chop day.
+- **H1 data point (distance-to-flip → chop):** entered the session −0.22% from the flip and the tape
+  **chopped ~75 min** (7660–7673) before breaking — consistent with "near the flip = little hedging
+  pressure = chop." One more brick for H1 being about *chop timing*, even if it's weak as a *direction* signal.
+- **The winner was the thesis rail, not GEX** — a `Runway` CALL (entry above the 7640–7665 shelf, air
+  pocket to the flip). See [RETROSPECTIVE.md](RETROSPECTIVE.md) 08-21. GEX real tally unchanged at −$228.
+
 ### 2026-08-20 (PUT, +$810, trailing stop — first `Runway` win the SYSTEM captured end-to-end)
 - **Setup:** entry 7675, Gflip 7728 (−0.69%, deep neg-γ), broke below OR-low 7679 w/ 2-bar down-accel.
   Put ladder `7650|7640|7645` (all *below* the entry) → **`Runway`**. Spot fell 7675 → 7642 (day's low),

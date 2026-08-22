@@ -89,12 +89,24 @@ restarted** (state is in-memory).
   permanent order id) that joins each row to the IBKR account. `RECONCILE` rows are
   annotations, not trades.
 - **`logs/bot.log`** — operational log (what the bot *did* + errors), daily rotation, ET.
-- **`dashboard.xlsx`** — regenerated automatically after each trading day.
+- **`dashboard.xlsx`** — regenerated automatically after each trading day. (The visual GEX dashboard
+  `data/gex/dashboard_<date>.html` is likewise auto-regenerated at EOD when `gex` is active.)
 
 ## Scripts
 
 - `scripts/reconcile_ibkr.py [YYYY-MM-DD] [--write]` — reconcile audit vs IBKR **by permId**;
   flags orphans two ways; shows account `dailyPnL` (the truth). **Full guide: `docs/RECONCILE.md`.**
+- `scripts/gex_snapshot.py [SYMBOL]` — one-shot **thesis-forming GEX picture** (Gflip/regime, net GEX,
+  the gamma-weighted support/resistance ladders, and the strike-by-strike shelf). Own clientId (13), runs
+  alongside the bot. Reuses `broker.fetch_gex_chain` + `src/gex.py`, and **saves the fetched chain to
+  `data/gex/chain_<date>.csv`** (same format the bot writes) so `gex_dashboard.py` can render it standalone.
+  **Run ~9:45–10:15 ET** (0DTE OI builds after the open; weekend/pre-market returns a stale/thin chain — and
+  running the *bot* on the weekend does nothing, it only collects GEX during market hours).
+- `scripts/gex_dashboard.py [YYYY-MM-DD]` — **visual** GEX dashboard from a saved `data/gex/chain_*.csv`
+  (default: latest). Renders `data/gex/dashboard_<date>.html` — a net-GEX-by-strike bar chart (spot + Gflip
+  marked, support red / resistance green) + metrics header + ladders, for eyeballing the nodes to form a
+  thesis. Offline (reads the CSV, no IBKR); reuses `src/gex.py`. **The bot auto-regenerates it at EOD**
+  (`bot.rebuild_gex_dashboard`, once/day when `gex` is active), alongside `dashboard.xlsx`.
 - `scripts/backfill_permid.py` — retro-fill `PermId` on recent audit rows (~24h window).
 - `scripts/build_dashboard.py` — `audit.csv` → `dashboard.xlsx`.
 - `scripts/counterfactual.py SYMBOL HH:MM` — "what did SYMBOL do after this ET time?" (retro helper).

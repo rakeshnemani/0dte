@@ -149,6 +149,49 @@ regime's sample.
 
 ---
 
+## 2026-08-21 (Fri) — 🟢 +$590: the THESIS RAIL's first win (Runway CALL) — the human traded, the machine sat out
+
+**The thesis rail's first fired-and-won trade.** Thesis **CALL @ 8.40 (11:02, spot 7679)** → trailing stop
+**+70% = +$590** (peaked +90.48%, MAE −39.88%). Setup_Tag **`Runway`**. The mechanical GEX strategy **did
+not trade at all** — every signal it formed was filtered (no-momentum / low-vol). So today the *human* read
+carried the day while the *machine* sat out — the exact mirror of 08-20 (machine won, thesis arm expired).
+
+**The day — a gap-up reversal, NEAR the flip (not deep neg-γ).** Yesterday closed 7642 at the lows; today
+**gapped up** and the OR formed **7660–7678**, above the 7650 short-gamma shelf. Crucially, Gflip was
+**7695.91** and spot ~7679 = only **−0.22% below the flip** — NOT the deep −1%+ negative gamma of the prior
+days. Near the flip = little directional hedging pressure = the ~75-min chop (7660–7673) before the break.
+Then a 2-bar break above the OR high (7678) at 11:00–11:04 → ran to the day high 7693.
+
+**Why the CALL won — Runway, near the flip:** entry 7679 sat above the whole 7640–7665 shelf (Runway), with
+an air pocket to 7693 and the flip (7696) just overhead as the natural ceiling. It didn't need to travel
+far — ATM gamma did the rest (+90% on a ~14-pt move).
+
+**Three mechanics validated live:**
+1. **MAE column earned its keep immediately** — first real reading **−39.88%**. This winner sat down ~40%
+   before running to +90%: the break was whippy (11:00 above → 11:01/02 back below → 11:03/04 real break),
+   the bot fired 11:01 *into* the pullback, and — with no fixed stop — survived to pay. The 08-20 "let it
+   ride" lesson, now visible in the ledger.
+2. **The 7665 buffer was moot** (OR high 7678 formed above it) and the **2-bar confirm was a wash** — the
+   first approach to 7678 (11:00) was the real one, no earlier fakeout for the 2nd bar to reject. The more
+   interesting lever is live-bar-vs-completed-bar confirmation (see [THESIS_GEX.md](THESIS_GEX.md), n=1).
+3. **The rail only fires on confirmation** — it correctly waited out 75 min of chop for a genuine break.
+
+**Infra — CORRECTION (verified 08-21 eve):** an earlier draft of this entry said the bot "died ~15:22."
+It did **not**. The log shows continuous GEX collection every 5 min through **15:55:08**, then the normal
+16:00 market-closed transition and hourly keep-alive sleep (it's alive, waiting for Monday). At the moment
+I first looked, 15:22 merely happened to be the newest log line mid-session and I misread it as a death —
+my mistake. So **there was NO infra failure on 08-21**; the day ran cleanly through the close, and the
+audit shows the running bot is on the new 28-col/MAE code (the SELL row's −39.88% is bot-written). The
+bearish PUT arm was still validly pending (its 15:55 expiry hadn't hit) when I removed it manually. **#16
+(always-on host) is still the right next step in principle** — a laptop is the long-term risk — but it did
+**not** bite today.
+
+**Forward-test tally:** Thesis **+$590** (1st trade). GEX unchanged at **−$228** (4 trades; didn't trade
+today). Combined realized **≈ +$362**. Reconcile 08-21 after settlement to confirm (closed on a clean 11:44
+fill, so already realized).
+
+---
+
 ## 2026-08-20 (Thu) — 🟢 +$810: the first end-to-end GEX win the SYSTEM captured (Runway PUT, trailing stop)
 
 **A green day, three firsts.** GEX **PUT @ $12.80 (10:17, spot 7675.24)** → **auto-closed by the trailing

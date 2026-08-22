@@ -232,9 +232,11 @@ def describe(cmd: dict) -> str:
             when = "now"
         elif trig.get("type") == "or_breakout":
             om = trig.get("or_minutes", 15)
-            edge = "OR high" if side == "CALL" else "OR low"
-            floor = trig.get("min_level" if side == "CALL" else "max_level")
-            when = f"break {sym} {om}-min {edge}" + (f" (≥{floor} floor)" if floor is not None else "")
+            if side == "CALL":
+                edge, bound, floor = "OR high", "≥", trig.get("min_level")
+            else:
+                edge, bound, floor = "OR low", "≤", trig.get("max_level")
+            when = f"break {sym} {om}-min {edge}" + (f" ({bound}{floor} floor)" if floor is not None else "")
         else:
             when = f"{sym} {trig['op']} {trig['level']}"
         cb = f" x{trig['confirm_bars']}" if trig and trig.get("confirm_bars", 1) > 1 else ""

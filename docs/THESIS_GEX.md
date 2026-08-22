@@ -96,3 +96,28 @@ The rail works **through this chat right now** — no Discord needed:
 
 Related: the separate, evidence-gated **IntoWall guard** for the *mechanical* gex strategy is
 TODO #43 (n=2, not built) — a different category from this human-thesis rail.
+
+## Observations under watch
+
+- **Confirmation uses the LIVE (in-progress) bar, not only completed closes (noted 2026-08-21, n=1).**
+  `_watch_thesis_triggers` reads `df['close']`, whose last element is the *current, still-forming* 1-min
+  bar (IBKR `reqHistoricalData(endDateTime='')` returns the partial bar). So a `confirm_bars: 2` check is
+  really *"last completed close + current live price,"* not *"two completed closes."* On 08-21 the CALL
+  fired 11:01 on an in-progress bar showing ~7679; that bar then **closed back below** (11:01=7676.55,
+  11:02=7676.35) before the real break at 11:03–11:04 → the entry ate a **−39.88% MAE** dip it survived
+  only because there is no fixed stop. A stricter *"N completed closes"* rule would have entered ~11:04,
+  after the pullback, skipping the dip (at a slightly higher premium). **Not a change yet — n=1.** To A/B
+  this properly we'd need to persist 1-min bars or log each trigger evaluation (we don't today; the 08-21
+  reconstruction only worked because the Gateway happened to be up). See TODO #45.
+
+  **P&L of the two on 08-21 (from the 1-min reconstruction):** live-bar entered 8.40 @ 11:01 → +$590;
+  strict would have entered ~8.5–9.2 @ ~11:04–11:05 (est.; 1-min option marks aren't logged) → ~+$530–590.
+  So **P&L was roughly a wash, live-bar a hair ahead** — the cheaper early entry slightly *beat* the
+  calmer one, because the trailing stop is percentage-of-entry (a higher entry makes the same 16.00 peak a
+  smaller % gain, so it trails out lower). **It's a variance trade-off, not a free lunch:**
+  - *live-bar (current):* cheaper entries, bigger MAE, and it will sometimes enter fakeouts **that don't
+    recover** — on a day the −40% runs to the −80% catastrophe, this version is *much worse*.
+  - *completed-bar (strict):* pricier/calmer entries, misses some cheap fills, but **dodges the
+    fakeout-losers**.
+  08-21 the fakeout recovered so live-bar won by a hair; on a day it doesn't, strict wins big. The decision
+  hinges on the fakeout recover-rate, which is exactly what n=1 can't tell us — hence: watch, log 1-min bars, decide later.

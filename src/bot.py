@@ -47,6 +47,7 @@ class TradingBot:
         # post-close day summary.
         self.closed_trades_today: list = []
         self.daily_summary_sent: bool = False
+        self.gex_dashboard_built: bool = False   # regenerate the visual GEX dashboard once per day at EOD
         # (symbol, date) pairs already warned about an untracked account position
         self._untracked_alerted: set = set()
         # Last ET clock-hour an hourly health summary was sent (once per hour)
@@ -91,6 +92,7 @@ class TradingBot:
             self.daily_loss_limit_hit = False
             self.closed_trades_today = []
             self.daily_summary_sent = False
+            self.gex_dashboard_built = False
             self._untracked_alerted.clear()
             self._last_hourly_hour = None
             logger.info(f"Daily trade count reset for {today}")
@@ -1324,6 +1326,24 @@ class TradingBot:
         except Exception as e:
             logger.warning(f"Dashboard rebuild failed: {e}")
 
+    def rebuild_gex_dashboard(self):
+        """Regenerate the visual GEX dashboard (data/gex/dashboard_<date>.html) from the day's
+        collected chain CSV. Subprocess-isolated so a failure can never break the bot loop."""
+        script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'scripts', 'gex_dashboard.py'
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, script], capture_output=True, text=True, timeout=60
+            )
+            if result.returncode == 0:
+                logger.info(f"GEX dashboard rebuilt: {result.stdout.strip()}")
+            else:
+                logger.warning(f"GEX dashboard rebuild failed: {result.stderr.strip()[-300:]}")
+        except Exception as e:
+            logger.warning(f"GEX dashboard rebuild failed: {e}")
+
     # ── Main loop ────────────────────────────────────────────────────────────
 
     def _loop_interval(self) -> int:
@@ -1362,6 +1382,13 @@ class TradingBot:
                         )
                         self.daily_summary_sent = True
                         self.rebuild_dashboard()
+                    # Regenerate the visual GEX dashboard from the day's collected chain — once
+                    # per day, regardless of whether we traded (the GEX picture is worth keeping
+                    # even on no-trade/chop days). Needs the day's chain CSV, which _collect_gex_data
+                    # has been writing all session.
+                    if ('gex' in config.ACTIVE_STRATEGIES and not self.gex_dashboard_built):
+                        self.gex_dashboard_built = True
+                        self.rebuild_gex_dashboard()
                     secs = market_time.seconds_until_market_open()
                     hrs, rem = divmod(secs, 3600)
                     mins = rem // 60

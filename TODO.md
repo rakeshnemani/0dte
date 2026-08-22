@@ -22,7 +22,7 @@ no invalidation/stop). The whole game now: do these single-leg strategies clear 
 | **P0 — live experiment** | **#42** flip — capture real SPX fill costs (the fee-edge gate); watch for trend-day bleed |
 | **P1 — soon** | **#36** cross-day circuit breaker · **#38** trail-trigger 0.50→0.45 · **#20/#35** fee ratio (wider spreads / contract cap) · **#2** total-exposure cap · **#16** always-on host |
 | **P2 — evidence-gated** | **#43** IntoWall entry guard (mechanical GEX; n=2, don't build yet) · **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
-| **Design track (parallel)** | **#44** Thesis-GEX — human-thesis Discord channel + bot command rail (analyst = Claude, executor = bot) |
+| **Design track (parallel)** | **#44** Thesis-GEX — human-thesis Discord channel + bot command rail (analyst = Claude, executor = bot) · **#45** thesis confirm on completed bars + persist 1-min bars for A/B (n=1) |
 | **P3 — parked** | **#4** GLD/TLT · **#8** VIX1D |
 | **Resolved by evidence — do not reopen** | **#39** (filters aren't the bottleneck) · **#37** (→ #42) · **regime-router** (tested 07-28, not justified) |
 
@@ -128,6 +128,20 @@ fire live orders. The mechanical trend+gex logic keeps running **unchanged** in 
 - **(a) Discord channel — ⏳ NEXT.** Dedicated channel routed to a 0dte Claude session (separate from
   the *ImpliedMoveBasedOptionSelector* pairing) so theses come from mobile. Convenience layer on a
   working engine, not a prerequisite.
+
+**45. Thesis confirmation: live-bar vs completed-bar + persist 1-min bars (observation, n=1).** The thesis
+`confirm_bars` check reads the LIVE (in-progress) 1-min bar as the last "close" (IBKR `endDateTime=''`
+returns the partial bar), so `confirm_bars:2` = *last completed close + current price*, not *two completed
+closes*. On 08-21 the CALL fired 11:01 on an in-progress bar that then closed back below (the −39.88% MAE
+dip) before the real 11:03–11:04 break; a stricter *N-completed-closes* rule would have entered ~11:04,
+after the pullback. **Candidate:** option to confirm on completed bars only. **08-21 P&L was ~a wash**
+(live-bar 8.40→+$590 vs strict ~+$530–590 est.) — the cheaper early entry slightly *beat* the calmer one
+under the %-of-entry trailing stop. So it's a **variance trade-off**, not a clear win: live-bar = cheaper
+entries + bigger MAE + occasional fakeouts that *don't* recover (−80% risk); completed-bar = calmer/pricier,
+dodges fakeout-losers, misses cheap fills. The deciding number is the fakeout recover-rate. **Blocker to
+measuring it:** we don't persist 1-min bars, so A/B testing needs the bot to log each trigger evaluation (or
+save the 1-min series) — the 08-21 reconstruction only worked because the Gateway was up. n=1 — watch, don't
+build. See [docs/THESIS_GEX.md](docs/THESIS_GEX.md) "Observations under watch".
 
 ---
 
