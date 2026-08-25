@@ -1,12 +1,15 @@
 # 0DTE Paper Trading Bot
 
 A Python algorithmic bot that paper-trades **0DTE single-leg options** (SPX) on Interactive Brokers
-(IBKR), running two directional strategies together: **Trend** (Supertrend + PSAR + Kaufman-chop) and
-**GEX** (dealer gamma-flip momentum). It buys ONE ATM (~50Δ) CALL/PUT per signal — a single leg, one contract.
+(IBKR), running **three position slots** together: two mechanical strategies — **Trend** (Supertrend +
+PSAR + Kaufman-chop) and **GEX** (dealer gamma-flip momentum) — plus a **human-thesis rail** (`thesis:SPX`,
+added 2026-08-19): the user forms a daily GEX thesis, Claude vets it, and an approved thesis is armed as a
+command file the bot executes. It buys ONE ATM (~50Δ) CALL/PUT per signal — a single leg, one contract.
 
 > **Goal:** reach consistent, *fee-adjusted* profitability on paper, then go live. Read
-> [CLAUDE.md](CLAUDE.md) for the full orientation and [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) for the
-> entry/exit rules.
+> [CLAUDE.md](CLAUDE.md) (start with its **"📌 Current state & handoff"** block) for the full orientation,
+> [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md) for entry/exit rules, and [docs/THESIS_GEX.md](docs/THESIS_GEX.md)
+> for the human-thesis command rail.
 
 ## Project structure
 
@@ -22,12 +25,15 @@ A Python algorithmic bot that paper-trades **0DTE single-leg options** (SPX) on 
 │   ├── bot.py          # TradingBot — state + orchestration + main loop
 │   ├── broker.py       # IBKRBroker — all IBKR calls
 │   ├── strategy.py     # Pure signal/exit functions (indicators, trend + gex signals)
-│   ├── gex.py          # Dealer-gamma math (Gflip, walls)
+│   ├── commands.py     # Pure thesis-rail command model (arm/close/close_if/cancel)
+│   ├── gex.py          # Dealer-gamma math (Gflip, walls, ladders, expected_move)
 │   ├── notifier.py     # Discord alerts
 │   ├── audit.py        # audit.csv writer
 │   └── market_time.py  # ET market-hours helpers
-├── scripts/            # reconcile, backfill, dashboard, backtest, tests
-└── docs/               # HOW_IT_WORKS, PLAYBOOKS, RECONCILE, RETROSPECTIVE, BACKTESTING, GO_LIVE
+├── data/commands/      # thesis-rail command files (dropped by Claude, watched by the bot)
+├── data/gex/           # saved GEX chains + regime CSVs + dashboards/ (the visual boards)
+├── scripts/            # reconcile, gex_snapshot, gex_dashboard, backfill, backtest, tests
+└── docs/               # THESIS_GEX, HOW_IT_WORKS, PLAYBOOKS, GEX_NOTES, RETROSPECTIVE, GO_LIVE, …
 ```
 
 ## Prerequisites

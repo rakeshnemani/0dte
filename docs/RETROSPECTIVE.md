@@ -149,6 +149,46 @@ regime's sample.
 
 ---
 
+## 2026-08-24 (Mon) — 🔴 −$1,190: both systems bought the SAME false breakout on a CHOP day (first Runway loss)
+
+**Both the thesis AND the mechanical GEX fired the identical bullish CALL at 11:48** (gex @ 7.10, thesis @
+7.30, spot 7664) and **both catastrophe-stopped at −80%** @ 13:30: gex peaked +42.96% → −$585; thesis peaked
++37.67% → −$605. **Combined −$1,190.** Setup_Tag **`Runway`** — the **first Runway trade to LOSE.**
+
+**The day was CHOP.** Open 7658, **high 7668, low 7645**, close 7656 — a **23-point range, closed flat.** The
+"breakout above the OR high (7663)" at 11:48 was just a **poke to the top of a dead range**: spot went 7664 →
+7668.51 (day high, +4.5 pts) → mean-reverted to 7651. The CALL rode that tiny round trip +40% → −80%.
+
+**Where we went wrong — three compounding errors:**
+1. **Bought a breakout in chop, near the flip.** Entry −0.22% from Gflip → **H1 territory** (near-flip = chop).
+   The "clean runway to the flip" was a chop zone; the poke reverted. In a 23-pt-range day, breakouts fail.
+2. **No protection on the +40% peak** — it never reached the old +50% trail-arm, so the trail never armed and
+   the CALL gave it all back. **Exactly the 08-19 failure** → drove the trail-arm change below.
+3. **Both systems agreed → doubled the loss.** First day thesis + mechanical *both* fired (they'd never both
+   traded before) and picked the *same* CALL. The 2X-when-they-agree risk, realized on a loser.
+
+**What worked:** the bearish PUT (`max_level 7630`) correctly **expired unfired** — 7630 never came close (day
+low 7645). The high-bar discipline kept us out of a would-be second loser. Right call.
+
+**🔧 Fix shipped (08-24): trail-arm 0.50 → 0.35** (config + `.env`; TODO #38 done). Two trades now (08-19 +28%,
+08-24 +40%) peaked below the +50% arm and gave everything back. The arm only gates *whether* the trail is
+active (exit is always `peak×0.8`), so lowering it protects the +35–50% peakers **without touching the big
+winners** (+79/+90/+100% all still trail from their own peak) — asymmetric. With +35%, today's CALLs would've
+exited ~+30% (≈**+$460** combined) instead of **−$1,190** — a ~**$1,650** swing.
+
+**Two observations logged (not acted on):**
+- **Gflip near spot caps the runway.** Entry sat 17 pts below the flip → limited upside ceiling. But 08-21 was
+  the *same* −0.22% and won +90% (it moved +14 pts) — so near-flip sets the *ceiling*; **chop-vs-move decides.**
+- **IV wasn't the killer, but its morning drop was a flag.** ATM 0DTE IV was ~flat (~11%) *during* the hold —
+  no crush; the −80% was **spot reversal + theta.** But IV had already compressed **14.5% → 11% by 11:48** —
+  the market priced a quiet day and we bought a breakout into it. Our filter uses *realized* vol (the micro-
+  break passed it), missing the *implied*-vol signal. Candidate chop-filter (implied vol), n=1.
+
+**Running tally:** GEX +877 −800 −1,115 +810 −585 = **−$813** (5) · Thesis +590 −605 = **−$15** (2) · combined
+**−$828.** `Runway` **3-2, +$1,087** · `IntoWall` **0-2, −$1,915** (Runway still beats IntoWall, no longer unbeaten).
+
+---
+
 ## 2026-08-21 (Fri) — 🟢 +$590: the THESIS RAIL's first win (Runway CALL) — the human traded, the machine sat out
 
 **The thesis rail's first fired-and-won trade.** Thesis **CALL @ 8.40 (11:02, spot 7679)** → trailing stop

@@ -22,6 +22,10 @@ _COLUMNS = [
     # buckets the entry vs the support ladder: Runway (room to run) / IntoWall (see GEX_NOTES.md H3).
     "Gflip", "Dist_Gflip_Pct", "Net_GEX_Total_M", "Net_GEX_0DTE_M",
     "Call_Ladder", "Put_Ladder", "Setup_Tag",
+    # LOG-ONLY observation (2026-08-24, TODO #7): fraction of the day's IV-expected move already
+    # realized as range by entry time (realized_range ÷ expected_move). High = exhaustion risk
+    # (08-24 was ~0.52 and reverted). No entry logic uses it yet — collecting to set a threshold.
+    "Range_Exp_Ratio",
 ]
 
 
@@ -37,7 +41,7 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
            gflip: Optional[float] = None, dist_gflip_pct: Optional[float] = None,
            net_gex_total: Optional[float] = None, net_gex_0dte: Optional[float] = None,
            call_ladder: Optional[str] = None, put_ladder: Optional[str] = None,
-           setup_tag: Optional[str] = None):
+           setup_tag: Optional[str] = None, range_exp_ratio: Optional[float] = None):
     file_exists = os.path.isfile(AUDIT_FILE)
     try:
         with open(AUDIT_FILE, mode='a', newline='') as file:
@@ -73,6 +77,7 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
                 call_ladder or "",
                 put_ladder or "",
                 setup_tag or "",
+                f"{range_exp_ratio:.3f}" if range_exp_ratio is not None else "",
             ])
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")

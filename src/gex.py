@@ -94,6 +94,21 @@ def net_gex_0dte(spot: float, chain: List[dict], mult: int = 100) -> float:
     return net_gex(spot, [c for c in chain if c['T'] <= min_T + 1e-9], mult)
 
 
+def expected_move(spot: float, chain: List[dict]) -> Optional[float]:
+    """IV-expected 1σ move over the time remaining, from the ATM 0DTE strike: `spot · IV · √T`.
+    The market's priced 'budget' for the rest of the session. Used LOG-ONLY to watch
+    expected-move exhaustion (how much of this has the day already spent by entry?) — see
+    docs/GEX_NOTES.md + TODO #7. None if no chain / bad inputs."""
+    if not chain or spot <= 0:
+        return None
+    min_T = min(c['T'] for c in chain)
+    zero = [c for c in chain if abs(c['T'] - min_T) < 1e-12]
+    atm = min(zero, key=lambda c: abs(c['strike'] - spot))
+    if atm['iv'] <= 0 or atm['T'] <= 0:
+        return None
+    return spot * atm['iv'] * sqrt(atm['T'])
+
+
 def gex_by_strike(spot: float, chain: List[dict], mult: int = 100) -> dict:
     """Per-strike net dealer GEX ($, our convention), summed across expiries. Positive =
     dealers dampen there (resistance / call wall); negative = amplify (support / put wall)."""

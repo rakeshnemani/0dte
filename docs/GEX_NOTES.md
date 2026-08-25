@@ -57,15 +57,28 @@ can group and compare later:
   spot, a CALL with heavy resistance *above*) → room to run into it.
 - **`IntoWall`** — entered *into/against* it (support at/above a PUT's entry) → no runway.
 
-So far (real trades): **08-17 `Runway` → won +$877 · 08-18 `IntoWall` → lost −$800 · 08-19 `IntoWall` →
-lost −$1,115 · 08-20 `Runway` → won +$810.** **Real tally: `Runway` 2-0 (+$1,687), `IntoWall` 0-2
-(−$1,915).** Both `IntoWall`s bought a PUT *below* the 7720 put-support wall (shorting into support) and
-hit the −80% catastrophe stop; both `Runway`s entered *above* the support ladder with room to fall, and
-paid. **3-for-3 in the predicted direction.** Note 08-20 is the sharpest test yet: the *same instrument*
-(a GEX PUT in deep neg-γ) that lost twice last week **won** — the only difference was the `Setup_Tag`.
-Had the IntoWall guard ([TODO #43](../TODO.md)) been live, GEX over these four would be **+$1,687 not −$228**.
-Still n=4 — keep collecting, don't code it. As the sample grows, group the audit by `Setup_Tag` and compare
-win-rate / avg P&L — *that* is the test of H3.
+So far (real trades): **08-17 `Runway` +$877 · 08-18 `IntoWall` −$800 · 08-19 `IntoWall` −$1,115 · 08-20
+`Runway` +$810 · 08-21 `Runway` +$590 · 08-24 `Runway` −$1,190 (2 legs).** **Real tally: `Runway` 3-2
+(+$1,087), `IntoWall` 0-2 (−$1,915).** `Runway` **still beats `IntoWall`** ($+1,087 vs −$1,915) and is the
+right *structural* filter — but **08-24 broke its unbeaten run**: a Runway CALL on a **chop day** (23-pt
+range) failed, because the tag captures *position*, **not whether the day moves.** So `Runway` ≠ a green
+light; you also need the day to actually move (trend/gap, not chop — see H1 near-flip). Both `IntoWall`s
+bought a PUT *below* the 7720 wall (shorting into support) → −80%; the Runway wins entered with room to run
+*and* on days that moved. Still small n — keep collecting; group the audit by `Setup_Tag` (and cross with
+day-range / near-flip) — *that* is the test.
+
+### H4 (candidate) — expected-move exhaustion (now being logged)
+**Idea:** a breakout entered after the day has already realized most of its **IV-expected move**
+(`spot·IV·√T`, the day's priced "budget") has **no room left to run** → it pokes and reverts. Metric:
+`realized_range_at_entry ÷ expected_move`.
+**Backtest (n=6):** winners capped at **38%/42%** (08-21, 08-20); the 08-24 losers sat at **52%** → an
+X ≈ **47%** would have skipped 08-24's −$1,190 double loss **without skipping either winner.** The other
+two losers (08-18 19%, 08-19 35%) sit *below* the winners — different failure modes (chop/IntoWall), so
+the exhaustion filter correctly doesn't target them.
+**Status:** `audit.csv` now logs **`Range_Exp_Ratio`** at every gex/thesis entry (log-only, no skip). n=1
+exhaustion case + ~10-pt win/loss margin → collect a few weeks, then set X on real data. See TODO #7.
+**Note vs 08-24's IV compression:** distinct signals — that was *implied* vol falling in the morning (a
+"quiet day" prior); this is *realized range vs the budget* at entry (how much move is already spent).
 
 ---
 
@@ -89,6 +102,20 @@ win-rate / avg P&L — *that* is the test of H3.
 ---
 
 ## Daily observations *(newest on top — append here each GEX day)*
+
+### 2026-08-24 (CALL, −$585 gex + −$605 thesis, catastrophe stop — FIRST Runway loss, a chop day)
+- **Setup:** entry 7664, Gflip 7681 (−0.22%), Setup_Tag Runway. Both gex + thesis fired the SAME bullish CALL
+  on the OR-high break (7663). Day was a **23-pt chop** (7645–7668, flat close) → the "breakout" was a poke to
+  the range high that reverted. Peaked +40%, rode to −80%.
+- **First `Runway` LOSS** (was 3-0). Lesson: the tag captures the structural *position*, NOT whether the day
+  MOVES. **Runway + chop = loss.** Past Runway wins were all on days that moved (trend/gap); today chopped.
+- **H1 (near-flip → chop):** entry −0.22% from the flip on a 23-pt range → another near-flip chop point. BUT
+  08-21 was ALSO −0.22% and won +90% (it moved). So near-flip caps the *ceiling*; chop-vs-move decides.
+- **IV check (per user Q):** ATM 0DTE IV flat ~11% *during* the hold (no crush) → the −80% was **spot reversal
+  + theta**, not IV. But IV compressed **14.5%→11% in the morning** (a "quiet day" signal our *realized*-vol
+  filter missed). Candidate: an *implied*-vol chop filter. n=1.
+- **Trail-arm lowered 0.50 → 0.35** (08-19 +28% and 08-24 +40% both gave modest peaks back to −80%; the arm
+  only gates whether the trail is active, so it protects modest peakers without touching big winners). TODO #38 done.
 
 ### 2026-08-21 (mechanical GEX did NOT trade — near the flip, chop; the thesis CALL won +$590)
 - **Regime: NEAR the flip, not deep neg-γ.** Gap up from 7642 → spot ~7679 vs Gflip **7695.91 = −0.22%**

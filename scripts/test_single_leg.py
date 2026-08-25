@@ -113,14 +113,15 @@ def test_mae_tracking():
         'activated_at': market_time.now_et(),
     }
     tr = b.active_trades['gex:SPX']
-    # entry 10.0 → -45% → -30% → +40% → +20% (dips deep, then recovers — the 08-20 shape)
-    for v in (10.0, 5.5, 7.0, 14.0, 12.0):
+    # entry 10.0 → -45% → -30% → +40% peak → +36% (dips deep, recovers; the 08-20 shape).
+    # +40% arms the 0.35 trail, but +36% holds ABOVE the +32% giveback → no exit yet.
+    for v in (10.0, 5.5, 7.0, 14.0, 13.6):
         b.broker.mid_now = v
         b.evaluate_exit_conditions_for_symbol('gex:SPX')
     check("max_adverse_pct captured the trough (−45%)", abs(tr['max_adverse_pct'] - (-0.45)) < 1e-9)
     check("max_profit_pct captured the peak (+40%)", abs(tr['max_profit_pct'] - 0.40) < 1e-9)
     check("recovery didn't erase the trough (MAE is a low-watermark)", tr['max_adverse_pct'] == -0.45)
-    check("trade still ACTIVE (−45% & +40% don't trip gex trail/catastrophe)", tr['status'] == 'ACTIVE')
+    check("ACTIVE: +40% armed the 0.35 trail but +36% is above the +32% giveback", tr['status'] == 'ACTIVE')
 
 
 def test_gex_exit_rules():

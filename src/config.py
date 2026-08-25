@@ -54,7 +54,12 @@ GEX_FLATTEN_TIME = os.getenv("GEX_FLATTEN_TIME", "15:55")             # flatten 
 # OF the peak) + a WIDE catastrophe backstop so a trade that never peaks can't ride to a
 # full-premium loss. GEX_TAKE_PROFIT>0 re-enables a hard TP (off by default — the tail is the edge).
 GEX_TAKE_PROFIT = float(os.getenv("GEX_TAKE_PROFIT", "0.0"))
-GEX_TRAIL_TRIGGER = float(os.getenv("GEX_TRAIL_TRIGGER", "0.50"))         # arm once peaked +50%
+# 2026-08-24: lowered 0.50 → 0.35. Two trades (08-19 +28%, 08-24 +40%) peaked BELOW the old
+# +50% arm and gave the whole modest peak back to the −80% catastrophe stop. The arm only gates
+# WHETHER the trail is active (the exit is always peak×(1−giveback)), so lowering it adds
+# protection for the +35–50% peakers WITHOUT changing the big-winner exits (+79/+90/+100% all
+# still trail from their own peak). Asymmetric: protects losers, doesn't cost winners. (TODO #38)
+GEX_TRAIL_TRIGGER = float(os.getenv("GEX_TRAIL_TRIGGER", "0.35"))         # arm once peaked +35%
 GEX_TRAIL_GIVEBACK = float(os.getenv("GEX_TRAIL_GIVEBACK", "0.20"))       # exit at 80% of peak
 GEX_CATASTROPHE_STOP = float(os.getenv("GEX_CATASTROPHE_STOP", "0.80"))   # 0 = no stop at all
 # Theta protection (2026-08-11): skip a GEX entry when entry-time realized vol (open→now,

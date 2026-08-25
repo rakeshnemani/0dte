@@ -147,9 +147,9 @@ Plus the shared gate: **entry-time realized vol ≥ `GEX_SKIP_LOWIV` (0.082)** (
 This is the defining choice (adopted 2026-08-17): **no invalidation cut and no fixed max-loss stop** —
 those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* via:
 
-1. **Trailing stop** — arms **once the trade peaks at `GEX_TRAIL_TRIGGER` (+50%)**, then exits if profit
+1. **Trailing stop** — arms **once the trade peaks at `GEX_TRAIL_TRIGGER` (+35%)**, then exits if profit
    gives back `GEX_TRAIL_GIVEBACK` (20%) **of the peak**. So it exits at `peak × (1 − 0.20)`:
-   peak +50% → exit +40%; peak +100% → exit +80%; peak +200% → exit +160%.
+   peak +35% → exit +28%; peak +100% → exit +80%; peak +200% → exit +160%.
 2. **Catastrophe backstop** — exit at **−`GEX_CATASTROPHE_STOP` (80%)**. This is the *only* downside
    floor, because the trailing stop can't arm on a trade that never gets into profit.
 3. **EOD flatten** — 15:55 ET.
@@ -166,7 +166,7 @@ those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* vi
 | `GEX_MOMENTUM_BARS` | 2 | Accelerating bars required |
 | `GEX_WALL_TOL_PCT` | 0.0015 | "at a wall" tolerance (~0.15% of spot) |
 | `GEX_SKIP_LOWIV` | 0.082 | Theta-protection vol gate |
-| `GEX_TRAIL_TRIGGER` / `_GIVEBACK` | 0.50 / 0.20 | Trailing stop: arm level / giveback of peak |
+| `GEX_TRAIL_TRIGGER` / `_GIVEBACK` | 0.35 / 0.20 | Trailing stop: arm level / giveback of peak |
 | `GEX_CATASTROPHE_STOP` | 0.80 | Wide downside backstop |
 | `GEX_TAKE_PROFIT` | 0.0 (off) | Optional hard TP (>0 re-enables) |
 | `GEX_CHAIN_STRIKE_PCT` / `_EXPIRIES` / `_MAX_STRIKES` | 0.05 / 3 / 50 | Chain fetch scope |
@@ -248,7 +248,7 @@ early, trails realized winners, and only backstops at −80%.**
 | `TREND_KAUF_MAX` | 50 | trend | Max chop for a trend entry |
 | `TREND_SKIP_LOWIV` / `GEX_SKIP_LOWIV` | 0.082 | both | Low-vol skip floor |
 | `HARD_STOP_LOSS_PCT` | 0.50 | trend | Trend hard stop |
-| `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK` | 0.50 / 0.20 | gex | Trailing stop |
+| `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK` | 0.35 / 0.20 | gex | Trailing stop |
 | `GEX_CATASTROPHE_STOP` | 0.80 | gex | Wide backstop |
 | `MIN_OPTION_COST` | 0.30 | both | Skip if the option mid is below this |
 | `ENTRY_AGGRESSION` | 0.5 | both | Entry limit mid→ask fraction |

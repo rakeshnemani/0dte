@@ -57,10 +57,13 @@ flag, `bot._maybe_flip`, unit-tested; keeps all filters, inverts only the execut
 trades/day it never reaches 5, so **8 straight losses across 6 days (−$544) tripped nothing**.
 Fix: persist the streak across days, or add a rolling last-N-trades / N-day drawdown guard.
 
-**38. Lower `TAKE_PROFIT_TRAIL_TRIGGER` 0.50 → ~0.40–0.45.** 07-20's winner peaked **+48.57%**
-but the trail arms only at +50% — missed by 1.4 pts, so the invalidation booked it at +17% on
-the giveback. Winners peak and revert fast. Low-risk (trail never exits at a loss). Validate
-with a quick replay of the proxy-winners first.
+**38. Lower the GEX trail-arm 0.50 → 0.35 — ✅ DONE 2026-08-24.** `GEX_TRAIL_TRIGGER` 0.50→0.35 (config +
+`.env`). Two GEX losers (08-19 +28% peak, 08-24 +40% peak) peaked *below* the +50% arm and gave the whole
+modest peak back to the −80% catastrophe stop. The arm only gates *whether* the trail is active (exit is
+always `peak×(1−giveback)`), so lowering it **protects the +35–50% peakers without touching the big winners**
+(+79/+90/+100% still trail from their own peak) — asymmetric, low-risk. With +35%, 08-24 would've exited
+~+30% (≈+$460) not −$1,190. n=2 evidence; the mechanism (not the sample) justifies it. (Original 07-20
+breakout-era note: winners peak and revert fast — same lesson.)
 
 **20 / 35. Fee ratio — wider spreads / contract cap.** `MIN_SPREAD_COST` already 0.10→0.30
 (07-15). Still open: an explicit **contracts-per-trade cap**, and testing **wider spreads**
@@ -72,9 +75,13 @@ with a quick replay of the proxy-winners first.
 three same-direction positions, three simultaneous hard stops). Small guard in `execute_trade`,
 same shape as the daily-loss limit. GO_LIVE Gate 5.
 
-**16. Always-on host.** Move the bot off the laptop (VPS / dedicated box; interim tmux +
-caffeinate). Repeated down-days (07-20 missed the morning; 07-23/24 down). GO_LIVE Gate 4's
-"20 clean sessions" clock can't start until this lands. Operational, not code.
+**16. Always-on host — DEFERRED 2026-08-24 (user prefers the laptop).** User runs the bot on a
+never-sleep, always-on-power laptop and is satisfied; recent sessions (08-20/21/24) ran clean
+through the close. A full migration (Gateway + bot to a dedicated box via IBC headless auto-login)
+is the eventual answer, but not being pursued now. **Residual risk = a *silent* mid-session failure**
+(OS reboot, crash, Gateway daily re-auth hiccup, power blip) — mostly covered by the hourly health
+Discord ping (#23); a true "silence alert" (dead-man's-switch, GO_LIVE Gate 7) is the only real gap.
+Original note: repeated down-days 07-20/07-23/24 predate the never-sleep setup. Operational, not code.
 
 ---
 
@@ -90,8 +97,15 @@ line might not help. Revisit only if #42 stalls.*
 **5. Time stop** — exit if not at ~+15% within 45–60 min (theta bleed). *Invalidation already
 cuts most; needs evidence the slow-bleed case still occurs.*
 **6. Midday tightening** — require ADX>30 for 11:30–13:30 entries. *Partly covered by conviction `early✗`.*
-**7. Expected-move anchor** — price the ATM straddle ~10:00 ET; skip breakouts once the day has
-moved >80% of it (exhaustion). Also usable for strike/target selection.
+**7. Expected-move exhaustion — NOW LOGGING (2026-08-24), no skip logic yet.** Idea: skip a breakout once
+the day has already realized a large fraction of its IV-expected move (little budget left → the break has no
+fuel and reverts). **Backtest on our 6 trades:** `realized_range_at_entry ÷ expected_move` — winners capped
+at **38%/42%**, the 08-24 losers sat at **52%** → an X ≈ **47%** would've **skipped 08-24's double loss
+(−$1,190) without skipping either winner** (08-18/08-19 sit below the winners — different failure modes, not
+exhaustion). n=1 exhaustion case, ~10-pt margin → not codeable yet. **Shipped: `audit.csv` now logs
+`Range_Exp_Ratio` at every gex/thesis entry** (`bot._entry_exhaustion` + `gex.expected_move`; day-budget
+cached from the first chain). Observe a few weeks → set X on real data → log-only "would-have-skipped" before
+any live skip. Straddle also usable for strike/target selection later.
 **12. Throttle stand-down 2h instead of all-day** — implement when a real morning-chop→afternoon-trend day shows the cost.
 **22 / 28. Condor tuning** — condors are **OFF** (`CONDOR_ENABLED=false`, net drag 1W/2L). If ever
 re-enabled: breach exit fires too late (#22, exited −67% not −25%), and the R:R needs an 86% WR

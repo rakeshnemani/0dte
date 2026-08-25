@@ -12,7 +12,7 @@ import logging
 import os
 import subprocess
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 import audit
 import commands
@@ -60,6 +60,7 @@ class TradingBot:
         self._gex_chain: list = []
         self._gex_chain_at = None
         self._gex_collect_at = None   # throttles the always-on GEX data collection (~60s)
+        self._day_expected_move = None  # day's IV-expected move (budget), cached from the first chain
         # Throttle "signal formed but skipped" transparency alerts (per strategy:symbol).
         self._blocked_alert_at: Dict[tuple, datetime.datetime] = {}
 
@@ -93,6 +94,7 @@ class TradingBot:
             self.closed_trades_today = []
             self.daily_summary_sent = False
             self.gex_dashboard_built = False
+            self._day_expected_move = None
             self._untracked_alerted.clear()
             self._last_hourly_hour = None
             logger.info(f"Daily trade count reset for {today}")
@@ -269,6 +271,10 @@ class TradingBot:
         if chain:
             self._gex_chain = chain
             self._gex_chain_at = now
+            # Cache the day's IV-expected move (budget) from the FIRST chain of the day — the
+            # anchor for the log-only exhaustion ratio (realized range ÷ this). See _entry_exhaustion.
+            if self._day_expected_move is None:
+                self._day_expected_move = gex.expected_move(spot, chain)
             logger.info(f"[{symbol}] GEX chain refreshed: {len(chain)} strike-expiries.")
             self._save_gex_chain(symbol, spot, chain)
         elif not self._gex_chain:
@@ -332,6 +338,9 @@ class TradingBot:
                     f" | dist {dstr} | walls C{cw:.0f}/P{pw:.0f}"
                     f"{' | IN-POSITION' if in_pos else ''}")
         self._save_gex_regime(symbol, spot, gflip, dist_pts, dist_pct, reg, cw, pw, in_pos)
+        # Real-time dashboard: regenerate the visual on this same ~5-min cadence so a phone/browser
+        # pointed at data/gex/dashboards/dashboard_<date>.html (auto-refreshing) stays current.
+        self.rebuild_gex_dashboard()
 
     def _save_gex_regime(self, symbol, spot, gflip, dist_pts, dist_pct, regime, cw, pw, in_pos):
         """Append one distance-to-flip row to data/gex/regime_YYYY-MM-DD.csv — the evidence
@@ -413,6 +422,7 @@ class TradingBot:
         if direction:
             # Freeze the GEX context at order time (for the audit + Discord + forward-testing).
             indicators.update(self._freeze_gex_context(spot, direction))
+            indicators['range_exp_ratio'] = self._entry_exhaustion(df)   # log-only (TODO #7)
             logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
         elif reason:                          # an OR breakout formed but regime/momentum blocked it
             self._alert_blocked('gex', symbol, reason)
@@ -444,6 +454,19 @@ class TradingBot:
         ind['setup_tag'] = ('' if lead is None else
                             ('Runway' if (lead < spot) == (direction == 'PUT') else 'IntoWall'))
         return ind
+
+    def _entry_exhaustion(self, df) -> Optional[float]:
+        """LOG-ONLY (2026-08-24, TODO #7): fraction of the day's IV-expected move already realized
+        as range by now (today's bar high−low ÷ the day's expected-move budget). High = little
+        budget left = exhaustion risk (08-24 was ~0.52 and reverted). No entry logic uses this —
+        we're collecting the audit column to set a threshold on real data. None if data missing."""
+        try:
+            if df is None or df.empty or not self._day_expected_move or self._day_expected_move <= 0:
+                return None
+            rng = float(df['high'].max() - df['low'].min())   # today's realized range (RTH bars)
+            return round(rng / self._day_expected_move, 3)
+        except Exception:
+            return None
 
     def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):
         """GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE): no invalidation cut, no fixed
@@ -542,7 +565,7 @@ class TradingBot:
             for arm in list(arms):
                 or_levels = self._arm_or_levels(arm, df, now)
                 if commands.arm_should_fire(arm, spot, recent, or_levels=or_levels):
-                    self._fire_thesis_arm(symbol, arm, spot)
+                    self._fire_thesis_arm(symbol, arm, spot, df)
             key = self._tkey('thesis', symbol)
             for closer in list(closers):
                 trade = self.active_trades.get(key)
@@ -569,7 +592,7 @@ class TradingBot:
             return None                              # opening range not complete yet
         return strategy.opening_range_levels(df, now, minutes)
 
-    def _fire_thesis_arm(self, symbol: str, arm: dict, spot: float):
+    def _fire_thesis_arm(self, symbol: str, arm: dict, spot: float, df=None):
         """A trigger fired: place the single-leg thesis trade via the normal path (all account
         guards + ATM strike + tick-snapped limit apply). Fire-once — the arm is consumed whatever
         the outcome, so a guard block or a re-crossing level can't loop; the user re-arms if needed."""
@@ -584,7 +607,7 @@ class TradingBot:
             notifier.notify_thesis_action('blocked', symbol, key, 'account risk guard active')
             return
         reason = f"THESIS: {arm.get('note') or arm.get('id')}"
-        indicators = self._thesis_indicators(symbol, spot, side, arm)
+        indicators = self._thesis_indicators(symbol, spot, side, arm, df)
         self.execute_trade(symbol, side, reason, indicators, 'thesis')
         fired = key in self.active_trades
         self._thesis_consume(arm, 'fired' if fired else 'blocked', reason)
@@ -622,7 +645,7 @@ class TradingBot:
         self._thesis_mark(cmd, 'done' if found else 'noop',
                           f"cancel {target}{'' if found else ' — not found'}")
 
-    def _thesis_indicators(self, symbol: str, spot: float, side: str, arm: dict) -> dict:
+    def _thesis_indicators(self, symbol: str, spot: float, side: str, arm: dict, df=None) -> dict:
         """Audit/Discord indicator dict for a thesis trade: the human note + the frozen GEX
         context (so thesis trades book the same Gflip/ladder/Setup_Tag columns as GEX). Refreshes
         the chain if none is cached so a thesis trade is never GEX-blind when a chain is available."""
@@ -633,6 +656,7 @@ class TradingBot:
                 logger.warning(f"[thesis] GEX chain refresh failed (trade proceeds context-less): {e}")
         ind = {'current_price': round(spot, 2), 'thesis_note': arm.get('note', '')}
         ind.update(self._freeze_gex_context(spot, side))
+        ind['range_exp_ratio'] = self._entry_exhaustion(df)   # log-only (TODO #7)
         return ind
 
     def _thesis_consume(self, cmd: dict, status: str, detail: str = ''):
@@ -977,6 +1001,7 @@ class TradingBot:
                 net_gex_total=ind.get('net_gex_total'), net_gex_0dte=ind.get('net_gex_0dte'),
                 call_ladder=ind.get('call_ladder'), put_ladder=ind.get('put_ladder'),
                 setup_tag=ind.get('setup_tag'),
+                range_exp_ratio=ind.get('range_exp_ratio'),
             )
             notifier.notify_filled(symbol, trade, filled_price)
         except Exception as e:

@@ -1,0 +1,3 @@
+# Generated visual dashboards — regenerable from the chain CSVs, not source.
+dashboards/
+dashboard_*.html
