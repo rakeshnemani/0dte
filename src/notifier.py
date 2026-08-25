@@ -157,12 +157,6 @@ def notify_daily_loss_limit(realized: float, limit: float):
     )
 
 
-def notify_signal_blocked(strategy: str, symbol: str, reason: str):
-    """A setup formed but NO trade was placed (a filter blocked it). Surfaced for
-    process transparency / confidence — throttled by the bot so it isn't spammy."""
-    send(f"⏸️ {strategy.upper()} signal skipped — {symbol}", reason, GREY)
-
-
 def notify_thesis_action(action: str, symbol: str, key: str, detail: str = ''):
     """Thesis-GEX command rail (#44) lifecycle alert — one template for the whole rail:
     armed / fired / close / cancelled / expired / blocked / rejected. Colour-coded so a

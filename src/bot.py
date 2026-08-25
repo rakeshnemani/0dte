@@ -371,8 +371,9 @@ class TradingBot:
         return f"{strategy}:{symbol}"
 
     def _alert_blocked(self, strategy: str, symbol: str, reason: str):
-        """Discord alert when a setup FORMED but no trade was placed (a filter blocked it) —
-        for process transparency. Throttled to once per 10 min per (strategy, symbol)."""
+        """A setup FORMED but no trade was placed (a filter blocked it). Logged to
+        bot.log for diagnostics; NO Discord alert (user disabled the "signal skipped"
+        phone pings 2026-08-25). Throttled to once per 10 min per (strategy, symbol)."""
         now = market_time.now_et()
         key = (strategy, symbol)
         last = self._blocked_alert_at.get(key)
@@ -380,7 +381,6 @@ class TradingBot:
             return
         self._blocked_alert_at[key] = now
         logger.info(f"[{symbol}] {strategy} setup formed but skipped → {reason}")
-        notifier.notify_signal_blocked(strategy, symbol, reason)
 
     def _scan_gex_entries(self):
         """GEX entry scan: only inside a GEX_WINDOWS slot. Refresh the chain, recompute
@@ -440,6 +440,8 @@ class TradingBot:
         ind = {
             'gflip': round(gflip, 2) if gflip else None,
             'dist_gflip_pct': round((spot - gflip) / gflip * 100, 3) if gflip else None,
+            'regime': gex.gex_regime(spot, gflip),   # 'negative' / 'positive' at order time
+
             'net_gex_total': round(gex.net_gex(spot, self._gex_chain) / 1e6, 0),
             'net_gex_0dte': round(gex.net_gex_0dte(spot, self._gex_chain) / 1e6, 0),
             'call_ladder': "|".join(f"{k:.0f}" for k, _ in calls),   # resistance, heaviest first
@@ -566,13 +568,13 @@ class TradingBot:
                 or_levels = self._arm_or_levels(arm, df, now)
                 if commands.arm_should_fire(arm, spot, recent, or_levels=or_levels):
                     self._fire_thesis_arm(symbol, arm, spot, df)
-            key = self._tkey('thesis', symbol)
             for closer in list(closers):
+                key = closer.get('target', self._tkey('thesis', symbol))   # any slot, default thesis
                 trade = self.active_trades.get(key)
                 if not trade or trade.get('status') != 'ACTIVE':
                     continue                        # nothing open to protect yet — keep it pending
                 if commands.closer_should_fire(closer, spot):
-                    reason = f"THESIS close_if: {commands.describe(closer)}"
+                    reason = f"close_if: {commands.describe(closer)}"
                     logger.info(f"[thesis] close_if fired (spot {spot:.1f}) — {reason}")
                     self.close_position(key, self._current_value(symbol, trade), reason)
                     self._thesis_consume(closer, 'closed', reason)
@@ -620,17 +622,30 @@ class TradingBot:
             notifier.notify_thesis_action('blocked', symbol, key, commands.describe(arm))
 
     def _thesis_close_now(self, cmd: dict):
-        """One-shot `close`: close the target thesis position now if it's ACTIVE."""
+        """One-shot `close`: close a position now. `target` selects which — a specific slot key
+        (`thesis:SPX` default, or `gex:SPX` / `trend:SPX`), or **`"all"`** to flatten every open
+        position (a message-driven panic/flatten). Closes only ACTIVE positions."""
         symbol = cmd.get('symbol', config.SYMBOLS[0])
-        key = cmd.get('target', self._tkey('thesis', symbol))
-        trade = self.active_trades.get(key)
+        target = str(cmd.get('target', self._tkey('thesis', symbol)))
+        reason = f"command close: {cmd.get('note') or cmd.get('id')}"
+
+        if target.lower() == 'all':                       # flatten everything open
+            open_keys = [k for k, t in self.active_trades.items() if t.get('status') == 'ACTIVE']
+            if open_keys:
+                self.close_all_positions(reason)
+                self._thesis_mark(cmd, 'closed', f"flatten-all {open_keys}")
+                notifier.notify_thesis_action('close', symbol, 'ALL', f"{reason} → {open_keys}")
+            else:
+                self._thesis_mark(cmd, 'noop', 'no open positions to close')
+            return
+
+        trade = self.active_trades.get(target)            # a specific slot (thesis/gex/trend)
         if trade and trade.get('status') == 'ACTIVE':
-            reason = f"THESIS close: {cmd.get('note') or cmd.get('id')}"
-            self.close_position(key, self._current_value(symbol, trade), reason)
+            self.close_position(target, self._current_value(symbol, trade), reason)
             self._thesis_mark(cmd, 'closed', reason)
-            notifier.notify_thesis_action('close', symbol, key, reason)
+            notifier.notify_thesis_action('close', symbol, target, reason)
         else:
-            self._thesis_mark(cmd, 'noop', f"no ACTIVE {key} to close")
+            self._thesis_mark(cmd, 'noop', f"no ACTIVE {target} to close")
 
     def _thesis_cancel(self, cmd: dict):
         """One-shot `cancel`: drop a pending arm/close-if by id (moves its file to processed/)."""
@@ -998,6 +1013,7 @@ class TradingBot:
                 perm_id=trade.get('entry_permId'),
                 strategy=strat,
                 gflip=ind.get('gflip'), dist_gflip_pct=ind.get('dist_gflip_pct'),
+                regime=ind.get('regime'),
                 net_gex_total=ind.get('net_gex_total'), net_gex_0dte=ind.get('net_gex_0dte'),
                 call_ladder=ind.get('call_ladder'), put_ladder=ind.get('put_ladder'),
                 setup_tag=ind.get('setup_tag'),

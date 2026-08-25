@@ -69,7 +69,7 @@ TREND_KAUF_MAX=50
 TREND_SKIP_LOWIV=0.082
 
 # GEX exits (let the convex tail ride)
-GEX_TRAIL_TRIGGER=0.50         # arm the trailing stop once peaked +50%
+GEX_TRAIL_TRIGGER=0.35         # arm the trailing stop once peaked +35% (lowered from 0.50 on 08-24)
 GEX_TRAIL_GIVEBACK=0.20        # exit if it gives back 20% of the peak
 GEX_CATASTROPHE_STOP=0.80      # wide backstop for a trade that never peaks
 
@@ -101,7 +101,8 @@ the edge). Full details in [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md).
 | Strategy | Entry | Exits |
 |---|---|---|
 | **Trend** | Supertrend(7,3) flip + PSAR agree + Kaufman-chop ≤ 50, inside `TREND_WINDOWS`, + vol gate | −50% stop · Supertrend reversal · EOD flatten |
-| **GEX** | negative-gamma / wall breakout + 15-min opening-range breakout + momentum, inside `GEX_WINDOWS`, + vol gate (Gflip computed live from the IBKR chain) | trailing (arm +50%, give back 20% of peak) · −80% catastrophe backstop · EOD flatten |
+| **GEX** | negative-gamma / wall breakout + 15-min opening-range breakout + momentum, inside `GEX_WINDOWS`, + vol gate (Gflip computed live from the IBKR chain) | trailing (arm +35%, give back 20% of peak) · −80% catastrophe backstop · EOD flatten |
+| **Thesis** | human-in-the-loop: an approved daily GEX thesis armed as a `data/commands/*.json` command (price / OR-breakout trigger) — see [docs/THESIS_GEX.md](docs/THESIS_GEX.md) | same as GEX (trailing +35% / −80% / EOD) + any `close`/`close_if` you send |
 
 **Shared guards:** cooldown (30 min), circuit breaker (5 consecutive losses), daily loss limit,
 12 trades/day, anti-cascade (never stack on an untracked position).

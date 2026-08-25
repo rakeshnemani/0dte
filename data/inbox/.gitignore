@@ -1,0 +1,3 @@
+# Runtime message log + poll pointer — ephemeral, not source.
+log.jsonl
+last_handled

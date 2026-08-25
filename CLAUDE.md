@@ -59,9 +59,12 @@ paragraphs further down are *history*.
 **Forward-test state — the honest bottom line: NOT near live** (small n; go-live is months out, gated on
 sample size — `docs/GO_LIVE.md`). The running tally + daily journal + hypotheses (H1 near-flip-chop, H2
 structure≠forecast, H3 Runway-vs-IntoWall, + the exhaustion/IV ideas) live in `docs/RETROSPECTIVE.md` and
-`docs/GEX_NOTES.md` — **read those for the latest numbers** (they change every trading day). As of 08-24:
-GEX 5 trades ≈ −$813, thesis 2 trades ≈ −$15; `Runway` 3-2 (+$1,087) still beats `IntoWall` 0-2 (−$1,915),
-but Runway lost its first (08-24, a chop day → "Runway ≠ a green light; the day must also *move*").
+`docs/GEX_NOTES.md` — **read those for the latest numbers** (they change every trading day). As of 08-25:
+GEX 6 trades ≈ −$1,395, thesis 2 trades ≈ −$15; `Runway` **3-3 (+$505)** still beats `IntoWall` 0-2 (−$1,915),
+but Runway has now lost **two straight chop days** (08-24, 08-25 → "Runway ≠ a green light; the day must also
+*move*"). Both chop-day Runway losers entered with `Range_Exp_Ratio` > 1.0 (>100% of the IV-expected move
+already spent) — the exhaustion filter (TODO #7, still log-only) is now 2-for-2 and worth promoting after one
+more chop-day data point.
 
 **🧹 Cleanup 2026-08-17:** the old breakout + iron-condor + all spread/bag machinery was **DELETED**
 (src 3,841 → 2,533 lines). Only single-leg **trend + gex** remain — `STRATEGY=breakout` no longer works.

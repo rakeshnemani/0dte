@@ -149,6 +149,52 @@ regime's sample.
 
 ---
 
+## 2026-08-25 (Tue) — 🔴 −$585: the SECOND straight Runway loss on a chop day — but only the MACHINE traded it
+
+**One trade, mechanical `gex:SPX` only.** GEX PUT (SPXW 7655P) @ **$8.60** at 10:31 on a dip to 7653.77
+(neg-γ momentum, spot briefly poked below Gflip). Positive gamma bought the dip, spot mean-reverted straight
+back up, and the PUT bled to **−74.71% MAE**. User sent **"Close all"** at ~10:52 CT → sold @ **$2.75 =
+−$585 (−68%)**, both pending arms cancelled. Setup_Tag **`Runway`** — the **second Runway trade to lose**,
+back-to-back with 08-24.
+
+**The day was CHOP — even flatter than 08-24.** Opened **7679**, dipped to ~**7653** mid-morning, closed
+**7680**. Net **≈ flat on the day**, and **positive gamma the entire session** (spot never sustained below
+Gflip ~7660; the 10:31 poke that triggered the PUT was a 5-min dip that dealers immediately bought back).
+A momentum PUT into a pos-γ mean-reversion box is structurally the wrong trade.
+
+**Two things this day adds to the evidence:**
+1. **`Range_Exp_Ratio` = 1.10 at entry (TODO #7, still log-only).** The day had *already realized >100% of its
+   IV-expected move* when the PUT entered — a textbook exhaustion entry. **Second loser in a row that the
+   exhaustion filter would have skipped** (building the case to promote #7 from log-only to a real gate).
+2. **`Runway` is now 0-for-2 on chop days.** 08-24 (first Runway loss) and 08-25 both had support-ladder
+   "runway" below/above yet lost, because **the day didn't move.** Confirms the 08-24 lesson —
+   **"Runway ≠ a green light; the day must also *move*"** — now with two data points, not one.
+
+**What was DIFFERENT (and better) than 08-24 — the human vs the machine:**
+- **The thesis rail did its job.** The overnight (1 AM) thesis was built off the **08-24 close** (negative
+  gamma, Gflip 7685). The **morning-of GEX refresh caught an overnight regime FLIP** to positive gamma
+  (Gflip → ~7660, +3.3B wall at 7690). I flagged the stale thesis, called it a chop box, and we armed two
+  **decisive-break-only** arms (CALL ≥7695 / PUT ≤7660). **Neither fired** — correctly; the break never came.
+- **So the loss came entirely from the AUTONOMOUS mechanical engine**, not the human rail. On a chop day the
+  human sat out (as on 08-21, "the human traded, the machine sat out" — here inverted: the machine traded, the
+  human would have passed). And because only ONE system fired and the user **cut it manually at −68% instead
+  of letting it ride to the −80% catastrophe stop**, the damage was **half of 08-24's −$1,190.**
+
+**The through-line (08-24 → 08-25):** the *mechanical* GEX engine keeps buying pokes-of-a-dead-range near the
+flip on chop days and mean-reverting. Two straight losers, both `Runway`-tagged, both with `Range_Exp_Ratio`
+> 1.0. The fix isn't a new stop — it's an **entry filter** (exhaustion / day-must-move), which is exactly what
+TODO #7 has been logging toward. **Do not act on 2 days alone**, but the exhaustion signal is now 2-for-2 and
+worth a real look after one more chop-day data point.
+
+**Ops note (2026-08-25):** disabled the "⏸️ signal skipped" Discord alerts (kept as a `bot.log` line for
+diagnostics; removed the phone ping) at the user's request — the transparency pings were noise.
+
+**GEX mechanical running tally (from `audit.csv`):** now **6 closed trades, net −$1,395** (was −$810 through
+08-24). The two winners (08-17 +$880, 08-20 +$810) are both **`Runway` PUTs on days that moved**; the four
+losers are **IntoWall or chop-day entries.** Still not near live; the chop-day mechanical entries are the leak.
+
+---
+
 ## 2026-08-24 (Mon) — 🔴 −$1,190: both systems bought the SAME false breakout on a CHOP day (first Runway loss)
 
 **Both the thesis AND the mechanical GEX fired the identical bullish CALL at 11:48** (gex @ 7.10, thesis @

@@ -97,7 +97,13 @@ exhaustion case + ~10-pt win/loss margin → collect a few weeks, then set X on 
   strike at **7755**, matching the external **−$40.08M @ 7755** reading — from a completely different,
   smaller chain subset.
 - **What we now freeze at every order** (audit + Discord submit alert): Gflip, spot, distance-to-flip %,
-  net GEX (total + 0DTE, $M), the **top-3 support/resistance ladders** (`Put_Ladder`/`Call_Ladder`, gamma-weighted, heaviest first), and a one-word **`Setup_Tag`** bucket. Historical 08-17/08-18 rows were backfilled.
+  the one-word **`Regime`** (negative = spot < Gflip = momentum premise / positive = dampen; added 2026-08-25,
+  all history backfilled from the dist sign), net GEX (total + 0DTE, $M), the **top-3 support/resistance
+  ladders** (`Put_Ladder`/`Call_Ladder`, gamma-weighted, heaviest first), and a one-word **`Setup_Tag`**
+  bucket. Historical 08-17/08-18 rows were backfilled. NB: every mechanical entry so far reads `negative` —
+  by construction (the GEX signal requires spot < Gflip), so `Regime` flags a *transient* poke below the flip
+  (like 08-25's 10:31 dip on an otherwise positive-gamma day) vs a sustained neg-γ break; cross-check against
+  the 5-min `data/gex/regime_*.csv` for the day's prevailing regime.
 
 ---
 

@@ -13,8 +13,8 @@ Claude is the analyst/translator, the bot is the executor, **you authorise the a
 | `cmd` | What it does |
 |-------|--------------|
 | `arm` | Watch a price trigger; when met, buy ONE ATM `CALL`/`PUT` under `thesis:SPX`. No trigger = fire now. |
-| `close` | Close the `thesis:SPX` position now (if ACTIVE). |
-| `close_if` | Close `thesis:SPX` when a spot condition is met (a conditional stop/exit). |
+| `close` | Close a position now. `target` picks which: `thesis:SPX` (default), `gex:SPX`, `trend:SPX`, or **`"all"`** to flatten everything open. |
+| `close_if` | Close a position (`target`, default `thesis:SPX`) when a spot condition (`when`) is met — a conditional stop/exit. |
 | `cancel` | Drop a still-pending `arm`/`close_if` by its id. |
 
 Pending `arm`/`close_if` files stay here until they fire/expire/cancel (so a bot restart resumes
@@ -70,6 +70,16 @@ trigger up so it also waits out a noise band (fires on `close ≥ max(OR_high, 7
 **Close the thesis position now:**
 ```json
 { "id": "close-now", "cmd": "close", "note": "taking it off" }
+```
+
+**Close a *specific* slot (the mechanical gex trade, or trend):**
+```json
+{ "id": "close-gex", "cmd": "close", "target": "gex:SPX", "note": "manual gex exit" }
+```
+
+**Flatten EVERYTHING open (thesis + gex + trend):**
+```json
+{ "id": "flatten", "cmd": "close", "target": "all", "note": "panic flatten" }
 ```
 
 **Conditional exit — close if SPX trades back to the 7703 pivot:**

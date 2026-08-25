@@ -20,7 +20,10 @@ _COLUMNS = [
     # Net GEX is our-convention $M (±5%/3-expiry window). Ladders are the top-3 gamma-weighted
     # resistance/support strikes, heaviest first, pipe-joined (see gex.gex_ladders). Setup_Tag
     # buckets the entry vs the support ladder: Runway (room to run) / IntoWall (see GEX_NOTES.md H3).
-    "Gflip", "Dist_Gflip_Pct", "Net_GEX_Total_M", "Net_GEX_0DTE_M",
+    # Regime = dealer-gamma regime at entry time: "negative" (spot < Gflip → dealers
+    # amplify → momentum, the GEX entry premise) / "positive" (spot ≥ Gflip → dampen → chop).
+    # Derived from Gflip vs spot (see gex.gex_regime); blank for trend/chain-less rows.
+    "Gflip", "Dist_Gflip_Pct", "Regime", "Net_GEX_Total_M", "Net_GEX_0DTE_M",
     "Call_Ladder", "Put_Ladder", "Setup_Tag",
     # LOG-ONLY observation (2026-08-24, TODO #7): fraction of the day's IV-expected move already
     # realized as range by entry time (realized_range ÷ expected_move). High = exhaustion risk
@@ -39,6 +42,7 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
            conviction: Optional[str] = None, commission: Optional[float] = None,
            perm_id: Optional[int] = None, strategy: Optional[str] = None,
            gflip: Optional[float] = None, dist_gflip_pct: Optional[float] = None,
+           regime: Optional[str] = None,
            net_gex_total: Optional[float] = None, net_gex_0dte: Optional[float] = None,
            call_ladder: Optional[str] = None, put_ladder: Optional[str] = None,
            setup_tag: Optional[str] = None, range_exp_ratio: Optional[float] = None):
@@ -72,6 +76,10 @@ def record(action: str, symbol: str, direction: str, price: float, reason: str,
                 str(perm_id) if perm_id else "",
                 f"{gflip:.2f}" if gflip is not None else "",
                 f"{dist_gflip_pct:+.3f}%" if dist_gflip_pct is not None else "",
+                # Fall back to the dist sign if the caller didn't pass an explicit regime
+                # (spot < Gflip → negative; spot ≥ Gflip → positive), matching gex.gex_regime.
+                (regime if regime else
+                 ("" if dist_gflip_pct is None else ("negative" if dist_gflip_pct < 0 else "positive"))),
                 f"{net_gex_total:.0f}" if net_gex_total is not None else "",
                 f"{net_gex_0dte:.0f}" if net_gex_0dte is not None else "",
                 call_ladder or "",
