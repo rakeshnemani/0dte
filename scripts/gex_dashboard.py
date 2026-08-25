@@ -40,6 +40,21 @@ def _load_last_snapshot(date):
     return spot, chain, last_ts, path
 
 
+def _latest_regime(date):
+    """Most recent (spot, timestamp) from regime_<date>.csv — logged every ~5 min, so it's much
+    fresher than the 30-min-throttled chain. Used to move the spot marker in ~real time."""
+    p = os.path.join(GEX_DIR, f"regime_{date}.csv")
+    if not os.path.isfile(p):
+        return None
+    rows = [r for r in csv.DictReader(open(p)) if r.get("spot")]
+    if not rows:
+        return None
+    try:
+        return float(rows[-1]["spot"]), rows[-1]["timestamp"]
+    except (ValueError, KeyError):
+        return None
+
+
 def _svg_profile(spot, gflip, by_strike):
     """Horizontal net-GEX-by-strike bar chart (SVG). Highest strike at top, zero line at cx.
     Window is asymmetric so it always spans the support below AND the flip/resistance above."""
@@ -74,7 +89,7 @@ def _svg_profile(spot, gflip, by_strike):
         parts.append(f'<rect x="{x:.1f}" y="{y-row_h/2+3:.1f}" width="{blen:.1f}" height="{row_h-6}" '
                      f'fill="{color}" opacity="0.85" rx="2"/>')
         parts.append(f'<text x="{lblx}" y="{y+4:.1f}" text-anchor="end" '
-                     f'font-size="11" fill="#bbb">{k:.0f}</text>')
+                     f'font-size="13" fill="#bbb">{k:.0f}</text>')
         lx = (cx - blen - 6) if v < 0 else (cx + blen + 6)
         anc = "end" if v < 0 else "start"
         parts.append(f'<text x="{lx:.1f}" y="{y+4:.1f}" text-anchor="{anc}" font-size="10" '
@@ -83,13 +98,13 @@ def _svg_profile(spot, gflip, by_strike):
     ys = y_interp(spot)
     parts.append(f'<line x1="{lblx+10}" y1="{ys:.1f}" x2="{width-96}" y2="{ys:.1f}" stroke="#f0c040" '
                  f'stroke-width="1.5" stroke-dasharray="6 3"/>')
-    parts.append(f'<text x="{width-8}" y="{ys+4:.1f}" text-anchor="end" font-size="11" '
+    parts.append(f'<text x="{width-8}" y="{ys+4:.1f}" text-anchor="end" font-size="13" '
                  f'font-weight="600" fill="#f0c040">SPOT {spot:.0f}</text>')
     if gflip and strikes[-1] <= gflip <= strikes[0]:
         yg = y_interp(gflip)
         parts.append(f'<line x1="{lblx+10}" y1="{yg:.1f}" x2="{width-96}" y2="{yg:.1f}" stroke="#58a6ff" '
                      f'stroke-width="1.5" stroke-dasharray="2 3"/>')
-        parts.append(f'<text x="{width-8}" y="{yg+4:.1f}" text-anchor="end" font-size="11" '
+        parts.append(f'<text x="{width-8}" y="{yg+4:.1f}" text-anchor="end" font-size="13" '
                      f'font-weight="600" fill="#58a6ff">GFLIP {gflip:.0f}</text>')
     parts.append("</svg>")
     return "\n".join(parts)
@@ -113,6 +128,13 @@ def main():
     spot, chain, ts, path = _load_last_snapshot(date)
     if not chain:
         print(f"No usable chain snapshot for {date}."); return 1
+
+    # Prefer the fresher regime spot (every ~5 min) over the 30-min chain snapshot, and recompute
+    # Gflip/GEX at THAT spot with the (slow-moving) OI chain — so the markers track the live market.
+    reg = _latest_regime(date)
+    spot_ts = ts
+    if reg:
+        spot, spot_ts = reg
 
     gflip = gex.gamma_flip(chain, spot)
     regime = gex.gex_regime(spot, gflip)
@@ -141,6 +163,8 @@ def main():
         f"<div class='val' style='color:{c}'>{val}</div></div>" for lbl, val, c in metrics)
 
     html = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
 <title>GEX Dashboard {date}</title>
 <style>
   body{{background:#0d1117;color:#e6edf3;font:14px -apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:24px}}
@@ -156,9 +180,24 @@ def main():
   th,td{{padding:5px 14px;text-align:right;font-size:13px;border-top:1px solid #21262d}}
   th{{color:#8b949e;font-weight:500}}
   .note{{color:#8b949e;font-size:12px;margin-top:14px;max-width:820px;line-height:1.5}}
+  .ladders{{display:flex;flex-direction:column;gap:14px;align-items:flex-start}}  /* desktop: stacked */
+  /* ── Mobile: stack the chart above the ladders, and put the two ladders side by side ── */
+  @media (max-width:760px){{
+    body{{padding:12px}}
+    h1{{font-size:16px}} .sub{{font-size:11px}}
+    .cards{{gap:6px}}
+    .card{{min-width:0;flex:1 1 28%;padding:8px 10px}}
+    .lbl{{font-size:10px}} .val{{font-size:15px}}
+    .grid{{flex-direction:column;gap:14px}}
+    .chart{{min-width:0;width:100%;box-sizing:border-box;padding:8px}}
+    .ladders{{flex-direction:row;gap:8px}}          /* mobile: side by side */
+    .ladders table{{flex:1;min-width:0}}
+    caption{{padding:8px 8px;font-size:13px}}
+    th,td{{padding:5px 8px;font-size:12px}}
+  }}
 </style></head><body>
 <h1>GEX Dashboard — {date}</h1>
-<div class="sub">snapshot {ts} · source {os.path.basename(path)} · net GEX = our-convention $M (±5% / 3-expiry window)</div>
+<div class="sub">spot as of {spot_ts[11:] if len(spot_ts) > 11 else spot_ts} · OI chain as of {ts[11:] if len(ts) > 11 else ts} (30-min) · auto-refresh 60s · net GEX = our-convention $M (±5% / 3-expiry)</div>
 <div class="cards">{cards}</div>
 <div class="grid">
   <div class="chart">
@@ -167,10 +206,9 @@ def main():
       &nbsp; <span style="color:{POS}">▉ call resistance (+)</span></div>
     {_svg_profile(spot, gflip, by_strike)}
   </div>
-  <div>
-    {_ladder_table("Support ladder (heaviest −GEX)", puts, NEG)}
-    <div style="height:14px"></div>
-    {_ladder_table("Resistance ladder (heaviest +GEX)", calls, POS)}
+  <div class="ladders">
+    {_ladder_table("Support (−GEX)", puts, NEG)}
+    {_ladder_table("Resistance (+GEX)", calls, POS)}
   </div>
 </div>
 <div class="note"><b>Read it:</b> the longest red bars are the heaviest put-support nodes (where dealers
@@ -180,8 +218,13 @@ shelf (room to run); <b>IntoWall</b> = entering into a heavy node. Wait out the 
 ± a small buffer) and take the break.</div>
 </body></html>"""
 
-    out = os.path.join(GEX_DIR, f"dashboard_{date}.html")
+    outdir = os.path.join(GEX_DIR, "dashboards")
+    os.makedirs(outdir, exist_ok=True)
+    out = os.path.join(outdir, f"dashboard_{date}.html")
     with open(out, "w") as f:
+        f.write(html)
+    # Stable-name copy so a phone can bookmark ONE URL (…/latest.html) that's always today's board.
+    with open(os.path.join(outdir, "latest.html"), "w") as f:
         f.write(html)
     print(f"✅ wrote {out}")
     print(f"   spot {spot:.2f} · Gflip {gflip:.2f} ({dist:+.2f}%, {regime}) · "
