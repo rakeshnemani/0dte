@@ -149,6 +149,36 @@ regime's sample.
 
 ---
 
+## 2026-08-26 (Wed) — ⚪ $0, ZERO trades — the filters correctly FADED a power-hour breakout (a filter WIN)
+
+**No trades booked.** Another chop day (range **7658–7690, ~32 pts**), spot oscillating right on top of Gflip
+(~7675) the whole session — flipping positive/negative gamma every few bars (**textbook near-flip chop, H1**).
+
+**The "spike" was a power-hour pop, ~14:49→15:04 ET:** spot ran 7675 → **7690** and **broke the opening-range
+high (7684)**. The GEX CALL signal **FORMED and was SKIPPED six times** (15:01, 15:11, 15:21, 15:31, 15:42,
+15:52) — every time for the same reason:
+
+> `CALL: broke the 15-min OR (> 7684) but SKIPPED — positive-gamma (spot 7687 vs Gflip 7675): dealers dampen, breakouts fade`
+
+**And the skip was correct.** The pop peaked **7690 @ 15:04** (only ~3 pts above where the signal formed) and
+**faded straight back to 7678 by the close.** A 0DTE CALL bought at 7687 settles against the 7678 close → a
+loser. Trend also formed and skipped a Supertrend **PUT** flip twice (14:12 kauf **71**, 15:21 kauf **76** —
+both > 50, "choppy reversal, not a clean trend"). Nothing trended; nothing should have traded.
+
+**Why this matters — it's the MIRROR IMAGE of 08-24 / 08-25.** Those two days we **lost** because we *took*
+negative-gamma momentum breaks that reverted. Today the same structural read **kept us OUT** of a
+positive-gamma breakout that reverted. **Same lesson, opposite sign: on positive-gamma chop days, breakouts
+are FADES.** The `positive-gamma → don't chase the OR-break` gate is the exact discipline the red days lacked
+— today it showed its worth by *not* trading. (Contrast with the *mechanical* leak on the red days, which was
+the neg-γ momentum entry firing into an already-exhausted range — see 08-25's `Range_Exp_Ratio` note.)
+
+**Meta (paid off today):** the "⏸️ formed but skipped" lines still land in `bot.log` — we dropped the Discord
+phone spam on 08-25 but **kept the log trail**, which is exactly what let us reconstruct *why* the bot passed
+on the spike (6 skips, all regime-tagged). Idea logged: a lightweight **EOD "signals formed / skipped + why"
+summary** so the reasoning is visible without grepping the log.
+
+---
+
 ## 2026-08-25 (Tue) — 🔴 −$585: the SECOND straight Runway loss on a chop day — but only the MACHINE traded it
 
 **One trade, mechanical `gex:SPX` only.** GEX PUT (SPXW 7655P) @ **$8.60** at 10:31 on a dip to 7653.77
