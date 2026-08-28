@@ -31,8 +31,9 @@ paragraphs further down are *history*.
   copy-paste examples: `data/commands/README.md`. Full design: `docs/THESIS_GEX.md`.
 - **GEX/thesis trailing arm lowered 0.50 → 0.35** (`GEX_TRAIL_TRIGGER`, in `.env` AND `config.py`; TODO #38).
   Two losers peaked +28%/+40% *below* the old +50% arm and gave it all back — lowering it is asymmetric
-  (protects modest peakers, doesn't touch big winners). Exit still = `peak×(1−0.20)` trail + −80% catastrophe
-  + EOD flatten. No invalidation / fixed stop / take-profit.
+  (protects modest peakers, doesn't touch big winners). Exit trail = `peak×(1−giveback)` + −80% catastrophe
+  + EOD flatten. No invalidation / fixed stop / take-profit. **(Update 08-27: the flat 0.20 giveback is now
+  TIERED — 60/35/20% for peak bands [35–50)/[50–70)/70%+ — so trend-day runners aren't choked; see the 08-27 retro.)**
 - **Two new audit columns:** `Max_Adverse_Pct` (MAE — deepest drawdown of the hold, mirror of `Peak_Pct`) and
   `Range_Exp_Ratio` (**LOG-ONLY**, TODO #7 — realized-range ÷ IV-expected-move at entry; watching for an
   *exhaustion* filter, **no entry logic uses it yet**). `src/gex.py::expected_move`.
@@ -59,12 +60,16 @@ paragraphs further down are *history*.
 **Forward-test state — the honest bottom line: NOT near live** (small n; go-live is months out, gated on
 sample size — `docs/GO_LIVE.md`). The running tally + daily journal + hypotheses (H1 near-flip-chop, H2
 structure≠forecast, H3 Runway-vs-IntoWall, + the exhaustion/IV ideas) live in `docs/RETROSPECTIVE.md` and
-`docs/GEX_NOTES.md` — **read those for the latest numbers** (they change every trading day). As of 08-25:
-GEX 6 trades ≈ −$1,395, thesis 2 trades ≈ −$15; `Runway` **3-3 (+$505)** still beats `IntoWall` 0-2 (−$1,915),
-but Runway has now lost **two straight chop days** (08-24, 08-25 → "Runway ≠ a green light; the day must also
-*move*"). Both chop-day Runway losers entered with `Range_Exp_Ratio` > 1.0 (>100% of the IV-expected move
-already spent) — the exhaustion filter (TODO #7, still log-only) is now 2-for-2 and worth promoting after one
-more chop-day data point.
+`docs/GEX_NOTES.md` — **read those for the latest numbers** (they change every trading day). As of 08-27:
+**10 trades, −$570** (gex 7 −$955, thesis 3 +$385). The dominant pattern (see the 08-27 retro cross-tab):
+**the strategy wins when the day MOVES and loses when it chops** — **Day-moved 5-0 (+$3,120)** vs **Day-chopped
+0-3 (−$1,775)** and **`IntoWall` 0-2 (−$1,915)**; `Runway` alone is only 5-3 (+$1,345) because it wins on
+trend days and loses on chop. Two entry levers fall out: **hard-skip `IntoWall`** (0-2), and **promote
+`Range_Exp_Ratio` to a gate** (3-for-3: 1.10→loss, 0.41/0.67→wins; skip when >~1.0 = day's expected move
+already spent). Separately, **the 50%→35% trail arm is confirmed to choke runners on trend days** (08-27 both
+CALLs peaked +36/44%, trailed out +28/34%, then SPX ran +30pts more) — but it protects chop-day peakers
+(would've saved ~$1,800 on 08-24), so it's a trend-vs-chop trade-off: **fix entries first (trade only days
+that move), then raise the arm back toward 50% to let the movers run.**
 
 **🧹 Cleanup 2026-08-17:** the old breakout + iron-condor + all spread/bag machinery was **DELETED**
 (src 3,841 → 2,533 lines). Only single-leg **trend + gex** remain — `STRATEGY=breakout` no longer works.
@@ -79,7 +84,8 @@ tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`,
 `test_gex_strategy`, `test_single_leg` (+ existing), all green. GEX code: `src/gex.py`,
 `broker.fetch_gex_chain`, `strategy.gex_entry_signal`, `bot._scan_gex_entries`/
 `evaluate_gex_entry`/`_gex_exit_check`. **GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE):**
-trailing stop only (arm +35% peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) ·
+trailing stop only (arm +35% peak `GEX_TRAIL_TRIGGER`, **TIERED giveback** — 60%/35%/20% for peak bands
+[35–50%)/[50–70%)/70%+, `strategy.trailing_giveback`, added 08-27) ·
 WIDE catastrophe backstop −80% (`GEX_CATASTROPHE_STOP`) · 3:55 flatten. **NO invalidation cut, NO fixed
 max-loss stop, NO take-profit** — they cut the 08-17 winner at −4% before it ran to +100% (user call;
 GEX has no backtest). Trend keeps its own 50%-stop/reversal/EOD exits.
@@ -199,7 +205,7 @@ realized vol). **Trend exits:** −50% hard stop (`HARD_STOP_LOSS_PCT`) · Super
 **GEX entry:** negative-gamma regime (spot < Gflip) OR wall-breakout + 15-min opening-range breakout +
 short-term momentum, inside `GEX_WINDOWS`(09:30–15:55), + skip low-vol days. Gflip/walls computed **LIVE**
 from the IBKR chain. **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +35%
-peak `GEX_TRAIL_TRIGGER`, give back 20% of peak `GEX_TRAIL_GIVEBACK`) · WIDE −80% catastrophe backstop
+peak `GEX_TRAIL_TRIGGER`, **TIERED giveback 60/35/20% by peak band** [35–50)/[50–70)/70%+, added 08-27) · WIDE −80% catastrophe backstop
 (`GEX_CATASTROPHE_STOP`) · EOD flatten 15:55. **NO invalidation, NO fixed max-loss stop, NO take-profit.**
 
 **Shared guards:** cooldown (30m), circuit breaker (5 consecutive losses), daily loss limit (−$400),

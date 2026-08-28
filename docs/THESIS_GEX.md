@@ -55,7 +55,7 @@ moves it to `data/commands/processed/` so it never runs twice. **Full schema + c
 ## Exits
 
 A thesis trade uses the **same convex-tail exits as GEX** (routed through `_gex_exit_check`):
-trailing stop (arms at +35% peak, exits on giving back 20% of peak) + a −80% catastrophe backstop
+trailing stop (arms at +35% peak, exits on giving back a tiered 60/35/20% of peak by band) + a −80% catastrophe backstop
 + the EOD flatten — **plus** any `close`/`close_if` you send. It is never held past the close.
 (Default chosen for the connectivity case: an unattended winner is still protected; you can always
 close earlier by hand.)

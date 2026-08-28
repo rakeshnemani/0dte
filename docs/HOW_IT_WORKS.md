@@ -9,7 +9,7 @@ mechanical strategies run together (`STRATEGY=trend,gex`), each holding its own 
 > **Not covered in depth here (see the linked docs):** the bot also runs a **`thesis:SPX` human-thesis
 > rail** — it watches `data/commands/*.json` (`arm`/`close`/`close_if`/`cancel`) every loop and executes an
 > approved thesis via the same single-leg path ([THESIS_GEX.md](THESIS_GEX.md), `data/commands/README.md`).
-> GEX/thesis exits are trailing (**arm +35%** peak, give back 20%) + a −80% catastrophe backstop. `audit.csv`
+> GEX/thesis exits are trailing (**arm +35%** peak, **tiered** giveback 60/35/20% by peak band) + a −80% catastrophe backstop. `audit.csv`
 > gained `Max_Adverse_Pct` (MAE) and a log-only `Range_Exp_Ratio` (exhaustion). Thesis-forming tooling:
 > `scripts/gex_snapshot.py` + `scripts/gex_dashboard.py` (real-time visual board, served to the phone via
 > Tailscale). **CLAUDE.md's "📌 Current state & handoff" block is the freshest summary.**
@@ -106,7 +106,8 @@ can never drop a live trade. A confirmed external close is dropped from tracking
 **Exit rules** route by `trade['strategy']`:
 - **Trend:** −`HARD_STOP_LOSS_PCT` (50%) hard stop, Supertrend reversal, EOD flatten. No TP.
 - **GEX (let the convex tail ride):** a **trailing stop** that arms once the trade peaks at
-  `GEX_TRAIL_TRIGGER` (+35%) then exits on giving back `GEX_TRAIL_GIVEBACK` (20%) of the peak; a
+  `GEX_TRAIL_TRIGGER` (+35%) then exits on giving back a **TIERED** fraction of the peak — 60% in
+  [35–50%), 35% in [50–70%), 20% at 70%+ (`GEX_TRAIL_GIVEBACK_LOW/MID/HIGH`) so runners aren't choked; a
   **wide −`GEX_CATASTROPHE_STOP` (80%) backstop** for a trade that never peaks; EOD flatten. No
   invalidation, no fixed max-loss stop, no TP.
 
@@ -156,7 +157,7 @@ All from `.env` (see `src/config.py` for defaults). Key knobs:
 | `TREND_KAUF_MAX` | `50` | Max Kaufman chop for a trend entry |
 | `TREND_SKIP_LOWIV` / `GEX_SKIP_LOWIV` | `0.082` | Skip entries below this entry-time realized vol |
 | `GEX_WINDOWS` | `09:30-15:55` | ET slots GEX may enter in |
-| `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK` | `0.35` / `0.20` | GEX trailing stop (arm / giveback) |
+| `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK_LOW/MID/HIGH` | `0.35` / `0.60·0.35·0.20` | GEX trailing stop — arm, then tiered giveback by peak band (edges `GEX_TRAIL_BAND_MID/HIGH` `0.50/0.70`) |
 | `GEX_CATASTROPHE_STOP` | `0.80` | GEX wide downside backstop |
 | `HARD_STOP_LOSS_PCT` | `0.50` | Trend hard stop |
 | `MIN_OPTION_COST` | `0.30` | Skip if the option mid is below this (fee floor) |

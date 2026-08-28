@@ -473,18 +473,26 @@ class TradingBot:
     def _gex_exit_check(self, symbol: str, trade: dict, profit_pct: float):
         """GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE): no invalidation cut, no fixed
         max-loss stop. Exit only via (1) a trailing stop that ARMS once the trade peaks at
-        GEX_TRAIL_TRIGGER, then exits on giving back GEX_TRAIL_GIVEBACK of the peak, and
+        GEX_TRAIL_TRIGGER, then exits on giving back a TIERED fraction of the peak (loose
+        on small gains, tighter as they mature — strategy.trailing_giveback), and
         (2) a WIDE catastrophe backstop (GEX_CATASTROPHE_STOP) so a trade that never peaks
         can't ride to a full-premium loss. EOD 3:55 flatten → main loop.
         Rationale: the removed invalidation + 50% stop cut the 08-17 winner at -4% before it
         ran to +100% (max_profit_pct is updated by the caller before this runs)."""
         peak = trade.get('max_profit_pct', 0.0)
-        # Trailing stop — only protects gains AFTER the trade has actually run
+        # Trailing stop — only protects gains AFTER the trade has actually run. The giveback is
+        # TIERED by peak (2026-08-27): loose on a small gain, tightening as it matures, so a
+        # runner isn't choked in the +35–50% band while big winners still lock in. See config.
         if peak >= config.GEX_TRAIL_TRIGGER:
-            trail_exit = peak * (1 - config.GEX_TRAIL_GIVEBACK)
+            giveback = strategy.trailing_giveback(
+                peak, config.GEX_TRAIL_BAND_MID, config.GEX_TRAIL_BAND_HIGH,
+                config.GEX_TRAIL_GIVEBACK_LOW, config.GEX_TRAIL_GIVEBACK_MID,
+                config.GEX_TRAIL_GIVEBACK_HIGH)
+            trail_exit = peak * (1 - giveback)
             if profit_pct <= trail_exit:
                 return True, (f"Trailing stop: peaked +{peak*100:.0f}%, gave back to "
-                              f"{profit_pct*100:+.0f}% (trail +{trail_exit*100:.0f}%)")
+                              f"{profit_pct*100:+.0f}% (trail +{trail_exit*100:.0f}%, "
+                              f"tier giveback {giveback*100:.0f}%)")
         # Catastrophe backstop — the only downside floor now (trail can't arm on a loser)
         if config.GEX_CATASTROPHE_STOP > 0 and profit_pct <= -config.GEX_CATASTROPHE_STOP:
             return True, f"Catastrophe stop: lost {abs(profit_pct)*100:.0f}%"

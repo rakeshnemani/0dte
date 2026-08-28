@@ -50,8 +50,8 @@ GEX_OR_MINUTES = int(os.getenv("GEX_OR_MINUTES", "15"))               # opening 
 GEX_FLATTEN_TIME = os.getenv("GEX_FLATTEN_TIME", "15:55")             # flatten all positions by 3:55 PM
 # GEX exit philosophy (2026-08-17): LET THE CONVEX TAIL RIDE. No invalidation cut and no fixed
 # max-loss stop — those cut the 08-17 winner at -4% before it ran to +100%. Exit only via a
-# trailing stop (arms once peaked at GEX_TRAIL_TRIGGER, exits on giving back GEX_TRAIL_GIVEBACK
-# OF the peak) + a WIDE catastrophe backstop so a trade that never peaks can't ride to a
+# trailing stop (arms once peaked at GEX_TRAIL_TRIGGER, exits on giving back a TIERED fraction
+# of the peak — see GEX_TRAIL_GIVEBACK_LOW/MID/HIGH below) + a WIDE catastrophe backstop so a trade that never peaks can't ride to a
 # full-premium loss. GEX_TAKE_PROFIT>0 re-enables a hard TP (off by default — the tail is the edge).
 GEX_TAKE_PROFIT = float(os.getenv("GEX_TAKE_PROFIT", "0.0"))
 # 2026-08-24: lowered 0.50 → 0.35. Two trades (08-19 +28%, 08-24 +40%) peaked BELOW the old
@@ -60,7 +60,17 @@ GEX_TAKE_PROFIT = float(os.getenv("GEX_TAKE_PROFIT", "0.0"))
 # protection for the +35–50% peakers WITHOUT changing the big-winner exits (+79/+90/+100% all
 # still trail from their own peak). Asymmetric: protects losers, doesn't cost winners. (TODO #38)
 GEX_TRAIL_TRIGGER = float(os.getenv("GEX_TRAIL_TRIGGER", "0.35"))         # arm once peaked +35%
-GEX_TRAIL_GIVEBACK = float(os.getenv("GEX_TRAIL_GIVEBACK", "0.20"))       # exit at 80% of peak
+# TIERED giveback (2026-08-27): the giveback SHRINKS as the peak grows — a loose leash on a small
+# gain (don't choke a nascent runner), tightening once it's a real winner. Replaces the old flat
+# 0.20, which cut runners on trend days (08-27 both CALLs peaked +36/44% and trailed out +28/34%
+# while SPX ran +30pts more). Bands by peak (exit = peak × (1 − giveback), still armed at 0.35):
+#   [35%,50%) → give back 60% (floor peak×0.40)   ·   [50%,70%) → 35% (peak×0.65)   ·   70%+ → 20% (peak×0.80)
+# The floor still ratchets UP monotonically as the peak climbs; catastrophe + EOD unchanged.
+GEX_TRAIL_BAND_MID     = float(os.getenv("GEX_TRAIL_BAND_MID",     "0.50"))   # low→mid band edge
+GEX_TRAIL_BAND_HIGH    = float(os.getenv("GEX_TRAIL_BAND_HIGH",    "0.70"))   # mid→high band edge
+GEX_TRAIL_GIVEBACK_LOW  = float(os.getenv("GEX_TRAIL_GIVEBACK_LOW",  "0.60")) # peak in [arm, MID)
+GEX_TRAIL_GIVEBACK_MID  = float(os.getenv("GEX_TRAIL_GIVEBACK_MID",  "0.35")) # peak in [MID, HIGH)
+GEX_TRAIL_GIVEBACK_HIGH = float(os.getenv("GEX_TRAIL_GIVEBACK_HIGH", "0.20")) # peak >= HIGH
 GEX_CATASTROPHE_STOP = float(os.getenv("GEX_CATASTROPHE_STOP", "0.80"))   # 0 = no stop at all
 # Theta protection (2026-08-11): skip a GEX entry when entry-time realized vol (open→now,
 # annualized, NO lookahead) < this — a slow tape can't move fast enough for a naked leg to

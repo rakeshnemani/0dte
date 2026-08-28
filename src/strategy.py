@@ -259,3 +259,22 @@ def gex_entry_signal(symbol: str, df: pd.DataFrame, now: datetime.datetime,
         logger.error(f"[{symbol}] gex_entry_signal error: {e}")
         return None, "", {}, None
 
+
+# ── GEX/thesis exit helpers ──────────────────────────────────────────────────
+
+def trailing_giveback(peak: float, band_mid: float, band_high: float,
+                      g_low: float, g_mid: float, g_high: float) -> float:
+    """Tiered trailing giveback (2026-08-27): the fraction of the PEAK profit to surrender
+    before the trail exits, as a function of the peak already achieved. Loose leash on a
+    small gain (don't choke a nascent runner), tighter as it matures:
+        peak <  band_mid   → g_low   (e.g. [35%,50%) → 0.60, floor peak×0.40)
+        peak <  band_high  → g_mid   (e.g. [50%,70%) → 0.35, floor peak×0.65)
+        peak >= band_high  → g_high  (e.g. 70%+       → 0.20, floor peak×0.80)
+    Pure/unit-testable. The caller only invokes this once the trail is ARMED
+    (peak >= the arm trigger), so the arm threshold is not re-checked here."""
+    if peak < band_mid:
+        return g_low
+    if peak < band_high:
+        return g_mid
+    return g_high
+

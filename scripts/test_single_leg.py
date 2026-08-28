@@ -121,22 +121,42 @@ def test_mae_tracking():
     check("max_adverse_pct captured the trough (−45%)", abs(tr['max_adverse_pct'] - (-0.45)) < 1e-9)
     check("max_profit_pct captured the peak (+40%)", abs(tr['max_profit_pct'] - 0.40) < 1e-9)
     check("recovery didn't erase the trough (MAE is a low-watermark)", tr['max_adverse_pct'] == -0.45)
-    check("ACTIVE: +40% armed the 0.35 trail but +36% is above the +32% giveback", tr['status'] == 'ACTIVE')
+    check("ACTIVE: +40% armed the 0.35 trail but +36% is above the +16% tiered floor (peak×0.40)", tr['status'] == 'ACTIVE')
 
 
 def test_gex_exit_rules():
-    print("\n_gex_exit_check — trailing + catastrophe ONLY (no invalidation, no 50% stop)")
+    print("\n_gex_exit_check — TIERED trailing + catastrophe ONLY (no invalidation, no 50% stop)")
     b = _make_bot()
-    trig, give, cat = (config.GEX_TRAIL_TRIGGER, config.GEX_TRAIL_GIVEBACK,
-                       config.GEX_CATASTROPHE_STOP)
+    trig, cat = config.GEX_TRAIL_TRIGGER, config.GEX_CATASTROPHE_STOP
+    gl, gm, gh = (config.GEX_TRAIL_GIVEBACK_LOW, config.GEX_TRAIL_GIVEBACK_MID,
+                  config.GEX_TRAIL_GIVEBACK_HIGH)
+    bmid, bhigh = config.GEX_TRAIL_BAND_MID, config.GEX_TRAIL_BAND_HIGH
     ex = lambda peak, pnl: b._gex_exit_check('SPX', {'max_profit_pct': peak}, pnl)
-    peak = trig + 0.5
+    # catastrophe + unarmed (unchanged)
     check("moderate loss, never peaked → HOLD (fixed max-loss stop removed)",
           ex(0.0, -(cat - 0.10))[0] is False)
     check(f"loss past −{cat*100:.0f}% → catastrophe stop", ex(0.0, -(cat + 0.01))[0] is True)
     check("peak below trail-trigger → HOLD (trail unarmed)", ex(trig - 0.01, 0.0)[0] is False)
-    check("trail armed, gave back past trail → EXIT", ex(peak, peak*(1 - give) - 0.01)[0] is True)
-    check("trail armed, still above trail → HOLD", ex(peak, peak*(1 - give) + 0.01)[0] is False)
+    # LOW band [35,50): giveback gl → floor peak×(1−gl)
+    p = 0.40
+    check("low-band +40%: gave back past floor → EXIT", ex(p, p*(1-gl) - 0.01)[0] is True)
+    check("low-band +40%: still above floor → HOLD", ex(p, p*(1-gl) + 0.01)[0] is False)
+    # the 08-27 fix: peak +36% giving back to +28% now HOLDs (old flat 20% would've cut it)
+    check("peak +36% → +28% HOLDs under tiers (old flat-20% would've cut the runner)",
+          ex(0.36, 0.28)[0] is False)
+    # MID band [50,70): giveback gm → floor peak×(1−gm)
+    p = 0.60
+    check("mid-band +60%: gave back past floor → EXIT", ex(p, p*(1-gm) - 0.01)[0] is True)
+    check("mid-band +60%: still above floor → HOLD", ex(p, p*(1-gm) + 0.01)[0] is False)
+    # HIGH band 70%+: giveback gh → floor peak×(1−gh) (big winners lock in, unchanged from flat 20%)
+    p = 0.90
+    check("high-band +90%: gave back past floor → EXIT", ex(p, p*(1-gh) - 0.01)[0] is True)
+    check("high-band +90%: still above floor → HOLD", ex(p, p*(1-gh) + 0.01)[0] is False)
+    # the trail floor must ratchet UP monotonically as the peak climbs (never loosens on the way up)
+    floors = [pk*(1 - strategy.trailing_giveback(pk, bmid, bhigh, gl, gm, gh))
+              for pk in [0.35, 0.49, 0.50, 0.69, 0.70, 1.00]]
+    check("trail floor ratchets up monotonically across the bands",
+          all(floors[i] <= floors[i+1] + 1e-9 for i in range(len(floors)-1)))
 
 
 if __name__ == '__main__':

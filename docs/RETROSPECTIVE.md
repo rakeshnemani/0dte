@@ -149,6 +149,70 @@ regime's sample.
 
 ---
 
+## 2026-08-27 (Thu) — 🟢 +$840: green/TREND day, both CALLs won — but the 35% trail CUT both runners early
+
+**+$840 on two Runway CALLs** (thesis 7695C **+$400**, gex 7710C **+$440**). First clean two-winner day since
+08-20/08-21. Day **TRENDED UP**: open 7695 → **close 7728.9 (+33.5, range 64.7)**, climbing all session to a
+7740 high @ 13:08. Positive gamma the whole day — but unlike the 08-25/08-26 pos-γ **chop** days, **this one
+MOVED**, and that's the whole difference (see pattern below).
+
+**The user's blind "arm CALL | now" (09:33) WON — because the day trended.** No trigger, no thesis, no fresh
+snapshot, pos-γ regime one strike under the 7700 wall — everything the playbook says to avoid — and it still
+made +$400. Lesson: **the edge is the day MOVING, not entry finesse.** A blind long works on a trend day and
+dies on a chop day; the entry filters exist to tell those apart, not to time the tick.
+
+**🔴 CONFIRMED — the 50%→35% trail arm CUT both runners.** Both CALLs peaked in the **36–44% band** (the exact
+zone between 35% and 50%) and got **trailed out at +28% / +34%** — then SPX kept trending:
+- **Thesis 7695C:** exited 09:42 @ +28% ($18.40). SPX ran 7700 → 7740; that 7695C was worth **+136% at the
+  close (7728.9)** and ~**+210% at the 13:08 peak.** Booked $400; **left ~$1,600–2,900 on the table.**
+- **GEX 7710C:** exited 11:03 @ +34% ($17.40). Worth ~+46% at the close, ~+130% at the peak.
+
+Under the **old 50% arm, neither would have armed** at those peaks — they'd have ridden the trend. **So the
+user is right: on a TREND day the 35% arm chokes the convex tail that IS the edge.**
+
+**…BUT it's a genuine TRADE-OFF, not a free fix.** The 35% arm was lowered *to protect chop-day peakers*: on
+**08-24** the two CALLs peaked +38% / +43% and — with the 50% arm — never trailed, giving it ALL back to
+−82% (−$1,190). With a **35% arm those two would have trailed out ~+30% each ≈ +$600 — a ~$1,800 swing the
+other way.** So: **35% = protect chop / choke trend. 50% = ride trend / bleed chop. The trail level is a bet
+on the day type** — which loops straight into the pattern below.
+
+### 📊 The pattern the user asked for — WHY chop days lose (10-trade cross-tab)
+
+| bucket | record | net $ | what happened |
+|---|---|---|---|
+| **Day MOVED (trend / big swing)** | **5-0** | **+$3,120** | 08-17, 08-20, 08-21, 08-27×2 — momentum caught a real move, convex tail paid |
+| **Day CHOPPED (flat / reversed)** | **0-3** | **−$1,775** | 08-24, 08-24, 08-25 — Runway entries reversed → catastrophe/cut |
+| **IntoWall (entered into a wall)** | **0-2** | **−$1,915** | 08-18, 08-19 — bounced off the wall, whipsawed |
+
+**The single variable that separates win from loss is: did the day MOVE?** This is a long-premium / convexity
+strategy — it *needs* directional range to pay the tail; on a tight round-trip day the 0DTE long just decays
+and our momentum entry gets reversed. **`Runway` alone doesn't predict it** (`Runway` is 5-3: it wins on days
+that move, loses on chop). Two clean losing buckets sit on top:
+1. **`IntoWall` = 0-2, always loses** → promote from a tag to a **hard skip** (H3, long known).
+2. **Chop / exhaustion among Runway trades** → and we already have the purpose-built gauge: **`Range_Exp_Ratio`
+   is 3-for-3** — **1.10 → loss (08-25)**, **0.41 / 0.67 → wins (08-27)**. High ratio = the day already spent
+   its IV-expected move = exhausted = chop ahead = skip.
+
+**The fix is at ENTRY, not the trail:** hard-skip `IntoWall`, and **promote `Range_Exp_Ratio` from log-only to
+a gate** (skip when > ~1.0). *If* we stop trading chop days, we can then **raise the trail back toward 50%** to
+stop choking runners on the trend days we DO take — which resolves the trail complaint too. (Both problems are
+the same coin: trade only days that move, and let the movers run.)
+
+**Running tally (all closed trades, from `audit.csv`):** 10 trades, **−$570** — gex 7 (−$955), thesis 3
+(+$385). `Runway` **5-3 (+$1,345)** · `IntoWall` **0-2 (−$1,915)** · Day-moved **5-0** / Day-chopped **0-3**.
+
+**✅ CHANGE SHIPPED (08-27) — TIERED trailing giveback** (`strategy.trailing_giveback`, config-driven, tests
+green). Instead of raising the arm, we made the *giveback* shrink as the peak grows — a loose leash early so
+a runner isn't choked, tightening once it's a real winner: **[35–50%) → give back 60%** (floor peak×0.40) ·
+**[50–70%) → 35%** (peak×0.65) · **70%+ → 20%** (peak×0.80). Arm (+35%), catastrophe (−80%), and EOD are
+unchanged; the floor still ratchets up monotonically. On today's data this holds the thesis 7695C (peaked
++36%, gave back to +28%) *in* instead of cutting it — it would have ridden toward the +136% close. The
+trade-off (a mid-peaker that reverses books ~peak×0.40 instead of ~peak×0.80) is the accepted cost. Entry
+filters (`IntoWall` skip, `Range_Exp_Ratio` gate) remain **observations only** — not implemented, still
+collecting. **Needs a bot restart to take effect.**
+
+---
+
 ## 2026-08-26 (Wed) — ⚪ $0, ZERO trades — the filters correctly FADED a power-hour breakout (a filter WIN)
 
 **No trades booked.** Another chop day (range **7658–7690, ~32 pts**), spot oscillating right on top of Gflip

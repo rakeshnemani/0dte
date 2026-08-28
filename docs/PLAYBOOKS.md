@@ -50,7 +50,8 @@ No take-profit, no trailing, no VWAP-invalidation.
 **Exits — LET THE CONVEX TAIL RIDE** (2026-08-17; there is **no** invalidation cut and **no**
 fixed max-loss stop — those cut the 08-17 winner at −4% before it ran to +100%):
 1. **Trailing stop** — arms once the trade peaks at `GEX_TRAIL_TRIGGER` (+35%), then exits if it
-   gives back `GEX_TRAIL_GIVEBACK` (20%) of the peak (peak +100% → exit +80%).
+   gives back a **tiered** fraction of the peak: 60% in [35–50%), 35% in [50–70%), 20% at 70%+
+   (`GEX_TRAIL_GIVEBACK_LOW/MID/HIGH`). E.g. peak +40% → exit +16%; peak +100% → exit +80%.
 2. **Catastrophe backstop** −`GEX_CATASTROPHE_STOP` (80%) — the only downside floor, since the
    trail can't arm on a trade that never gets into profit.
 3. **EOD flatten** 15:55 ET.

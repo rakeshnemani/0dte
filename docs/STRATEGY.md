@@ -148,8 +148,11 @@ This is the defining choice (adopted 2026-08-17): **no invalidation cut and no f
 those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* via:
 
 1. **Trailing stop** — arms **once the trade peaks at `GEX_TRAIL_TRIGGER` (+35%)**, then exits if profit
-   gives back `GEX_TRAIL_GIVEBACK` (20%) **of the peak**. So it exits at `peak × (1 − 0.20)`:
-   peak +35% → exit +28%; peak +100% → exit +80%; peak +200% → exit +160%.
+   gives back a **TIERED fraction of the peak** (2026-08-27, `strategy.trailing_giveback`): the giveback
+   shrinks as the peak grows — loose on a small gain so a runner isn't choked, tight once it's a big winner.
+   Bands: **[35–50%) → 60% (floor peak×0.40)** · **[50–70%) → 35% (peak×0.65)** · **70%+ → 20% (peak×0.80)**.
+   So peak +40% → exit +16%; peak +60% → exit +39%; peak +100% → exit +80%. (Replaced the old flat 20%,
+   which cut trend-day runners — 08-27 both CALLs peaked +36/44% and trailed out +28/34% while SPX ran on.)
 2. **Catastrophe backstop** — exit at **−`GEX_CATASTROPHE_STOP` (80%)**. This is the *only* downside
    floor, because the trailing stop can't arm on a trade that never gets into profit.
 3. **EOD flatten** — 15:55 ET.
@@ -248,7 +251,7 @@ early, trails realized winners, and only backstops at −80%.**
 | `TREND_KAUF_MAX` | 50 | trend | Max chop for a trend entry |
 | `TREND_SKIP_LOWIV` / `GEX_SKIP_LOWIV` | 0.082 | both | Low-vol skip floor |
 | `HARD_STOP_LOSS_PCT` | 0.50 | trend | Trend hard stop |
-| `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK` | 0.35 / 0.20 | gex | Trailing stop |
+| `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK_LOW/MID/HIGH` | 0.35 / 0.60·0.35·0.20 | gex | Trailing stop (arm / tiered giveback by peak band, edges `GEX_TRAIL_BAND_MID/HIGH` 0.50/0.70) |
 | `GEX_CATASTROPHE_STOP` | 0.80 | gex | Wide backstop |
 | `MIN_OPTION_COST` | 0.30 | both | Skip if the option mid is below this |
 | `ENTRY_AGGRESSION` | 0.5 | both | Entry limit mid→ask fraction |
