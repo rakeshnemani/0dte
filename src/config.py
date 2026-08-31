@@ -76,6 +76,11 @@ GEX_CATASTROPHE_STOP = float(os.getenv("GEX_CATASTROPHE_STOP", "0.80"))   # 0 = 
 # annualized, NO lookahead) < this — a slow tape can't move fast enough for a naked leg to
 # outrun theta. 0 disables.
 GEX_SKIP_LOWIV = float(os.getenv("GEX_SKIP_LOWIV", "0.082"))
+# Exhaustion gate (2026-08-31): skip a mechanical-GEX entry once the day has already realized
+# >= this fraction of its IV-expected move (bar range ÷ expected move; see bot._entry_exhaustion).
+# It's a >= test — at/above this, don't enter (the move is largely spent → chop ahead). 0 disables.
+# Mechanical GEX only; thesis is human-authorised. Range_Exp_Ratio is still logged at every entry.
+GEX_RANGE_EXP_MAX = float(os.getenv("GEX_RANGE_EXP_MAX", "0.8"))
 GEX_MOMENTUM_BARS = int(os.getenv("GEX_MOMENTUM_BARS", "2"))          # price momentum over N bars ("delta acceleration")
 GEX_WALL_TOL_PCT = float(os.getenv("GEX_WALL_TOL_PCT", "0.0015"))     # "at a wall" tolerance (~0.15% of spot)
 GEX_CHAIN_STRIKE_PCT = float(os.getenv("GEX_CHAIN_STRIKE_PCT", "0.05"))  # fetch strikes within ±5% of spot

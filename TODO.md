@@ -97,7 +97,10 @@ line might not help. Revisit only if #42 stalls.*
 **5. Time stop** — exit if not at ~+15% within 45–60 min (theta bleed). *Invalidation already
 cuts most; needs evidence the slow-bleed case still occurs.*
 **6. Midday tightening** — require ADX>30 for 11:30–13:30 entries. *Partly covered by conviction `early✗`.*
-**7. Expected-move exhaustion — NOW LOGGING (2026-08-24), no skip logic yet.** Idea: skip a breakout once
+**7. Expected-move exhaustion — ✅ LIVE GATE 2026-08-31 (`GEX_RANGE_EXP_MAX`=0.8).** Skips a mechanical-GEX
+entry (`Range_Exp_Ratio >= 0.8`) once the day realized ≥80% of its IV-expected move. Mechanical-GEX only
+(thesis ungated); `Range_Exp_Ratio` still logged every entry. n small — a prior, tunable via `.env`/config;
+0 disables. (History below is why it was built.) Idea: skip a breakout once
 the day has already realized a large fraction of its IV-expected move (little budget left → the break has no
 fuel and reverts). **Backtest on our 6 trades:** `realized_range_at_entry ÷ expected_move` — winners capped
 at **38%/42%**, the 08-24 losers sat at **52%** → an X ≈ **47%** would've **skipped 08-24's double loss

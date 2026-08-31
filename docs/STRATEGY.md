@@ -141,6 +141,11 @@ The GEX scan runs only inside a `GEX_WINDOWS` slot, on symbols with no open `gex
 
 Plus the shared gate: **entry-time realized vol ≥ `GEX_SKIP_LOWIV` (0.082)** (theta protection).
 
+4. **Exhaustion (2026-08-31)** — skip once `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` (0.8): the day has
+   already realized ≥ 80% of its IV-expected move, so there's little budget left to run (spent → chop).
+   Mechanical GEX only; thesis trades are human-authorised and ungated. `Range_Exp_Ratio` is still logged
+   at every entry (`bot._entry_exhaustion`).
+
 → **Buy 1 ATM CALL** (bullish break) or **PUT** (bearish break).
 
 ### Exit — LET THE CONVEX TAIL RIDE

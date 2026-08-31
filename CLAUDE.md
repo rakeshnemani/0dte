@@ -164,8 +164,9 @@ restarted** (state is in-memory).
   running the *bot* on the weekend does nothing, it only collects GEX during market hours).
 - `scripts/gex_dashboard.py [YYYY-MM-DD]` — **visual** GEX dashboard from a saved `data/gex/chain_*.csv`
   (default: latest). Renders **`data/gex/dashboards/dashboard_<date>.html`** — a net-GEX-by-strike bar chart
-  (spot + Gflip marked, support red / resistance green) + metrics header + ladders, for eyeballing the nodes
-  to form a thesis. Uses the **fresher regime spot** (5-min) for the markers + a **60s auto-refresh** meta, so
+  (spot + Gflip marked, support red / resistance green) + metrics header (walls are **gamma-weighted (γ)** so
+  they match the bars) + ladders + an **open-interest-by-strike line chart** (call vs put OI — the raw contract
+  magnets like 7700 that pile up OI but net to ~0 gamma), for eyeballing the nodes to form a thesis. Uses the **fresher regime spot** (5-min) for the markers + a **60s auto-refresh** meta, so
   a browser left open stays live. Offline (reads the CSV, no IBKR); reuses `src/gex.py`. **The bot regenerates
   it every ~5 min during the session** (in `_collect_gex_data`) and once at EOD — so it's effectively
   real-time. (Serve `data/gex/dashboards/` over a tunnel/Tailscale to view it on a phone.)
@@ -203,8 +204,9 @@ realized vol). **Trend exits:** −50% hard stop (`HARD_STOP_LOSS_PCT`) · Super
 15:55. **NO take-profit** (the convex tail is the edge).
 
 **GEX entry:** negative-gamma regime (spot < Gflip) OR wall-breakout + 15-min opening-range breakout +
-short-term momentum, inside `GEX_WINDOWS`(09:30–15:55), + skip low-vol days. Gflip/walls computed **LIVE**
-from the IBKR chain. **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +35%
+short-term momentum, inside `GEX_WINDOWS`(09:30–15:55), + skip low-vol days, **+ exhaustion gate (2026-08-31):
+skip if `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` 0.8** (day's IV-expected move ≥80% spent → chop; mechanical-GEX
+only, thesis ungated). Gflip/walls computed **LIVE** from the IBKR chain. **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +35%
 peak `GEX_TRAIL_TRIGGER`, **TIERED giveback 60/35/20% by peak band** [35–50)/[50–70)/70%+, added 08-27) · WIDE −80% catastrophe backstop
 (`GEX_CATASTROPHE_STOP`) · EOD flatten 15:55. **NO invalidation, NO fixed max-loss stop, NO take-profit.**
 

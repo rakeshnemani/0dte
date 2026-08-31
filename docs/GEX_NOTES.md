@@ -75,8 +75,11 @@ day-range / near-flip) — *that* is the test.
 X ≈ **47%** would have skipped 08-24's −$1,190 double loss **without skipping either winner.** The other
 two losers (08-18 19%, 08-19 35%) sit *below* the winners — different failure modes (chop/IntoWall), so
 the exhaustion filter correctly doesn't target them.
-**Status:** `audit.csv` now logs **`Range_Exp_Ratio`** at every gex/thesis entry (log-only, no skip). n=1
-exhaustion case + ~10-pt win/loss margin → collect a few weeks, then set X on real data. See TODO #7.
+**Status:** ✅ **live gate 2026-08-31** — `GEX_RANGE_EXP_MAX` (default **0.8**) skips a mechanical-GEX entry
+(`>=` test) once the day realized ≥80% of its IV-expected move. `Range_Exp_Ratio` still logged at every
+gex/thesis entry. On the (thin) data so far it would skip the 08-25/08-28 exhaustion losers (Range_Exp
+1.10/1.43/1.55) and keep the 08-27 gex winner (0.67). Mechanical GEX only (thesis ungated); tunable, 0 disables.
+n small — a prior, not a proven optimum. See TODO #7.
 **Note vs 08-24's IV compression:** distinct signals — that was *implied* vol falling in the morning (a
 "quiet day" prior); this is *realized range vs the budget* at entry (how much move is already spent).
 

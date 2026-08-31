@@ -72,8 +72,10 @@ process transparency).
 Inside a `GEX_WINDOWS` slot, with Gflip + concentration walls computed **live** from the IBKR chain
 (refreshed every `GEX_REFRESH_MIN`, saved to `data/gex/` for future backtesting): negative-gamma
 regime (spot < Gflip) or a wall breakout, **plus** a 15-min opening-range breakout, **plus**
-short-term momentum (`GEX_MOMENTUM_BARS`), **plus** the vol gate. A setup that forms but fails a
-condition fires the same throttled skip alert. The live regime is logged every ~5 min.
+short-term momentum (`GEX_MOMENTUM_BARS`), **plus** the vol gate, **plus** an **exhaustion gate**
+(skip if `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` = 0.8 — the day's IV-expected move is largely spent;
+mechanical-GEX only, thesis is ungated). A setup that forms but fails a condition fires the same
+throttled skip alert. The live regime is logged every ~5 min.
 
 ## 6. Order execution (single-leg)
 
@@ -159,6 +161,7 @@ All from `.env` (see `src/config.py` for defaults). Key knobs:
 | `GEX_WINDOWS` | `09:30-15:55` | ET slots GEX may enter in |
 | `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK_LOW/MID/HIGH` | `0.35` / `0.60·0.35·0.20` | GEX trailing stop — arm, then tiered giveback by peak band (edges `GEX_TRAIL_BAND_MID/HIGH` `0.50/0.70`) |
 | `GEX_CATASTROPHE_STOP` | `0.80` | GEX wide downside backstop |
+| `GEX_RANGE_EXP_MAX` | `0.8` | Exhaustion gate: skip a GEX entry once the day realized ≥ this ×IV-expected move (0 = off) |
 | `HARD_STOP_LOSS_PCT` | `0.50` | Trend hard stop |
 | `MIN_OPTION_COST` | `0.30` | Skip if the option mid is below this (fee floor) |
 | `ENTRY_AGGRESSION` | `0.5` | Entry limit mid→ask fraction |

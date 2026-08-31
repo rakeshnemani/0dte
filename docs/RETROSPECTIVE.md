@@ -149,6 +149,93 @@ regime's sample.
 
 ---
 
+## 2026-08-28 (Fri) — 🟢 +$490: morning trend CALL won big, but the two afternoon PUTs died into the 7700 wall (mis-tagged "Runway")
+
+**+$490 gross** (thesis 7735C **+$1,600**, gex 7705P **−$875**, gex 7710P **−$235**). A **split day**: SPX
+rallied off the open (~7736 → **7767 by 11:05**), then rolled over and **chopped 7706–7713 into the close**,
+pinned under the 7700 put wall. The morning leg paid; the afternoon fade did not.
+
+**🟢 The blind "arm call | now" (09:33) WON again — and survived a −52.6% MAE to do it.** Same setup as 08-27
+(no trigger, no thesis, pos-γ) — the 7735C went **−52.6% underwater** before recovering, **peaked +118%**, and
+the trail exited at **+92% ($33.40) = +$1,600**. It only survived that drawdown because **there is no stop
+until −80%** — a fixed −50% stop would have killed the day's only winner near the lows. This is the convex-tail
+design working exactly as intended: eat a deep MAE, catch the whole trend leg. (Note: at a +118% peak the new
+tiered giveback and the old flat-20% give the *same* exit — both 20% in the 70%+ band — so today doesn't yet
+A/B the tiers; a mid-peaker still will.)
+
+**🔴 THE USER'S CATCH — both mechanical GEX PUTs were tagged `Runway` but were textbook `IntoWall`.** They
+entered at **7706.30** and **7711.34** with the day's heaviest 0DTE put wall sitting at **7700** — i.e. **6.3
+and 11.3 points of "runway."** That is not runway; it's a floor. Dealer support at 7700 absorbed both falls,
+price bounced, and the PUTs decayed (−875 to the catastrophe stop, −235 to EOD). **The user called them 100%
+failure trades at entry — correctly.**
+
+**Why the tag lied — the `Setup_Tag` logic is DISTANCE-BLIND** (`bot._freeze_gex_context`):
+
+```python
+lead = puts[0][0]  # the single heaviest put wall
+setup_tag = 'Runway' if (lead < spot) else 'IntoWall'   # for a PUT
+```
+
+It tags `Runway` whenever the heaviest wall is *anywhere* below spot — **6 points or 600 points, same label.**
+So a monster wall 6pts under the entry (a wall the trade will immediately slam into) reads as clear runway.
+The tag was never measuring *room*; it's a bare above/below-spot flag. **This means the H3 `Runway`/`IntoWall`
+cross-tab in the 08-27 retro is built on a broken label** — today's two PUTs belong in `IntoWall`, which turns
+that bucket from 0-2 into **0-4 (and every one an into-the-wall loss).** The "hard-skip IntoWall" conclusion
+gets *stronger*, not weaker — we just weren't tagging IntoWall correctly.
+
+**Proposed fix (log-only column, no order behavior changes):** make `Setup_Tag` **distance-aware** — measure
+spot→nearest heavy wall *in the trade's profit direction* (down for a PUT, up for a CALL) and tag `IntoWall`
+when that gap is small (e.g. < ~0.15% of spot ≈ ~12pts, or < a fraction of the day's expected move), `Runway`
+otherwise. Then re-tag history so H3 is consistent. **Pending user go-ahead** (see "keep as observations"
+standing note — but this is a *label correction*, not a new entry filter).
+
+**📈 `Range_Exp_Ratio` now 5-for-5.** Today's two losers entered at **1.428** and **1.546** (day's expected
+move already blown out = exhaustion = chop). Full record: **>1.0 → loss** (1.096 08-25, 1.428 / 1.546 08-28);
+**<0.7 → win** (0.411 / 0.671 08-27). The exhaustion gauge keeps separating cleanly. **Same coin as the
+mis-tag:** an into-the-wall entry on an exhausted tape is the exact chop-loss signature. Both stay log-only.
+
+**⏱️ Process note — the "arm call | now" latency (2m 28s).** The user flagged that on an *unconditional* "now"
+arm it took 2m28s from ask → JSON written, because I verify bot/market state *before* writing. For a no-trigger
+"now" the command file is harmless whether the bot is up, down, or after-hours — so the correct order is
+**write the JSON first, then verify and report second.** Adopting that as standing behavior (saved to memory);
+verify-first stays only for *conditional* arms (levels / OR-breakouts) where a bad trigger could misfire.
+
+**Running tally (all closed trades, `audit.csv`):** **13 trades, −$80** gross (net-of-fees ≈ −$142) — gex 9
+(**−$2,065**), thesis 4 (**+$1,985**). The thesis rail (human/blind CALLs on days that move) is carrying the
+book; the mechanical GEX PUT-into-the-wall pattern is the persistent bleed.
+
+### 📎 Post-retro build + the "why did the thesis wins win?" analysis
+
+> **⏪ REVERTED (2026-08-31, user call).** The two entry gates below were built, tested, then **rolled back to
+> Friday's code** — kept as a record of what we learned. **Why reverted:** the rosy "−$80 → +$3,530" was an
+> **in-sample artifact** — I'd computed runway off the frozen top-3 `Put_Ladder`/`Call_Ladder` columns (3
+> walls). Re-simulating with the **actual saved chains** (the real heavy-wall set, often 10–14 stacked strikes
+> on flat-gamma days) gave **−$80 → +$1,400**, and the gate took only **1 of 9** mechanical trades — it skipped
+> **all 3 mechanical winners** (08-17/08-20/08-27, which also entered next to heavy walls and won anyway). So
+> the gate doesn't "pick winners," it **nearly disables mechanical GEX** — the +$1,400 is basically the thesis
+> book. On the real chain, "into wall" does **not** cleanly separate W from L. Lesson kept; code back to Friday.
+> (The grind-up `Grind_Setup`/`Wall_Runway_Pt` log columns were reverted too; the observation still stands.)
+
+- **~~✅ Shipped both entry gates~~ (reverted):** **wall-runway** (`gex.wall_runway`, `GEX_WALL_MIN_RUNWAY`
+  15pt / `MIN_ABS` $500M / `MIN_FRAC` 40%) + **exhaustion** (`GEX_RANGE_EXP_MAX` 1.0), mechanical-GEX only.
+  Claimed backtest was −$80 → +$3,530 — **corrected to +$1,400 on the real chains** (see the REVERTED note).
+- **Why the last thesis wins won** — dissected 08-27 (+$400) & 08-28 (+$1,600): both were blind **"arm CALL |
+  now" at the OPEN** (09:33/09:35), **positive gamma** (spot > Gflip, net 0DTE GEX +$5.0B / +$11.3B), **low
+  `Range_Exp`** (0.41 / 0.11 = full runway ahead), **CALLs on up-trending days**, and 08-28 survived a
+  **−52.6% MAE** only because there's no stop before −80%. The honest driver is *right-direction-on-a-trending-
+  day, caught early with no stop to shake you out* — day-type, not entry craft (the one thesis LOSS, 08-24, was
+  the same bullish-CALL setup on a 23-pt chop day).
+- **User's context (the bot can't see this):** the long bias wasn't a guess — **NVDA earnings** (Thu) gave the
+  tape momentum that **carried into Friday**, and **SPY/QQQ pre-market were up** both mornings. And the GEX
+  nuance: *positive γ **with runway*** — the walls were far from spot in the profit direction, so it wasn't
+  buying into a wall.
+- **→ New LOG-ONLY flag `Grind_Setup`** (+ `Wall_Runway_Pt`) frozen at every gex/thesis entry: **`grind-up` =
+  pos-γ long with runway.** It's **3-0, +$2,440** so far (08-27 thesis, **08-27 gex**, 08-28 thesis — note it
+  caught a *mechanical* CALL too) vs neg-γ momentum **3-7, −$2,520**. n=3, all CALLs in an NVDA-driven
+  up-market → a hypothesis to track, NOT an edge. See [GEX_NOTES.md](GEX_NOTES.md) **H5**.
+
+---
+
 ## 2026-08-27 (Thu) — 🟢 +$840: green/TREND day, both CALLs won — but the 35% trail CUT both runners early
 
 **+$840 on two Runway CALLs** (thesis 7695C **+$400**, gex 7710C **+$440**). First clean two-winner day since

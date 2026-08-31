@@ -43,7 +43,10 @@ No take-profit, no trailing, no VWAP-invalidation.
   an OI concentration wall, AND
 - **Opening-range breakout:** 1-min close beyond the 15-min opening range (`GEX_OR_MINUTES`), AND
 - **Momentum:** the last `GEX_MOMENTUM_BARS` (2) closes accelerate in the breakout direction, AND
-- entry-time realized vol ≥ `GEX_SKIP_LOWIV` (0.082).
+- entry-time realized vol ≥ `GEX_SKIP_LOWIV` (0.082), AND
+- **Exhaustion (2026-08-31):** `Range_Exp_Ratio` < `GEX_RANGE_EXP_MAX` (0.8) — skip once the day has
+  already realized ≥ 80% of its IV-expected move (the move is largely spent → chop ahead). Mechanical
+  GEX only; thesis trades are human-authorised and ungated.
 
 → Buy 1 ATM CALL (bullish break) / PUT (bearish break).
 

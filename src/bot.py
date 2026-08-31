@@ -419,10 +419,22 @@ class TradingBot:
                                     f"{config.GEX_SKIP_LOWIV} (slow tape, theta would eat the naked leg)")
                 return None, "", {}
             indicators['iv_entry'] = round(ive, 3)
+        # Exhaustion gate (2026-08-31): don't enter once the day has already realized >= this
+        # fraction of its IV-expected move — the move is largely spent → chop ahead. Mechanical
+        # GEX only (thesis is human-authorised). Computed once, reused as the log column below.
+        rexp = self._entry_exhaustion(df) if direction else None
+        if (direction and config.GEX_RANGE_EXP_MAX > 0
+                and rexp is not None and rexp >= config.GEX_RANGE_EXP_MAX):
+            logger.info(f"[{symbol}] GEX exhaustion skip: Range_Exp {rexp:.2f} >= "
+                        f"{config.GEX_RANGE_EXP_MAX} — day's expected move already spent.")
+            self._alert_blocked('gex', symbol,
+                                f"{direction}: full GEX setup formed but SKIPPED — exhausted "
+                                f"(Range_Exp {rexp:.2f} ≥ {config.GEX_RANGE_EXP_MAX}: day's expected move spent)")
+            return None, "", {}
         if direction:
             # Freeze the GEX context at order time (for the audit + Discord + forward-testing).
             indicators.update(self._freeze_gex_context(spot, direction))
-            indicators['range_exp_ratio'] = self._entry_exhaustion(df)   # log-only (TODO #7)
+            indicators['range_exp_ratio'] = rexp   # log column (also gated just above)
             logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
         elif reason:                          # an OR breakout formed but regime/momentum blocked it
             self._alert_blocked('gex', symbol, reason)
