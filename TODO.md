@@ -22,7 +22,7 @@ no invalidation/stop). The whole game now: do these single-leg strategies clear 
 | **P0 — live experiment** | **#42** flip — capture real SPX fill costs (the fee-edge gate); watch for trend-day bleed |
 | **P1 — soon** | **#36** cross-day circuit breaker · **#38** trail-trigger 0.50→0.45 · **#20/#35** fee ratio (wider spreads / contract cap) · **#2** total-exposure cap · **#16** always-on host |
 | **P2 — evidence-gated** | **#43** IntoWall entry guard (mechanical GEX; n=2, don't build yet) · **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
-| **Design track (parallel)** | **#44** Thesis-GEX — human-thesis Discord channel + bot command rail (analyst = Claude, executor = bot) · **#45** thesis confirm on completed bars + persist 1-min bars for A/B (n=1) |
+| **Design track (parallel)** | **#44** Thesis-GEX — human-thesis Discord channel + bot command rail (analyst = Claude, executor = bot) · ~~**#45** thesis confirm on completed bars~~ ✅ done 2026-08-31 |
 | **P3 — parked** | **#4** GLD/TLT · **#8** VIX1D |
 | **Resolved by evidence — do not reopen** | **#39** (filters aren't the bottleneck) · **#37** (→ #42) · **regime-router** (tested 07-28, not justified) |
 
@@ -146,8 +146,12 @@ fire live orders. The mechanical trend+gex logic keeps running **unchanged** in 
   the *ImpliedMoveBasedOptionSelector* pairing) so theses come from mobile. Convenience layer on a
   working engine, not a prerequisite.
 
-**45. Thesis confirmation: live-bar vs completed-bar + persist 1-min bars (observation, n=1).** The thesis
-`confirm_bars` check reads the LIVE (in-progress) 1-min bar as the last "close" (IBKR `endDateTime=''`
+**45. Thesis confirmation: completed bars only — ✅ DONE 2026-08-31 (user call).** The bot now drops the
+in-progress bar (`df['close'].tolist()[:-1]`) in `_watch_thesis_triggers` before evaluating an arm's
+`confirm_bars`, so N=2 = two *closed* bars — a live wick through the level no longer fires the entry (the 08-21
+fakeout). Exits (`close_if`) still react to the live price. Tested (`test_confirm_bars_completed_only`). The
+remaining "persist 1-min bars for A/B" idea is moot now that we chose completed-bars outright. History below.
+The thesis `confirm_bars` check read the LIVE (in-progress) 1-min bar as the last "close" (IBKR `endDateTime=''`
 returns the partial bar), so `confirm_bars:2` = *last completed close + current price*, not *two completed
 closes*. On 08-21 the CALL fired 11:01 on an in-progress bar that then closed back below (the −39.88% MAE
 dip) before the real 11:03–11:04 break; a stricter *N-completed-closes* rule would have entered ~11:04,

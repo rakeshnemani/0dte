@@ -149,6 +149,47 @@ regime's sample.
 
 ---
 
+## 2026-08-31 (Mon) — ⚪ $0, ZERO trades on a dead-flat chop day — and the FILTERS (esp. the new exhaustion gate) did the work
+
+**A textbook chop day, correctly sat out.** Spot pinned **7670–7688 all session** (~18-pt chain range, ~24-pt
+on the 5-min feed): open ~7680, drifted sideways, close 7688. No directional move, ever. Negative gamma the
+whole day (spot ~7680 vs **Gflip ~7704**, −25 to −29 pt below), which "should" mean momentum — but the moves
+were too small to sustain, so it just oscillated (an H1 note: *deep* in neg-γ and still chop, because the
+absolute range never cleared the noise). **No thesis from the user** (nothing to arm), and the mechanical
+strategies filtered themselves out. Result: **0 trades — the right call. On a flat day a long just bleeds
+theta; not trading IS the win.**
+
+**⭐ The story: the exhaustion gate (shipped this morning) earned its keep on day one.** The bot was restarted
+onto the current code (exhaustion gate live at `Range_Exp ≥ 0.8`; wall gate reverted — 0 wall skips, as
+expected). The log shows the filter stack working in layers:
+- **Exhaustion gate: 16 blocks.** These were **FULL GEX PUT signals** (neg-γ + OR-break + momentum + vol all
+  passed) that *only* the exhaustion gate stopped. `Range_Exp` climbed **0.82 → 0.86 → 0.93 → 1.02** and then
+  **pinned at 1.02** from ~10:26 onward — i.e. by mid-morning the day had already spent ~100% of its
+  IV-expected move, so every later "breakout" was chasing a tank with no fuel. **On Friday's code (no gate)
+  those ~16 would have been live PUT entries on a flat tape → a string of theta-decay losses.** The gate is
+  the reason the book is flat instead of red today.
+- **Validation of the 0.8 threshold (the user's call):** the *first* block fired at **0.82 at 10:10** — under
+  the old 1.0 cut, that PUT (and the 0.86 / 0.93 ones) would have fired *before* the ratio crossed 1.0. The
+  lower threshold bought **~20 min of earlier protection** and caught 3 signals a 1.0 gate would have let through.
+- **Momentum filter: 10 blocks** ("OR breakout but no 2 accelerating bars") — chop has no acceleration.
+- **Trend: 6 flips blocked** on `kauf > 50` (choppy reversal, not a clean trend) — the trend strategy correctly
+  silent, as it should be in chop (see 08-27→ the trend-strategy-worth-keeping note).
+
+**Read:** every independent layer — momentum, exhaustion, Kaufman-chop, and human discretion — agreed *don't
+trade this*, and they were right. This is the first day we can point to where **a filter we built demonstrably
+prevented losses in real time** (16 would-be PUTs), rather than just showing up in a backtest. The −$0 is a
+*good* −$0.
+
+**Running tally (unchanged — no trades):** 13 closed trades, **−$80** gross (gex 9 −$2,065, thesis 4 +$1,985).
+
+**Session housekeeping (code, not trades):** shipped the exhaustion gate (`Range_Exp ≥ 0.8`, mechanical-GEX
+only) and the **2-closed-bars** thesis-confirmation fix (no more firing on wicks; TODO #45 done); reverted the
+wall-runway gate + grind flag back to Friday's code after the real-chain backtest showed the gate nearly
+*disables* mechanical GEX (took 1–2 of 9, skipping winners too); and improved the dashboard (γ-weighted wall
+header + a raw-OI-by-strike line chart). All tested, nothing committed (user commits manually).
+
+---
+
 ## 2026-08-28 (Fri) — 🟢 +$490: morning trend CALL won big, but the two afternoon PUTs died into the 7700 wall (mis-tagged "Runway")
 
 **+$490 gross** (thesis 7735C **+$1,600**, gex 7705P **−$875**, gex 7710P **−$235**). A **split day**: SPX

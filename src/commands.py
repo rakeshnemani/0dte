@@ -134,7 +134,9 @@ def arm_should_fire(arm: dict, spot: float, recent_closes: list, or_levels=None)
     """True when an arm's trigger is met. No trigger → fire immediately.
 
     A ``confirm_bars`` of N requires the last N 1-minute closes to ALL satisfy the condition
-    (so a one-tick wick past the level doesn't fire it).
+    (so a one-tick wick past the level doesn't fire it). ``recent_closes`` must be **COMPLETED**
+    closes — the caller drops the current, still-forming bar first (see bot._watch_thesis_triggers,
+    TODO #45) so N=2 means two *closed* bars, not "one close + the live tick".
 
     ``type='or_breakout'`` fires on a break of the 15-min opening-range high (CALL) / low (PUT).
     The OR high/low are dynamic and must be supplied by the caller as ``or_levels=(or_high,
@@ -165,7 +167,8 @@ def arm_should_fire(arm: dict, spot: float, recent_closes: list, or_levels=None)
 
 
 def _confirm(op_str: str, level: float, confirm_bars: int, recent_closes: list) -> bool:
-    """The last ``confirm_bars`` 1-min closes must ALL satisfy ``close <op> level``."""
+    """The last ``confirm_bars`` **completed** 1-min closes must ALL satisfy ``close <op> level``
+    (the caller passes completed closes only — the in-progress bar is dropped upstream)."""
     op = _OPS[op_str]
     closes = list(recent_closes or [])
     if len(closes) < confirm_bars:

@@ -99,16 +99,16 @@ TODO #43 (n=2, not built) — a different category from this human-thesis rail.
 
 ## Observations under watch
 
-- **Confirmation uses the LIVE (in-progress) bar, not only completed closes (noted 2026-08-21, n=1).**
-  `_watch_thesis_triggers` reads `df['close']`, whose last element is the *current, still-forming* 1-min
-  bar (IBKR `reqHistoricalData(endDateTime='')` returns the partial bar). So a `confirm_bars: 2` check is
-  really *"last completed close + current live price,"* not *"two completed closes."* On 08-21 the CALL
-  fired 11:01 on an in-progress bar showing ~7679; that bar then **closed back below** (11:01=7676.55,
-  11:02=7676.35) before the real break at 11:03–11:04 → the entry ate a **−39.88% MAE** dip it survived
-  only because there is no fixed stop. A stricter *"N completed closes"* rule would have entered ~11:04,
-  after the pullback, skipping the dip (at a slightly higher premium). **Not a change yet — n=1.** To A/B
-  this properly we'd need to persist 1-min bars or log each trigger evaluation (we don't today; the 08-21
-  reconstruction only worked because the Gateway happened to be up). See TODO #45.
+- **✅ RESOLVED 2026-08-31 — confirmation now uses COMPLETED closes only (2 closed bars, not wicks).**
+  `_watch_thesis_triggers` read `df['close']`, whose last element is the *current, still-forming* 1-min bar
+  (IBKR `reqHistoricalData(endDateTime='')` returns the partial bar), so `confirm_bars: 2` was really *"last
+  completed close + current live price,"* not *"two completed closes."* On 08-21 the CALL fired 11:01 on an
+  in-progress bar showing ~7679; that bar **closed back below** (11:01=7676.55, 11:02=7676.35) before the real
+  break at 11:03–11:04 → a **−39.88% MAE** dip. **Fix (user call):** the bot now **drops the in-progress bar**
+  (`df['close'].tolist()[:-1]`) before evaluating an arm's `confirm_bars`, so N=2 means two *closed* bars — a
+  one-tick wick through the level no longer fires the entry. Exits (`close_if`) intentionally still react to the
+  **live** price. Tested: `test_thesis_commands.py::test_confirm_bars_completed_only`. Cost: entries land ~1 min
+  later/calmer (the accepted trade-off — dodges the fakeout dip).
 
   **P&L of the two on 08-21 (from the 1-min reconstruction):** live-bar entered 8.40 @ 11:01 → +$590;
   strict would have entered ~8.5–9.2 @ ~11:04–11:05 (est.; 1-min option marks aren't logged) → ~+$530–590.

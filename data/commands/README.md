@@ -104,5 +104,7 @@ trigger up so it also waits out a noise band (fires on `close ≥ max(OR_high, 7
     to also wait out a noise band. `or_minutes` defaults to `GEX_OR_MINUTES` (15).
   - Omit `trigger` entirely to **fire immediately** ("buy now").
 - `when` (close_if) — a price condition: `{ "op": "<="|..., "level": <number> }`.
-- `confirm_bars` — requires the last N 1-min closes to ALL satisfy the condition (filters a wick).
+- `confirm_bars` — requires the last N **completed** 1-min closes to ALL satisfy the condition (the bot drops
+  the current, still-forming bar, so N=2 = two *closed* bars, not "one close + the live tick" — a wick through
+  the level won't fire it; 2026-08-31).
 - `expires_at` (optional) — ISO ET (`YYYY-MM-DDTHH:MM:SS`); an untriggered arm/close_if is dropped after this.

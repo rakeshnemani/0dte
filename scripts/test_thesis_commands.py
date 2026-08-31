@@ -188,6 +188,30 @@ def test_triggers():
           not commands.is_expired({'expires_at': '2099-01-01T00:00:00'}, now))
 
 
+def test_confirm_bars_completed_only():
+    """2-CLOSED-BARS fix (TODO #45): the bot drops the in-progress bar (`[:-1]`) before passing
+    closes to arm_should_fire, so confirm_bars counts only COMPLETED closes — a live wick past the
+    level in the still-forming bar must NOT fire. This mirrors bot._watch_thesis_triggers' slice."""
+    print("\nconfirm_bars uses COMPLETED closes only (in-progress wick dropped)")
+    call = {'trigger': {'op': '>=', 'level': 7715, 'confirm_bars': 2}}
+
+    def bot_slice(bars):                      # what the bot now passes: drop the forming bar
+        return [float(x) for x in bars[:-1][-10:]]
+
+    # completed bars all BELOW 7715, then a live wick ABOVE in the forming bar → must NOT fire
+    wick = [7710, 7712, 7713, 7716]
+    check("live wick above (in-progress) is dropped → no fire",
+          not commands.arm_should_fire(call, wick[-1], bot_slice(wick)))
+    # two COMPLETED closes above the level (forming bar irrelevant) → fires
+    real = [7713, 7716, 7717, 7714]
+    check("two COMPLETED closes above → fire (even if forming bar dipped back)",
+          commands.arm_should_fire(call, real[-1], bot_slice(real)))
+    # only ONE completed close above (the other was the now-dropped wick) → no fire
+    one = [7712, 7714, 7717, 7719]
+    check("only 1 completed close above (last completed is 7717, prev 7714) → no fire",
+          not commands.arm_should_fire(call, one[-1], bot_slice(one)))
+
+
 def test_or_breakout_pure():
     print("\narm_should_fire() — type='or_breakout' (level derived from the opening range)")
     call = {'side': 'CALL', 'trigger': {'type': 'or_breakout', 'confirm_bars': 1}}
@@ -412,6 +436,7 @@ def test_expiry_and_reject():
 if __name__ == '__main__':
     test_validate()
     test_triggers()
+    test_confirm_bars_completed_only()
     test_or_breakout_pure()
     test_or_breakout_bot()
     test_scan_and_processed()

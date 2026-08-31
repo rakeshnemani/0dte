@@ -582,11 +582,15 @@ class TradingBot:
             df = self.broker.fetch_intraday_data(symbol)
             if df is None or df.empty:
                 continue
-            spot = float(df['close'].iloc[-1])
-            recent = [float(x) for x in df['close'].tolist()[-10:]]
+            spot = float(df['close'].iloc[-1])           # live (in-progress) price — used by close_if exits
+            # 2-CLOSED-BARS fix (TODO #45, 2026-08-31): reqHistoricalData(endDateTime='') returns the
+            # current, still-FORMING minute as the last bar. Drop it so an arm's confirm_bars counts only
+            # COMPLETED 1-min closes — a one-tick wick through the level no longer fires the entry (the
+            # 08-21 case in THESIS_GEX.md). Exits (close_if) intentionally stay on the live `spot`.
+            completed = [float(x) for x in df['close'].tolist()[:-1][-10:]]
             for arm in list(arms):
                 or_levels = self._arm_or_levels(arm, df, now)
-                if commands.arm_should_fire(arm, spot, recent, or_levels=or_levels):
+                if commands.arm_should_fire(arm, spot, completed, or_levels=or_levels):
                     self._fire_thesis_arm(symbol, arm, spot, df)
             for closer in list(closers):
                 key = closer.get('target', self._tkey('thesis', symbol))   # any slot, default thesis
