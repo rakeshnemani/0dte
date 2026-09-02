@@ -149,6 +149,57 @@ regime's sample.
 
 ---
 
+## 2026-09-02 (Wed) — 🟢 +$590: mech GEX CALL caught the reversal AGAIN; no thesis (discipline held)
+
+**Mechanical GEX, clean win #2 in a row.** Day opened ~7639, and once the tape confirmed, the bot took a
+**CALL** at 10:00 (spot 7645, neg-γ + OR-break up + 2-bar momentum), rode it to **+71% peak**, tiered-trailed
+out **+54% = +$590** (SPX ran to 7678). **No thesis trade** — the user sat on their hands after yesterday, which
+is exactly the right response to yesterday's lesson. The system did the trading; the human didn't force one.
+
+Two-in-a-row clean mechanical CALLs (09-01 +$860, 09-02 +$590) is the first sustained sign the **wait-for-the-
+confirmed-break** discipline pays: both were gap-ish opens that the bot only entered *after* the OR-breakout +
+momentum aligned, and both were real moves.
+
+**Running tally:** **16 trades, +$310** — the book is **GREEN for the first time.** gex 11 (**−$615**),
+thesis 5 (**+$925**). (Mech GEX still net-red overall, but +$1,450 over these two days closed most of the gap.)
+
+---
+
+## 2026-09-01 (Tue) — 🔴 −$200 net, but the STORY: disciplined mech CALL +$860 BEAT the emotional thesis PUT −$1,060 (same 30-min window, opposite sides)
+
+**The single cleanest illustration yet of "wait-for-confirmation ≫ fire-on-emotion."** SPX gapped **down** at
+the open (~7637, −51 from Mon's 7688 close), deep in negative gamma (spot −53 pt below Gflip). Two positions
+went on **within 30 minutes of each other, in OPPOSITE directions** — and the disciplined one won:
+
+- **🔴 Thesis PUT (the user's "arm PUT now") — −$1,060.** Armed **09:39 @ spot 7634**, an *immediate* ATM PUT
+  with **no trigger, no OR, no confirmation** — a gap-down "it's breaking, short it" reflex. But price
+  **bounced hard** (7613 → **7662** by mid-morning); the PUT hit its **−80% catastrophe stop @ 7659** and
+  booked −$1,060.
+- **🟢 Mech GEX CALL — +$860.** At **10:09** the bot took a **CALL @ 7644** — neg-γ + a **confirmed** OR-break
+  *up* (7644 > OR-level 7640) + 2 up-bars. It caught the very bounce that ran the PUT over: **peaked +108%**,
+  tiered-trailed out **+85% = +$860.**
+
+**The user's own read (logged verbatim, and it's the right one):** *"I lost my thesis yesterday. It was
+actually on me. I got carried away with a stupid mind. I wouldn't repeat it."* Owned cleanly — that's the
+candor this journal runs on.
+
+**The honest nuance (worth knowing, doesn't change the lesson):** SPX actually **faded back to close 7624** —
+*below* the PUT's 7634 entry. So the *direction* was ultimately right; a 7635 PUT held to the bell would've
+been ~breakeven-to-small-loss (~−$220 intrinsic), not −$1,060. What killed it was **(a) firing at the open
+into the first (up) move instead of waiting**, and **(b) the −80% catastrophe stop cutting it at the exact
+bounce high** before the fade it predicted. (Same no-fixed-stop tension as 08-28's CALL — there the deep MAE
+recovered; here it got cut. The stop is a coin the tape flips.)
+
+**Why the machine beat the human here — the takeaway:** the mechanical process **waited for the OR to form and
+took the direction of the confirmed break** (up). The thesis fired **blind at the open, before any structure
+existed**, on a directional hunch. Same tape, same 30 min, opposite sides — the wait was the edge. The thesis
+rail *supports* triggers (OR-breakout, price level) precisely so a thesis doesn't have to be a blind open-bell
+gamble; the "now" mode is for *executing a formed view fast*, not for *substituting emotion for a setup*.
+
+**Net day −$200** (CALL +$860, PUT −$1,060), but the mechanical side did exactly its job on a reversal day.
+
+---
+
 ## 2026-08-31 (Mon) — ⚪ $0, ZERO trades on a dead-flat chop day — and the FILTERS (esp. the new exhaustion gate) did the work
 
 **A textbook chop day, correctly sat out.** Spot pinned **7670–7688 all session** (~18-pt chain range, ~24-pt
