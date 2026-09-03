@@ -149,6 +149,56 @@ regime's sample.
 
 ---
 
+## 2026-09-03 (Thu) — ⚪ 0 trades on a +1% gap-and-go — the mechanical blind spot, named
+
+**SPX opened 7702, ran to 7756, closed 7746 — a clean +1% trend-up day. The bot placed 0 trades.**
+This is not a filter that was too tight or a bug — it is the mechanical GEX's **design boundary** showing
+its cost, and it's worth stating plainly because it's the same gap the thesis-CALL wins keep pointing at.
+
+**Why nothing fired (from the logs, exact):**
+- **Positive gamma ALL DAY — 76/76 regime samples.** Spot sat **+23 to +104 pts above Gflip** the entire
+  session (gflip 7650–7671, spot 7694–7756). Not one negative-gamma print.
+- **GEX refused 29 CALL breakouts.** The 15-min OR high (7715) broke at **09:52** (spot 7716) and price never
+  looked back — yet every one of the 29 subsequent breakout signals (through 15:47, spot 7749) was blocked by
+  the regime gate: *"positive-gamma → dealers dampen, breakouts fade."* A CALL bought at that first 09:52 break
+  would have ridden ~7716 → 7746/7756 = **+30–40 pts**, an easy convex winner. It was left on the table.
+- **Trend refused 6 flips**, all on **kauf > 50** (57, 72, 74, 78, 82, 89). A grind-up day pulls back as it
+  climbs, so the flips are *locally* choppy even while the *day* trends — the chop gate reads the pullback, not
+  the trend.
+- (4 exhaustion skips fired late, after the move was mostly spent — those were correct.)
+
+**The diagnosis — what we're lacking: a mechanical way to be LONG on a positive-gamma trend day.**
+The mechanical GEX only trades **negative gamma** (spot < Gflip = "dealers amplify moves") or a raw-OI wall
+break. Its entire premise is *momentum works when dealers amplify; breakouts fade when dealers dampen.* That is
+**true on chop days and false on trend-up days** — and the gate cannot tell the two apart in advance, because
+both live in positive gamma. Today the tape simply **grinded up THROUGH positive gamma** and the gate said no 29
+times.
+
+**This is the H5 "grind-up" gap, now with a clean counting.** Positive-γ up-days are exactly where the human
+**thesis CALLs** have been winning (08-27/08-28 grind-ups; the mech CALLs 09-01/09-02 only fired because those
+days dipped into *negative* gamma first). The machine has **no path** to today's setup; the human eye does.
+
+**The honest trade-off (don't over-correct off one day):** the *same* regime gate **saved us on 08-31** — a
+positive-γ CHOP day where it blocked 16 PUT signals and dodged a loser. So the gate is not simply wrong: it
+correctly avoids positive-γ chop and wrongly avoids positive-γ trend, and it can't distinguish them at entry.
+Ripping it out to "catch days like today" would re-open every fade-day it currently protects us from. That's the
+exact mistake the reverted wall-runway gate made — solving the visible miss by disabling the thing that works.
+
+**Candidate direction (observation, NOT building yet — needs the user's go-ahead):** a *separate* positive-gamma
+**trend-long sleeve** — allow a mechanical CALL in positive gamma **only** when the day is demonstrably trending
+(e.g. holding above VWAP + the OR high with sustained momentum + runway to the nearest upside wall), distinct
+from the neg-γ breakout logic. This is a **new strategy**, not a knob tweak, and the hard part (telling positive-γ
+trend from positive-γ chop) is precisely what burned the wall backtest — so the right first step is **log-only**:
+resurrect the `Grind_Setup` flag, mark these days, and only promote it to a live entry once positive-γ-with-runway
+CALLs show an edge across enough days. Until then, this remains the **thesis rail's** job — days like today are the
+argument for *forming a CALL thesis in the morning*, which is where the human read has been beating the machine.
+
+**Bottom line:** a green day with 0 trades stings, but the system behaved *exactly as designed* — and it named the
+one real hole cleanly: **no mechanical long for a positive-gamma trend.** File it under H5; the fix is a new sleeve,
+evidence-gated and log-first, not a loosened gate.
+
+---
+
 ## 2026-09-02 (Wed) — 🟢 +$590: mech GEX CALL caught the reversal AGAIN; no thesis (discipline held)
 
 **Mechanical GEX, clean win #2 in a row.** Day opened ~7639, and once the tape confirmed, the bot took a
@@ -162,6 +212,16 @@ momentum aligned, and both were real moves.
 
 **Running tally:** **16 trades, +$310** — the book is **GREEN for the first time.** gex 11 (**−$615**),
 thesis 5 (**+$925**). (Mech GEX still net-red overall, but +$1,450 over these two days closed most of the gap.)
+
+**⚙️ Change shipped (09-02) — catastrophe stop 0.80 → 0.60** (`GEX_CATASTROPHE_STOP`, config + `.env`; both
+mech-GEX and thesis; needs restart). User: *"better be trying with what I might go live with."* The 16-trade
+MAE analysis backs it cleanly: **winners all bottomed shallower than −53%** (deepest: 08-28, which then ran to
++118%), **losers all past −67%** — a clean gap, so **−60% caps every loser while sparing every winner.** Full
+counterfactual: −60% → **+$1,249** book (vs −80% +$387; −50% **−$720** and −35% **−$592**, because those two cut
+the 08-28 +$1,600 winner). It's **non-monotonic** — −60% is the sweet spot; going tighter backfires. **Caveat:
+n=16, and it pivots on 08-28's −53% dip sitting just above −60%; watch for any future winner that dips past −60%
+before recovering (`Max_Adverse_Pct` is logged every trade). For live, reduce *size* — not the stop — if −60%
+per contract is still too much.**
 
 ---
 

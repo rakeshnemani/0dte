@@ -76,7 +76,7 @@ GEX_TRAIL_BAND_HIGH=0.70       # mid→high edge
 GEX_TRAIL_GIVEBACK_LOW=0.60    # peak [35,50) → give back 60% (floor peak×0.40)
 GEX_TRAIL_GIVEBACK_MID=0.35    # peak [50,70) → give back 35% (floor peak×0.65)
 GEX_TRAIL_GIVEBACK_HIGH=0.20   # peak 70%+   → give back 20% (floor peak×0.80)
-GEX_CATASTROPHE_STOP=0.80      # wide backstop for a trade that never peaks
+GEX_CATASTROPHE_STOP=0.60      # backstop for a trade that never peaks (0.80→0.60, 09-02)
 
 # Shared guards
 MIN_OPTION_COST=0.30           # skip if the option mid is below this (fee floor)
@@ -106,8 +106,8 @@ the edge). Full details in [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md).
 | Strategy | Entry | Exits |
 |---|---|---|
 | **Trend** | Supertrend(7,3) flip + PSAR agree + Kaufman-chop ≤ 50, inside `TREND_WINDOWS`, + vol gate | −50% stop · Supertrend reversal · EOD flatten |
-| **GEX** | negative-gamma / wall breakout + 15-min opening-range breakout + momentum, inside `GEX_WINDOWS`, + vol gate (Gflip computed live from the IBKR chain) | trailing (arm +35%, **tiered** giveback 60%/35%/20% by peak band [35–50)/[50–70)/70%+) · −80% catastrophe backstop · EOD flatten |
-| **Thesis** | human-in-the-loop: an approved daily GEX thesis armed as a `data/commands/*.json` command (price / OR-breakout trigger) — see [docs/THESIS_GEX.md](docs/THESIS_GEX.md) | same as GEX (trailing +35% / −80% / EOD) + any `close`/`close_if` you send |
+| **GEX** | negative-gamma / wall breakout + 15-min opening-range breakout + momentum, inside `GEX_WINDOWS`, + vol gate (Gflip computed live from the IBKR chain) | trailing (arm +35%, **tiered** giveback 60%/35%/20% by peak band [35–50)/[50–70)/70%+) · −60% catastrophe backstop · EOD flatten |
+| **Thesis** | human-in-the-loop: an approved daily GEX thesis armed as a `data/commands/*.json` command (price / OR-breakout trigger) — see [docs/THESIS_GEX.md](docs/THESIS_GEX.md) | same as GEX (trailing +35% / −60% / EOD) + any `close`/`close_if` you send |
 
 **Shared guards:** cooldown (30 min), circuit breaker (5 consecutive losses), daily loss limit,
 12 trades/day, anti-cascade (never stack on an untracked position).

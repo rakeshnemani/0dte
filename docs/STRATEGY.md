@@ -158,7 +158,7 @@ those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* vi
    Bands: **[35–50%) → 60% (floor peak×0.40)** · **[50–70%) → 35% (peak×0.65)** · **70%+ → 20% (peak×0.80)**.
    So peak +40% → exit +16%; peak +60% → exit +39%; peak +100% → exit +80%. (Replaced the old flat 20%,
    which cut trend-day runners — 08-27 both CALLs peaked +36/44% and trailed out +28/34% while SPX ran on.)
-2. **Catastrophe backstop** — exit at **−`GEX_CATASTROPHE_STOP` (80%)**. This is the *only* downside
+2. **Catastrophe backstop** — exit at **−`GEX_CATASTROPHE_STOP` (60%)**. This is the *only* downside
    floor, because the trailing stop can't arm on a trade that never gets into profit.
 3. **EOD flatten** — 15:55 ET.
 
@@ -175,7 +175,7 @@ those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* vi
 | `GEX_WALL_TOL_PCT` | 0.0015 | "at a wall" tolerance (~0.15% of spot) |
 | `GEX_SKIP_LOWIV` | 0.082 | Theta-protection vol gate |
 | `GEX_TRAIL_TRIGGER` / `_GIVEBACK` | 0.35 / 0.20 | Trailing stop: arm level / giveback of peak |
-| `GEX_CATASTROPHE_STOP` | 0.80 | Wide downside backstop |
+| `GEX_CATASTROPHE_STOP` | 0.60 | Downside backstop (0.80→0.60, 09-02) |
 | `GEX_TAKE_PROFIT` | 0.0 (off) | Optional hard TP (>0 re-enables) |
 | `GEX_CHAIN_STRIKE_PCT` / `_EXPIRIES` / `_MAX_STRIKES` | 0.05 / 3 / 50 | Chain fetch scope |
 | `GEX_REFRESH_MIN` | 30 | How often to re-fetch the OI chain |
@@ -257,7 +257,7 @@ early, trails realized winners, and only backstops at −80%.**
 | `TREND_SKIP_LOWIV` / `GEX_SKIP_LOWIV` | 0.082 | both | Low-vol skip floor |
 | `HARD_STOP_LOSS_PCT` | 0.50 | trend | Trend hard stop |
 | `GEX_TRAIL_TRIGGER` / `GEX_TRAIL_GIVEBACK_LOW/MID/HIGH` | 0.35 / 0.60·0.35·0.20 | gex | Trailing stop (arm / tiered giveback by peak band, edges `GEX_TRAIL_BAND_MID/HIGH` 0.50/0.70) |
-| `GEX_CATASTROPHE_STOP` | 0.80 | gex | Wide backstop |
+| `GEX_CATASTROPHE_STOP` | 0.60 | gex | Backstop (0.80→0.60) |
 | `MIN_OPTION_COST` | 0.30 | both | Skip if the option mid is below this |
 | `ENTRY_AGGRESSION` | 0.5 | both | Entry limit mid→ask fraction |
 | `ENTRY_ORDER_TIMEOUT_SECONDS` | 120 | both | Cancel an unfilled entry after this |

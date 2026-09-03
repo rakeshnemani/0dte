@@ -71,7 +71,12 @@ GEX_TRAIL_BAND_HIGH    = float(os.getenv("GEX_TRAIL_BAND_HIGH",    "0.70"))   # 
 GEX_TRAIL_GIVEBACK_LOW  = float(os.getenv("GEX_TRAIL_GIVEBACK_LOW",  "0.60")) # peak in [arm, MID)
 GEX_TRAIL_GIVEBACK_MID  = float(os.getenv("GEX_TRAIL_GIVEBACK_MID",  "0.35")) # peak in [MID, HIGH)
 GEX_TRAIL_GIVEBACK_HIGH = float(os.getenv("GEX_TRAIL_GIVEBACK_HIGH", "0.20")) # peak >= HIGH
-GEX_CATASTROPHE_STOP = float(os.getenv("GEX_CATASTROPHE_STOP", "0.80"))   # 0 = no stop at all
+# Catastrophe backstop (the only downside floor for a trade that never arms the trail). Lowered
+# 0.80 → 0.60 (user, 2026-09-02, "trying what I'd go live with"). On the 16-trade sample the winners
+# all bottomed shallower than −53% MAE and the losers past −67%, a clean gap — so −60% caps every
+# loser while sparing every winner (best backtest P&L of any level; −50%/−35% cut the 08-28 +$1,600
+# winner). n small — watch for a winner that dips past −60% before recovering. 0 = no stop at all.
+GEX_CATASTROPHE_STOP = float(os.getenv("GEX_CATASTROPHE_STOP", "0.60"))
 # Theta protection (2026-08-11): skip a GEX entry when entry-time realized vol (open→now,
 # annualized, NO lookahead) < this — a slow tape can't move fast enough for a naked leg to
 # outrun theta. 0 disables.

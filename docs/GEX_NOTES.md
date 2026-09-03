@@ -83,6 +83,41 @@ n small — a prior, not a proven optimum. See TODO #7.
 **Note vs 08-24's IV compression:** distinct signals — that was *implied* vol falling in the morning (a
 "quiet day" prior); this is *realized range vs the budget* at entry (how much move is already spent).
 
+### H6 — Prior-close 1DTE wall map predicts next-day levels — ❌ MOSTLY REJECTED (worth this record, not a build)
+**Idea (born from 09-03):** on 09-02 the tape closed *barely* positive gamma (spot 7665, Gflip 7658, **+7 pts**)
+with a clean upside runway; 09-03 gapped up and grinded to **7756**, dying right at the **7750** 1DTE call wall.
+That looked like the prior-close 1DTE gamma map had **pre-printed the next day's ceiling** — the seed of a
+"map the runway at prior close → arm a morning thesis" workflow, and of a positive-gamma **trend-long sleeve**
+(the H5 gap).
+
+**Backtest (the honest test, 16 consecutive day-pairs, 08-12→09-03):** for each day D I pulled the **nearest
+heavy wall** (nearest strike whose OI ≥ 40% of the biggest same-side wall) from D's last **1DTE** chain snapshot,
+then checked whether D+1's high/low respected it.
+- **Wall-as-CAP: 1 / 11** upside-run days had the high land within ±12 pt of the prior-close nearest call wall.
+  Highs blew past or stopped 30–90 pt short with no pattern. Even **09-03 fails this** — its *nearest* heavy call
+  wall was **7675** (spot was 7668), which price blew clean through by **+81**; only the *far* 7750 happened to
+  align with the high, which is hindsight cherry-picking, not a rule.
+- **Wall-as-FLOOR: 5 / 15** — the "hits" are mostly quiet days where the put wall sat right at spot so the shallow
+  low touched it trivially; the real down-moves blew past or stopped far short.
+- The coarser **fattest-wall** version (regime-file `call_wall`/`put_wall`) is no better — on 10 / 12 pairs the
+  fattest wall sat 57–138 pt away and never became a factor.
+
+**Why it fails:** 1DTE OI at prior close is **thin and stale** — it rebuilds overnight, so last night's map is a
+weak shadow of the next morning's real structure. And overnight **gaps are exogenous** (futures/catalyst) — gamma
+carries no overnight-news signal, so it can't call the gap that *sets up* the runway in the first place.
+
+**The one residual thread (keep collecting, don't build):** the **margin-to-Gflip at prior close** weakly tracks
+which days become *trend-capable*. The two biggest trend up-days in the window — **08-27 (+34)** and **09-03
+(+44)** — both followed **near-flip** closes (margin +1, +7), while deep-margin/deep-negative closes were mixed and
+mostly small. But (a) n is tiny, (b) there were near-flip closes that didn't trend (08-26 +8), and (c) this is
+really **[[H1]] distance-to-flip** measured at a different clock, not a new signal.
+
+**Verdict:** the headline "prior-close walls predict tomorrow" does **not** survive contact with the data — do
+**not** build the prior-close predictor script. The correct clock for a runway map is the **fresh ~9:45 snapshot**
+(which the bot already collects via `gex_snapshot`/`_collect_gex_data`); the real open problem is *using* that
+morning map for a positive-gamma trend-long **entry** (H5), not forecasting it the night before. 09-03 was a clean
+*confirming anecdote* and a *coincidental* wall-hit — exactly the trap the reverted wall-runway gate fell into.
+
 ---
 
 ## Mechanical concepts (so we don't re-derive them)

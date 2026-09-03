@@ -55,11 +55,11 @@ fixed max-loss stop — those cut the 08-17 winner at −4% before it ran to +10
 1. **Trailing stop** — arms once the trade peaks at `GEX_TRAIL_TRIGGER` (+35%), then exits if it
    gives back a **tiered** fraction of the peak: 60% in [35–50%), 35% in [50–70%), 20% at 70%+
    (`GEX_TRAIL_GIVEBACK_LOW/MID/HIGH`). E.g. peak +40% → exit +16%; peak +100% → exit +80%.
-2. **Catastrophe backstop** −`GEX_CATASTROPHE_STOP` (80%) — the only downside floor, since the
+2. **Catastrophe backstop** −`GEX_CATASTROPHE_STOP` (60%) — the only downside floor, since the
    trail can't arm on a trade that never gets into profit.
 3. **EOD flatten** 15:55 ET.
 
-⚠️ A GEX trade that goes straight against us has **no protection until −80%** (~−$690/contract).
+⚠️ A GEX trade that goes straight against us has **no protection until −60%** (~−$520/contract).
 That's the accepted cost of not cutting winners early. GEX has no backtest — watch it live.
 
 ## P&L / order mechanics (both strategies)

@@ -31,7 +31,7 @@ paragraphs further down are *history*.
   copy-paste examples: `data/commands/README.md`. Full design: `docs/THESIS_GEX.md`.
 - **GEX/thesis trailing arm lowered 0.50 → 0.35** (`GEX_TRAIL_TRIGGER`, in `.env` AND `config.py`; TODO #38).
   Two losers peaked +28%/+40% *below* the old +50% arm and gave it all back — lowering it is asymmetric
-  (protects modest peakers, doesn't touch big winners). Exit trail = `peak×(1−giveback)` + −80% catastrophe
+  (protects modest peakers, doesn't touch big winners). Exit trail = `peak×(1−giveback)` + −60% catastrophe
   + EOD flatten. No invalidation / fixed stop / take-profit. **(Update 08-27: the flat 0.20 giveback is now
   TIERED — 60/35/20% for peak bands [35–50)/[50–70)/70%+ — so trend-day runners aren't choked; see the 08-27 retro.)**
 - **Two new audit columns:** `Max_Adverse_Pct` (MAE — deepest drawdown of the hold, mirror of `Peak_Pct`) and
@@ -86,7 +86,7 @@ tick 101 + our BS gamma), verified live 2026-08-10. Tests: `test_dual_strategy`,
 `evaluate_gex_entry`/`_gex_exit_check`. **GEX exits (2026-08-17 — LET THE CONVEX TAIL RIDE):**
 trailing stop only (arm +35% peak `GEX_TRAIL_TRIGGER`, **TIERED giveback** — 60%/35%/20% for peak bands
 [35–50%)/[50–70%)/70%+, `strategy.trailing_giveback`, added 08-27) ·
-WIDE catastrophe backstop −80% (`GEX_CATASTROPHE_STOP`) · 3:55 flatten. **NO invalidation cut, NO fixed
+catastrophe backstop −60% (`GEX_CATASTROPHE_STOP`, lowered 0.80→0.60 on 09-02) · 3:55 flatten. **NO invalidation cut, NO fixed
 max-loss stop, NO take-profit** — they cut the 08-17 winner at −4% before it ran to +100% (user call;
 GEX has no backtest). Trend keeps its own 50%-stop/reversal/EOD exits.
 **🐛 CRITICAL BUG FOUND+FIXED 2026-08-11:** `broker.fetch_intraday_data` requested MIDPOINT for indices →
@@ -207,7 +207,7 @@ realized vol). **Trend exits:** −50% hard stop (`HARD_STOP_LOSS_PCT`) · Super
 short-term momentum, inside `GEX_WINDOWS`(09:30–15:55), + skip low-vol days, **+ exhaustion gate (2026-08-31):
 skip if `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` 0.8** (day's IV-expected move ≥80% spent → chop; mechanical-GEX
 only, thesis ungated). Gflip/walls computed **LIVE** from the IBKR chain. **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +35%
-peak `GEX_TRAIL_TRIGGER`, **TIERED giveback 60/35/20% by peak band** [35–50)/[50–70)/70%+, added 08-27) · WIDE −80% catastrophe backstop
+peak `GEX_TRAIL_TRIGGER`, **TIERED giveback 60/35/20% by peak band** [35–50)/[50–70)/70%+, added 08-27) · −60% catastrophe backstop (0.80→0.60, 09-02)
 (`GEX_CATASTROPHE_STOP`) · EOD flatten 15:55. **NO invalidation, NO fixed max-loss stop, NO take-profit.**
 
 **Shared guards:** cooldown (30m), circuit breaker (5 consecutive losses), daily loss limit (−$400),
