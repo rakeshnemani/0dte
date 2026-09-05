@@ -149,6 +149,41 @@ regime's sample.
 
 ---
 
+## 2026-09-04 (Fri) — ⚪ 0 trades again — but this time the RIGHT call (quiet boxed chop)
+
+**Two 0-trade days in a row, opposite verdicts. 09-03 was a *miss*; 09-04 was *correct*.** Don't lump them.
+
+**The day:** open 7740 → close 7718, **net −22, range just 38 pts** — a quiet down-drift, not a trend. Opened
+**+28 positive gamma**, drifted lower, and **flipped negative late** (40/77 samples negative; last print spot
+7718 vs Gflip 7727 = −9). Spot stayed **boxed between distant walls** (7825 cap / 7600–7650 floor) and never
+came near either. Deep-positive-and-boxed = the genuine chop case.
+
+**Why 0 trades — and why that's right:** the dominant blocker today was the **low-vol gate (43 skips)**, not the
+regime gate — realized vol sat under 0.082 on a 38-pt range. Add 15 early positive-gamma GEX skips and 2 kauf
+skips. On a dead, choppy, sub-range day there was **no clean trade to take**; passing it is the bot *avoiding a
+fee-bleed chop day*, exactly what it should do. Contrast 09-03: there, 0 trades meant missing a +1% trend the
+mechanical side is structurally blind to. **Same "0 trades," completely different meaning** — the low-vol gate
+correctly muted today; the regime gate wrongly muted 09-03.
+
+**The framework tick (worth noting, n=1 but forecast in advance):** yesterday's 09-03 close read — *deep positive
+gamma (+86 margin), spot centered between distant walls → chop-lean, no directional runway, should be quieter than
+09-03* — **held.** Today's range 38 vs 09-03's 62, net −22, drifted, boxed, no runway move. First out-of-sample
+confirmation of the **margin-to-flip + runway** discriminator (H6 residual / [[H5]]-adjacent), on the *chop* half.
+
+**The pattern the user is (correctly) reaching for.** "Once we have enough +ve regime days, we can come up with a
+pattern" — agreed, and it's already forming. Within positive gamma the discriminator is **not** the pos/neg binary
+the bot uses; it's **margin-to-flip + runway**:
+- **thin margin / near-flip + clean runway → trend-capable** (09-03: +7 margin, 70-pt runway, ran +44 — *missed*).
+- **deep margin / boxed between distant walls → quiet chop** (09-04: +28→86 margin, no runway, drifted −22 — *correctly skipped*).
+
+Today adds a clean instance of the *chop* half. Keep accumulating positive-gamma days; the eventual edge is a
+**positive-gamma trend-long sleeve gated on thin-margin + runway** (skip the boxed-chop ones like today, take the
+runway ones like 09-03). Not enough n to build yet — but the two days bracket the hypothesis nicely.
+
+**Book unchanged:** 16 trades, +$310 (last fill 09-02). Two clean no-trade days since.
+
+---
+
 ## 2026-09-03 (Thu) — ⚪ 0 trades on a +1% gap-and-go — the mechanical blind spot, named
 
 **SPX opened 7702, ran to 7756, closed 7746 — a clean +1% trend-up day. The bot placed 0 trades.**
