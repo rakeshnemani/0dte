@@ -149,6 +149,41 @@ regime's sample.
 
 ---
 
+## 2026-09-09 (Wed, CPI day) — ⚪ 0 trades — NEG-γ + gap-down, but the move was spent overnight; vol gate worked FOR us — **[Day-0 eval #2](GO_LIVE_MECH_GEX.md)**
+
+**A negative-gamma day that still didn't hand us a tradeable move — and the pre-market map went 2-for-2.**
+
+**The day:** prior close 7674 → **gapped down to 7651** on the open (CPI + oil + yields, overnight/exogenous) →
+held ~7650 to 11:00 → one slow leg down to **7627** midday → settled **7630–7645, close 7638**. **Intraday range
+only 27 pts** — the real move (−23) was the *overnight gap*, which the bot can't trade. **Negative gamma all day
+(77/77)**, spot 46–76 pts below Gflip — the momentum regime, finally — **yet no tradeable momentum showed up.**
+
+**Did the vol gate work for or against us? → FOR us (with an honest asterisk).** 84 low-vol skips (entry-vol
+**0.061–0.082 all day**, mostly 0.06–0.08) + 22 "no-momentum" skips blocked a **GEX PUT** that kept forming (right
+side — down). Would that PUT have won? Almost certainly not: the intraday was a **slow −13-to-−23 grind that closed
+just −13 from the open**, on collapsing vol — a naked 0DTE PUT bleeds theta faster than a slow drift pays. The one
+20-pt leg (7650→7627) *might* have scratched a small gain with perfect entry+exit, but the **momentum gate blocked
+it independently** (slow grind, not 2 accelerating bars). So: **no clear winner was missed; the gate kept us out of
+a low-energy theta trap.** *Asterisk:* I can't compute the exact PUT P&L (no option price series) — this is reasoned,
+not measured, and it's the **closest-to-borderline** the gate has been (right direction, a real-ish leg). It does
+**not** hit the re-run trigger (that needs a *clean ≥50-pt directional day with vol only marginally below 0.075* —
+today was a 27-pt range at vol 0.06–0.08, solidly below). Verdict stands: correct skip.
+
+**The sharper lesson: negative gamma is necessary, not sufficient.** We keep expecting neg-γ = movement. Today was
+deeply neg-γ and *still* quiet intraday — because the **CPI gap front-loaded (spent) the move overnight**, leaving a
+low-energy tape. Same distinction as 09-08: **regime/direction ≠ energy**, and a naked long needs energy.
+
+**Pre-market map: 2-for-2 on levels.** The 8am call was: *NEG γ, flip 7697, spot on the 7675 support, ladder
+7675→7650→7630→7600, "break 7675 → 7650/7630," resist 7720/7730.* Actual: gapped **through** 7675, walked the ladder
+to 7650, dropped to **7627 (the 7630 node, −1,749M) and stalled there all afternoon** — exactly the mapped support
+steps. (Caveat: the "break 7675" happened via the overnight *gap*, not a tradeable intraday break — macro drove it;
+but the **levels nailed where price went and where it stopped.**) Two clean hits now (09-08 → 7675; 09-09 →
+7650/7630) — logged in the pre-market accuracy watch.
+
+**Eval tally: Day-0 session 2 of ≥30 · 0 of ≥40 trades.**
+
+---
+
 ## 2026-09-08 (Tue) — ⚪ 0 trades — the board CALLED it (7675 to the tick), but too slow to trade — **[Day-0 eval session #1](GO_LIVE_MECH_GEX.md)**
 
 **First session of the frozen-ruleset eval (Day 0 = 09-05). It opens with a 0-trade day — but a *smart* one,

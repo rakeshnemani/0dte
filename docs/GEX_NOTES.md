@@ -157,6 +157,7 @@ day *would* have been tradeable (a fast/big directional move a naked long could 
 |------|-------------------|------------------|---------|
 | 2026-09-04 | 38 / −22 (boxed chop) | <0.082 (43 skips) | ✅ correct skip — no energy, no direction |
 | 2026-09-08 | 32 / −32 (clean drift to mapped 7675) | 0.079→0.064 | ✅ correct skip (marginal) — direction right, too slow/vol-collapsing to pay a naked long |
+| 2026-09-09 | 27 / −13 intraday (−36 incl. gap; NEG-γ, CPI) | 0.061→0.082 | ✅ correct skip (closest-to-borderline) — right side (PUT) but slow grind closed −13 from open; the −23 move was the *overnight gap*, untradeable; momentum gate also blocked. **NOT a miss** (range 27 < 50, vol solidly low). Watch: a faster/bigger version of this WOULD be a miss |
 
 **Re-run trigger:** if **≥3 low-vol-skip days** turn out to be *misses* — a **clean directional day of ≥~50 pts**
 that a naked long would have won, where **entry-vol was only marginally below the gate (~0.075–0.082)** — then the
@@ -179,6 +180,7 @@ at-9:45 read supplies that).
 | Date | Pre-open call (pivot / support / cap) | Actual O/H/L/C | Held? |
 |------|----------------------------------------|----------------|-------|
 | 2026-09-08 | pivot **7709** · support **7675** · cap **7750** ("below 7709 → down to 7675; more room down than up") | 7706 / 7706 / **7674** / 7674 | ✅ opened below pivot → took the down branch; **low 7674 = 7675 support to the tick**; cap untested (never rallied) |
+| 2026-09-09 (CPI day) | flip **7697** · **NEG gamma** (spot 7673 *on* the heavy 7675 support) · support stack 7675/7650/7630/7600 · resist 7720/7730 ("break 7675 → 7650/7630; reclaim 7697 → 7720/7730") — ⚠️ provisional, 8:30 CPI can override | 7651 / 7654 / **7627** / 7638 | ✅ gapped **through** 7675 → walked to 7650 → **stalled at 7627 (the 7630 node) all afternoon**; support ladder nailed. Caveat: "break 7675" was the *overnight gap* (macro), not a tradeable intraday break |
 
 **Read after enough rows:** if the pre-open levels keep holding (pivot acts as the day's fulcrum, walls cap/floor
 the extremes), promote the pre-market snapshot to a **standing step in the daily workflow** (CLAUDE.md) and lean on
