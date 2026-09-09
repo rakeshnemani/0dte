@@ -1,5 +1,11 @@
 # Go-Live Readiness Checklist
 
+> **⚠️ This page is breakout-era (last updated 2026-07-07)** — its conviction tiers, SPY→XSP, and condor
+> references predate the single-leg pivot. The **active, strategy-specific gate is
+> [GO_LIVE_MECH_GEX.md](GO_LIVE_MECH_GEX.md)** (frozen ruleset, Day 0 = 2026-09-05). The gate *philosophy*
+> below — every gate passes, move bars only on evidence, sample size + fee-adjusted profit are the real bars —
+> still holds and is inherited by the mech-GEX checklist.
+
 When can this bot switch from paper to real money? When **every gate below passes** —
 not when a good week feels convincing. Update the status boxes as evidence accumulates
 (the retro + dashboard supply most numbers). Last updated: **2026-07-07**.

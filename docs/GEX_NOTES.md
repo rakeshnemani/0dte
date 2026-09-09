@@ -120,6 +120,73 @@ morning map for a positive-gamma trend-long **entry** (H5), not forecasting it t
 
 ---
 
+## Parameter watches *(a live parameter + the evidence for its current value + a re-run trigger)*
+
+### Low-vol gate `*_SKIP_LOWIV` = 0.082 — validated 2026-09-08, kept as-is, under forward watch
+
+**What it is:** skip an entry when **entry-time realized vol** (open→now, annualized, NO lookahead) < 0.082
+(~8.2% annualized) — a quiet-so-far day starves a naked long (theta bleed). Shared by trend + mech-GEX; 0 disables.
+`src/bot.py` (trend ~L244, GEX ~L412), `src/config.py` `TREND_SKIP_LOWIV`/`GEX_SKIP_LOWIV`.
+
+**Origin (was undocumented):** introduced 2026-08-10 with the trend+gex pivot as a `--skip-lowiv` sweep pick;
+the *exact* 0.082 was never written down until this sweep.
+
+**Sweep that validates it (2026-09-08).** `backtest_dollars.py`, **trend proxy** (GEX has no historical backtest —
+same gate, same SPX single-leg convex payoff, so the *shape* transfers; absolute $ are trend's, not GEX's). Config
+held fixed (`--legs single --no-tp --trail-trigger 0.35 --trail-giveback 0.20 --stop 0.60 --reverse supertrend`),
+3yr cache (2023-07→2026-08-07), only `--skip-lowiv` varied:
+
+| skip-lowiv | trades | WR | net $ | ROI |
+|---|---|---|---|---|
+| 0.0 (off) | 240 | 41% | +8,857 | 3.3% |
+| 0.06 | 223 | 42% | +9,306 | 3.5% |
+| 0.07 | 203 | 42% | +9,381 | 3.8% |
+| **0.082 (live)** | 161 | 47% | **+12,266** | 5.7% |
+| 0.09 | 136 | 46% | +11,847 | **6.1%** |
+
+**Read:** the gate clearly earns its place (off = worst). **Loosening to 0.06/0.07 gives back nearly all the
+benefit** (net $12.3k→$9.4k, WR 47%→42%) — a cluster of losing quiet-day trades lives in the 0.07–0.082 band that
+0.082 removes. **0.082 is the total-$ peak**; 0.09 is the only competitive alt (higher ROI/efficiency, slightly
+lower total $, within noise). **Decision: keep 0.082.** If ever tuned, the only defensible direction is *up* (0.09,
+choosier), never down. *Caveats:* trend proxy not GEX; not statistically significant; 2025-weighted.
+
+**Forward watch — is the gate too tight?** Log every day the low-vol gate is the dominant blocker, and whether the
+day *would* have been tradeable (a fast/big directional move a naked long could ride) vs correctly-dodged theta:
+
+| Date | Range / net (pts) | lowest entry-vol | verdict |
+|------|-------------------|------------------|---------|
+| 2026-09-04 | 38 / −22 (boxed chop) | <0.082 (43 skips) | ✅ correct skip — no energy, no direction |
+| 2026-09-08 | 32 / −32 (clean drift to mapped 7675) | 0.079→0.064 | ✅ correct skip (marginal) — direction right, too slow/vol-collapsing to pay a naked long |
+
+**Re-run trigger:** if **≥3 low-vol-skip days** turn out to be *misses* — a **clean directional day of ≥~50 pts**
+that a naked long would have won, where **entry-vol was only marginally below the gate (~0.075–0.082)** — then the
+floor is too tight: **re-run this sweep and reconsider** (candidate: 0.075). Boxed-chop or slow-drift skips (like
+both above) are *not* misses — they're the gate working. Update this table on any low-vol-dominated day.
+
+### Pre-market gamma snapshot — accuracy watch *(started 2026-09-08)*
+
+**Practice:** run `python scripts/gex_snapshot.py` **early (pre-open, ~8–9 ET)** to sketch the day's **map** — the
+Gflip pivot + the heavy walls — *before* forming the morning thesis. **This is the map, NOT the trigger:** the
+~9:45 snapshot stays authoritative before any arm (intraday 0DTE flow firms the fine structure after the open).
+**Why it's legit (vs the "no pre-market" caveat):** that caveat is about *yesterday's* stale chain / overnight
+runs; a **same-morning** read of *today's* expiry has real accumulated OI. It's also **not** the [[H6]] "prior-close
+predicts tomorrow" test (that mostly failed) — same-morning-of is a different, more defensible thing.
+
+**Watch — does the pre-market map hold?** Log the pre-open call (pivot + walls) vs the actual day. We want to learn
+whether the *levels* are reliable enough to pre-frame a thesis (they needn't predict *direction* — the human/again-
+at-9:45 read supplies that).
+
+| Date | Pre-open call (pivot / support / cap) | Actual O/H/L/C | Held? |
+|------|----------------------------------------|----------------|-------|
+| 2026-09-08 | pivot **7709** · support **7675** · cap **7750** ("below 7709 → down to 7675; more room down than up") | 7706 / 7706 / **7674** / 7674 | ✅ opened below pivot → took the down branch; **low 7674 = 7675 support to the tick**; cap untested (never rallied) |
+
+**Read after enough rows:** if the pre-open levels keep holding (pivot acts as the day's fulcrum, walls cap/floor
+the extremes), promote the pre-market snapshot to a **standing step in the daily workflow** (CLAUDE.md) and lean on
+it for thesis-framing. If they wander (open gaps far from the pre-open map, walls ignored), it's a stale-chain
+artifact — drop back to 9:45-only. n=1 so far (a clean hit) — **keep logging before concluding.**
+
+---
+
 ## Mechanical concepts (so we don't re-derive them)
 
 - **Gflip / regime.** Spot < Gflip → **negative gamma**: dealers hedge *with* the move (sell into

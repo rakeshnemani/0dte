@@ -189,7 +189,8 @@ IBKR clientIds: bot=1, reconcile=9, backfill=11 (so scripts run alongside the bo
 - `docs/PLAYBOOKS.md` — entry/exit/P&L for the trend + GEX single-leg strategies.
 - `docs/RECONCILE.md` — how to use `reconcile_ibkr.py`.
 - `docs/RETROSPECTIVE.md` — **the daily journal + hypotheses under test** (append after each trading day).
-- `docs/GO_LIVE.md` — paper→live readiness gates (Gate 2 = fee-adjusted profit is the blocker).
+- `docs/GO_LIVE_MECH_GEX.md` — **active** live-ready checklist for the mechanical GEX sleeve (frozen ruleset, **Day 0 = 2026-09-05**): +$10k fee-adjusted / PF≥1.5 / 65%WR + sample-size + regime + reliability gates.
+- `docs/GO_LIVE.md` — paper→live readiness gates (breakout-era, superseded by GO_LIVE_MECH_GEX for the gex sleeve; gate philosophy still holds).
 - `docs/BACKTESTING.md` — the analysis tooling, data inputs, and caveats; how every backtest number was produced.
 - `TODO.md` — prioritized backlog (P0/P1/P2/P3 + a Done section).
 

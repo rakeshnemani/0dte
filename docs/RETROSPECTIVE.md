@@ -149,6 +149,42 @@ regime's sample.
 
 ---
 
+## 2026-09-08 (Tue) — ⚪ 0 trades — the board CALLED it (7675 to the tick), but too slow to trade — **[Day-0 eval session #1](GO_LIVE_MECH_GEX.md)**
+
+**First session of the frozen-ruleset eval (Day 0 = 09-05). It opens with a 0-trade day — but a *smart* one,
+and a genuine tick for the GEX map.** Third straight blank, and a third distinct flavor: 09-03 was a *miss*
+(blind to a pos-γ trend), 09-04 was *correct* (boxed chop), and today was *correct-but-marginal* — a clean,
+**predicted** move the bot skipped on **energy, not regime**.
+
+**The day:** open 7706 → close 7674 — a slow, steady **down-drift, net −32, range only 32**. Opened at the high,
+closed at the low. **Negative gamma all day (77/77 samples)** — spot 4–37 pts *below* Gflip the whole session.
+
+**The board called it — direction AND level.** This morning's 8am snapshot had spot 7718 **balanced on the 7709
+flip**, and the read logged in-chat was: *"the whole day hinges on 7709 … break and hold below → negative gamma →
+momentum down toward 7700 → 7675 (the heavy support); more room down to 7675 than up to the 7750 wall."* That is
+**exactly** what happened: it broke 7709, flipped negative, and **the low printed 7674 — dead on the mapped 7675
+heavy put wall** (−1,871M). The negative-gamma-below-flip → momentum-to-mapped-support read worked to the tick.
+(n=1, moderate runway — but a clean forward hit, on record.)
+
+**So why 0 trades — and was it right?** The block was the **low-vol gate (28 skips)**, not the regime gate:
+entry-time realized vol slid **0.079 → 0.076 → 0.073 → 0.064**, never clearing 0.082. A **32-pt drift over 6.5
+hours with vol collapsing** rarely pays a naked 0DTE long after theta + fees — that's *precisely* what the low-vol
+gate exists to skip ("slow tape, theta would eat the naked leg"). So **correct call** — closer to 09-04 (skip the
+low-energy day) than 09-03 (miss the real move). A predicted direction is not the same as a *tradeable* one; the
+edge needs the move to be **fast/big enough**, and −32 slow wasn't.
+
+**The distinction that's now sharp: regime/direction ≠ energy.** Today the mechanical read (neg-γ, break of flip,
+runway to support) was *right on all three*, and the map even pre-printed the target — but the **naked-long P&L
+needs volatility**, and the day didn't supply it. The GEX *map* is proving useful for a **thesis** (call the level,
+call the side); the *mechanical long* still needs the low-vol gate to protect it from exactly this slow grind.
+
+**Watch (not a change):** three straight quiet days, and the **low-vol gate is now the recurring blocker**. Today
+it was right (32-pt range justifies caution). The only concern would be if it starts muting a day that *does*
+move — it hasn't. Don't touch 0.082 on this; keep watching whether quiet, directional-but-slow days like today are
+a *systematic* miss or correctly-avoided theta traps. **Eval tally: Day-0 session 1 of ≥30 · 0 of ≥40 trades.**
+
+---
+
 ## 2026-09-04 (Fri) — ⚪ 0 trades again — but this time the RIGHT call (quiet boxed chop)
 
 **Two 0-trade days in a row, opposite verdicts. 09-03 was a *miss*; 09-04 was *correct*.** Don't lump them.
