@@ -47,6 +47,10 @@ No take-profit, no trailing, no VWAP-invalidation.
 - **Exhaustion (2026-08-31):** `Range_Exp_Ratio` < `GEX_RANGE_EXP_MAX` (0.8) — skip once the day has
   already realized ≥ 80% of its IV-expected move (the move is largely spent → chop ahead). Mechanical
   GEX only; thesis trades are human-authorised and ungated.
+- **IntoWall (2026-09-10):** skip if `Setup_Tag` = `IntoWall` (`GEX_SKIP_INTOWALL`, default on) — the entry
+  buys INTO the nearest heavy wall (no runway in the profit direction). Mechanical GEX only. Every mechanical
+  IntoWall trade has lost (0-3, −$2,795: 08-18/08-19/09-10) — sold into support/resistance, bounced, hit the
+  catastrophe stop.
 
 → Buy 1 ATM CALL (bullish break) / PUT (bearish break).
 

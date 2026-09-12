@@ -106,7 +106,7 @@ the edge). Full details in [docs/PLAYBOOKS.md](docs/PLAYBOOKS.md).
 | Strategy | Entry | Exits |
 |---|---|---|
 | **Trend** | Supertrend(7,3) flip + PSAR agree + Kaufman-chop ≤ 50, inside `TREND_WINDOWS`, + vol gate | −50% stop · Supertrend reversal · EOD flatten |
-| **GEX** | negative-gamma / wall breakout + 15-min opening-range breakout + momentum, inside `GEX_WINDOWS`, + vol gate (Gflip computed live from the IBKR chain) | trailing (arm +35%, **tiered** giveback 60%/35%/20% by peak band [35–50)/[50–70)/70%+) · −60% catastrophe backstop · EOD flatten |
+| **GEX** | negative-gamma / wall breakout + 15-min opening-range breakout + momentum, inside `GEX_WINDOWS`, + vol gate + exhaustion gate (Range_Exp < 0.8) + **IntoWall skip** (Gflip/walls computed live from the IBKR chain) | trailing (arm +35%, **tiered** giveback 60%/35%/20% by peak band [35–50)/[50–70)/70%+) · −60% catastrophe backstop · EOD flatten |
 | **Thesis** | human-in-the-loop: an approved daily GEX thesis armed as a `data/commands/*.json` command (price / OR-breakout trigger) — see [docs/THESIS_GEX.md](docs/THESIS_GEX.md) | same as GEX (trailing +35% / −60% / EOD) + any `close`/`close_if` you send |
 
 **Shared guards:** cooldown (30 min), circuit breaker (5 consecutive losses), daily loss limit,

@@ -145,6 +145,10 @@ Plus the shared gate: **entry-time realized vol ≥ `GEX_SKIP_LOWIV` (0.082)** (
    already realized ≥ 80% of its IV-expected move, so there's little budget left to run (spent → chop).
    Mechanical GEX only; thesis trades are human-authorised and ungated. `Range_Exp_Ratio` is still logged
    at every entry (`bot._entry_exhaustion`).
+5. **IntoWall (2026-09-10)** — skip if the frozen `Setup_Tag` = `IntoWall` (`GEX_SKIP_INTOWALL`, default on):
+   the entry buys INTO the nearest heavy gamma wall (no runway in the profit direction). Mechanical GEX only.
+   Every mechanical IntoWall trade has lost — 0-3, −$2,795 (08-18 −$800, 08-19 −$1,115, 09-10 −$880): sold
+   into support/resistance, price bounced off the wall, hit the catastrophe stop. `false` = log-only (old behaviour).
 
 → **Buy 1 ATM CALL** (bullish break) or **PUT** (bearish break).
 
@@ -163,8 +167,8 @@ those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* vi
 3. **EOD flatten** — 15:55 ET.
 
 > ⚠️ **Stated risk:** a GEX trade that goes straight against us from the open has **no protection until
-> −80%** (~−$690/contract on a typical premium). That is the accepted cost of never cutting a winner
-> early. Watch it live.
+> −60%** (`GEX_CATASTROPHE_STOP`, lowered 0.80→0.60 on 09-02; ~−$520/contract on a typical premium). That
+> is the accepted cost of never cutting a winner early. Watch it live.
 
 ### GEX parameters
 | Param | Default | Meaning |
@@ -174,6 +178,8 @@ those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* vi
 | `GEX_MOMENTUM_BARS` | 2 | Accelerating bars required |
 | `GEX_WALL_TOL_PCT` | 0.0015 | "at a wall" tolerance (~0.15% of spot) |
 | `GEX_SKIP_LOWIV` | 0.082 | Theta-protection vol gate |
+| `GEX_RANGE_EXP_MAX` | 0.8 | Exhaustion gate: skip if day realized ≥ this ×IV-expected move |
+| `GEX_SKIP_INTOWALL` | true | IntoWall gate: skip a mechanical entry tagged `IntoWall` (false = log-only) |
 | `GEX_TRAIL_TRIGGER` / `_GIVEBACK` | 0.35 / 0.20 | Trailing stop: arm level / giveback of peak |
 | `GEX_CATASTROPHE_STOP` | 0.60 | Downside backstop (0.80→0.60, 09-02) |
 | `GEX_TAKE_PROFIT` | 0.0 (off) | Optional hard TP (>0 re-enables) |

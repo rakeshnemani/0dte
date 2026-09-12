@@ -86,6 +86,11 @@ GEX_SKIP_LOWIV = float(os.getenv("GEX_SKIP_LOWIV", "0.082"))
 # It's a >= test — at/above this, don't enter (the move is largely spent → chop ahead). 0 disables.
 # Mechanical GEX only; thesis is human-authorised. Range_Exp_Ratio is still logged at every entry.
 GEX_RANGE_EXP_MAX = float(os.getenv("GEX_RANGE_EXP_MAX", "0.8"))
+# IntoWall gate (2026-09-10): skip a mechanical-GEX entry tagged `IntoWall` — buying INTO the nearest
+# heavy wall (no runway in the profit direction). Every mechanical IntoWall trade has lost: 08-18 −$800,
+# 08-19 −$1,115, 09-10 −$880 (0-3, −$2,795) — sold into support, bounced, hit the catastrophe stop.
+# Mechanical GEX only (thesis is human-authorised/ungated). false → back to log-only (old behaviour).
+GEX_SKIP_INTOWALL = os.getenv("GEX_SKIP_INTOWALL", "true").lower() in ("1", "true", "yes")
 GEX_MOMENTUM_BARS = int(os.getenv("GEX_MOMENTUM_BARS", "2"))          # price momentum over N bars ("delta acceleration")
 GEX_WALL_TOL_PCT = float(os.getenv("GEX_WALL_TOL_PCT", "0.0015"))     # "at a wall" tolerance (~0.15% of spot)
 GEX_CHAIN_STRIKE_PCT = float(os.getenv("GEX_CHAIN_STRIKE_PCT", "0.05"))  # fetch strikes within ±5% of spot

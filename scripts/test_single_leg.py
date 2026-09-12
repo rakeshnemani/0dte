@@ -99,6 +99,35 @@ def test_lowvol_gate():
     check("too-few bars → 0.0 (no crash)", strategy.entry_realized_vol(pd.DataFrame({'close': [1, 2]})) == 0.0)
 
 
+def test_intowall_gate():
+    print("\nIntoWall gate — mechanical GEX skips a setup buying INTO the nearest heavy wall (09-10)")
+    import bot as bot_mod
+    b = _make_bot(); b.broker = FakeBroker()
+    b._gex_chain = [{'strike': 7585, 'oi_call': 1.0, 'oi_put': 1.0, 'iv': 0.2, 'T': 0.001}]  # non-empty
+    b._alert_blocked = lambda *a, **k: None
+    b.broker.fetch_intraday_data = lambda s: pd.DataFrame({'close': [7600 + 8 * (i % 2) for i in range(30)]})
+    b._entry_exhaustion = lambda df: 0.4                       # under the 0.8 exhaustion gate
+    orig_sig, orig_erv = strategy.gex_entry_signal, strategy.entry_realized_vol
+    strategy.gex_entry_signal = lambda *a, **k: ('PUT', 'GEX PUT: wall-breakout @7600', {}, None)
+    strategy.entry_realized_vol = lambda df: 0.15             # clears the 0.082 low-vol gate
+    orig_flag = config.GEX_SKIP_INTOWALL
+    try:
+        b._freeze_gex_context = lambda spot, direction: {'setup_tag': 'IntoWall', 'regime': 'negative'}
+        config.GEX_SKIP_INTOWALL = True
+        d, _, _ = b.evaluate_gex_entry('SPX')
+        check("IntoWall + gate ON  → SKIPPED (no trade)", d is None)
+        config.GEX_SKIP_INTOWALL = False
+        d, _, _ = b.evaluate_gex_entry('SPX')
+        check("IntoWall + gate OFF → trades (log-only fallback)", d == 'PUT')
+        b._freeze_gex_context = lambda spot, direction: {'setup_tag': 'Runway', 'regime': 'negative'}
+        config.GEX_SKIP_INTOWALL = True
+        d, _, _ = b.evaluate_gex_entry('SPX')
+        check("Runway  + gate ON  → trades (only IntoWall is gated)", d == 'PUT')
+    finally:
+        strategy.gex_entry_signal, strategy.entry_realized_vol = orig_sig, orig_erv
+        config.GEX_SKIP_INTOWALL = orig_flag
+
+
 def test_mae_tracking():
     print("\nMAE tracking — evaluate_exit_conditions records the trough AND the peak")
     import market_time
@@ -162,6 +191,7 @@ def test_gex_exit_rules():
 if __name__ == '__main__':
     test_single_leg_order()
     test_lowvol_gate()
+    test_intowall_gate()
     test_mae_tracking()
     test_gex_exit_rules()
     print()

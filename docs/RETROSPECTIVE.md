@@ -149,6 +149,70 @@ regime's sample.
 
 ---
 
+## 2026-09-11 (Fri) — ⚪ 0 trades on a green gap-up — the positive-γ blind spot again, but a *cheap* miss this time
+
+**The user called it — gap up, stay green — and was right: prior close 7590 → gapped +69 to 7659 → closed green
+7659. Mech GEX made $0.** It reclaimed the flip and ran **positive gamma all day (0/77 neg)**, so the regime gate
+refused **6 CALL breakouts** ("dealers dampen, breakouts fade"). This is the 09-03 structural blind spot, and it's
+**exactly the branch called in the 8am read** ("gap-up that reclaims 7661 → positive γ → mech GEX sits out").
+The vol gate was NOT the blocker (0 low-vol skips — the gap brought energy); purely the positive-γ regime gate.
+
+**But — the honest nuance — this was a *cheap* miss, unlike 09-03.** The **+69 was almost entirely the overnight
+gap**; intraday the tape was **flat (net ~0 from the 7659 open, range just 23, hi 7676 → close 7659).** A mech CALL
+bought at the open would have peaked ~+17 pts then given it back to roughly flat → a scratch or small theta loss,
+**not** a winner. So sitting out today was ≈neutral, not costly. Contrast 09-03, where the +44 was a genuine
+*intraday* trend a long would have ridden — that was the real miss. Today the money was in the gap, and **no
+intraday strategy captures an overnight gap.**
+
+**Still, the tally matters:** 08-27 / 09-03 / 09-11 are all green up-days mech GEX sat out. When the up-move is an
+*intraday* positive-γ trend (09-03) that's a real, recurring gap the H5 sleeve would address; when it's a *gap +
+flat hold* (today) it's not worth chasing. The discriminator is intraday range/energy, not the color of the day.
+
+**Pre-market map: 4-for-4** (see the comparison below). Today's *pivot* call was the sharpest yet: it gapped to
+the 7661 flip and reclaimed it → positive γ → mech sits out, precisely as written pre-open.
+
+**Eval tally: Day-0 (reset 09-10) session 1 of ≥30 · still 1 lifetime trade · book flat since the reset.**
+
+---
+
+## 2026-09-10 (Thu) — 🔴 −$880: FIRST eval trade, and it's the IntoWall trap we've flagged for weeks — **[Day-0 eval #3](GO_LIVE_MECH_GEX.md)**
+
+**First trade of the frozen-ruleset eval, and it's a textbook IntoWall PUT loss — the exact failure the un-gated
+`Setup_Tag` keeps warning about. IntoWall is now 0-3, −$2,795.**
+
+**The trade:** 09:53 BUY 1× SPXW **7585 PUT @ $14.00** (signal: *wall-breakout @7600, close 7587 < OR 7589,
+2-bar accel ↓*). 10:26 stopped **@ $5.20, −62.86% / −$880** on the −60% catastrophe (MAE −64.6%, peak only +12.9%).
+Spot entry 7587 → **bounced to 7610** (crushed the PUT) → closed **7590**. The down-thesis was right *by the close*
+— but the trade was ejected during the bounce.
+
+**The filters at entry:** entry-vol **0.121 ✅** (first time the vol gate PASSED — energy finally there) · Range_Exp
+**0.413 ✅** (not exhausted) · **Setup_Tag = IntoWall** (logged, NOT gated → fired anyway) · **Regime = unknown /
+Gflip = n/a** (gamma failed to compute at entry; dashboard also erroring 09:46/09:51 — so the regime gate couldn't
+see neg-γ and fired on the wall-breakout branch alone).
+
+**Why it lost — sold INTO the wall.** The bot shorted a break *below 7600* — but **7600 was the single heaviest
+gamma support (−2,424M)** on this morning's map, with 7590/7580 stacked below. Not a break into runway — selling
+into the wall. Price bounced off it (7587→7610), hit −60%, then resumed down after we were gone. Identical to
+08-18/08-19. **The pre-open read this morning literally warned it:** *"7600 is a heavy floor… clean short is the
+move TO 7600, NOT a PUT at/above 7600 — that's IntoWall."* The bot did exactly that, because IntoWall isn't gated.
+
+**Two findings (decisions for the user — both would touch the frozen ruleset / reset the Day-0 clock):**
+1. **Build the IntoWall hard-skip.** IntoWall 0-3 (−$800, −$1,115, −$880 = −$2,795); every mechanical IntoWall
+   trade has lost. This one would've been skipped. This is [Gate D](GO_LIVE_MECH_GEX.md)'s "IntoWall watch resolved"
+   reaching its decision point — the log-first watch has its evidence now.
+2. **Require a valid Gflip before entry.** The trade fired with `Regime=unknown / Gflip=n/a` — a wall-breakout with
+   no computable gamma regime, into a support wall. A robustness guard (no valid Gflip → no trade) plus fixing
+   whatever broke the chain/dashboard at 09:46 (`gex_dashboard.py:308` error in the log) is worth investigating.
+
+**Pre-market map: 3-for-3.** Called 7600 as the heavy floor; price gapped to it overnight (7636→7603 open), then
+**oscillated 7590–7610 around the 7600 wall all day and closed 7590** (just under). The map nailed the battleground
+again — the mistake was the bot *trading into* the mapped wall, not the map.
+
+**Eval tally: Day-0 session 3 of ≥30 · 1 of ≥40 trades · book −$880 (0W/1L).** First blood — but a *diagnostic*
+loss that validates both the IntoWall danger and the case for the gate.
+
+---
+
 ## 2026-09-09 (Wed, CPI day) — ⚪ 0 trades — NEG-γ + gap-down, but the move was spent overnight; vol gate worked FOR us — **[Day-0 eval #2](GO_LIVE_MECH_GEX.md)**
 
 **A negative-gamma day that still didn't hand us a tradeable move — and the pre-market map went 2-for-2.**

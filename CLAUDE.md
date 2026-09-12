@@ -206,8 +206,11 @@ realized vol). **Trend exits:** −50% hard stop (`HARD_STOP_LOSS_PCT`) · Super
 
 **GEX entry:** negative-gamma regime (spot < Gflip) OR wall-breakout + 15-min opening-range breakout +
 short-term momentum, inside `GEX_WINDOWS`(09:30–15:55), + skip low-vol days, **+ exhaustion gate (2026-08-31):
-skip if `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` 0.8** (day's IV-expected move ≥80% spent → chop; mechanical-GEX
-only, thesis ungated). Gflip/walls computed **LIVE** from the IBKR chain. **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +35%
+skip if `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` 0.8** (day's IV-expected move ≥80% spent → chop), **+ IntoWall
+skip (2026-09-10, `GEX_SKIP_INTOWALL`): skip a `Setup_Tag=IntoWall` entry — buying into the nearest heavy wall,
+no runway; 0-3 / −$2,795 live** (all mechanical-GEX only; thesis ungated). Gflip/walls computed **LIVE** from
+the IBKR chain. ⚠️ Known bug: the chain fetch caps at `GEX_CHAIN_MAX_STRIKES`=50 (~±1.6%), so on trend-down days
+`gamma_flip` can return None (`Regime=unknown`) — flagged, not yet fixed (widen the fetch). **GEX exits (let the convex tail ride, 2026-08-17):** trailing stop only (arm +35%
 peak `GEX_TRAIL_TRIGGER`, **TIERED giveback 60/35/20% by peak band** [35–50)/[50–70)/70%+, added 08-27) · −60% catastrophe backstop (0.80→0.60, 09-02)
 (`GEX_CATASTROPHE_STOP`) · EOD flatten 15:55. **NO invalidation, NO fixed max-loss stop, NO take-profit.**
 

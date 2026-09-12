@@ -4,18 +4,24 @@ The go-live gate **specifically for the mechanical `gex:SPX` sleeve** (not thesi
 Live money is switched on only when **every gate passes** — not when a good week feels convincing.
 This is the philosophy of [GO_LIVE.md](GO_LIVE.md), scoped to one strategy and re-based to a frozen ruleset.
 
-> **Day 0 = 2026-09-05.** The evaluation clock starts here; the trading-day / trade counts below count
-> **from the next market session forward**. Trades before Day 0 are *pre-Day-0 history* — informative, but
-> they do **not** count toward the go-live sample (they were taken under a moving ruleset).
+> **Day 0 = 2026-09-10** (reset from 09-05 when the IntoWall skip was added — a ruleset change resets the
+> clock). The evaluation clock starts here; the trading-day / trade counts below count **from the next
+> market session forward**. Trades before Day 0 are *pre-Day-0 history* — informative, but they do **not**
+> count toward the go-live sample (they were taken under a moving ruleset). *(The single 09-10 trade,
+> −$880 IntoWall, is the loss that motivated the skip — pre-change, doesn't count.)*
 
 ## The frozen ruleset under evaluation (as of Day 0)
 
 Changing any of these **resets the clock** (a go-live sample must test a *frozen* system):
 
 - **Entry:** neg-gamma OR wall-breakout · 15-min OR breakout · 2-bar momentum · low-vol skip (≥0.082) ·
-  **exhaustion gate `Range_Exp_Ratio` < 0.8**.
+  **exhaustion gate `Range_Exp_Ratio` < 0.8** · **IntoWall skip** (2026-09-10, `GEX_SKIP_INTOWALL` — skip a
+  setup buying into the nearest heavy wall).
 - **Exit:** trailing (arm +35%, **tiered** giveback 60/35/20% by peak band) · **−60% catastrophe** · 15:55 EOD flatten. No fixed stop, no TP.
-- **IntoWall = log-only watch** (NOT a live skip yet — a Setup_Tag label only; see Gate D).
+- **Known open robustness gap (NOT yet changed):** the live chain fetch caps at `GEX_CHAIN_MAX_STRIKES=50`
+  (~±1.6% of spot), so on trend-down days the gamma flip can fall past the upside edge and `gamma_flip`
+  returns None → `Regime=unknown` (this let 09-10's wall-breakout fire with no regime). Widening the fetch is a
+  candidate fix — flagged, not applied.
 - Shared guards: cooldown 30m · circuit breaker 5 · daily loss −$400 · 12 trades/day · anti-cascade.
 
 ## Pre-Day-0 baseline (the honest starting line)
@@ -69,8 +75,9 @@ The strategy must handle every market type — where "handle" includes **correct
 
 - [ ] **Exhaustion gate (0.8) shown net-helpful out-of-sample** — it was *derived* from the 08-25/08-28 losers
       (in-sample); confirm it helps (or at least doesn't hurt) on days it wasn't fit to.
-- [ ] **IntoWall watch resolved** — either promoted to a live skip *with out-of-sample evidence* (log-first, as
-      we did for exhaustion), or dropped. Currently n=2, log-only.
+- [x] **IntoWall watch resolved (2026-09-10) → promoted to a live skip** (`GEX_SKIP_INTOWALL`). Evidence: 0-3,
+      −$2,795 (08-18/08-19/09-10) — every mechanical IntoWall trade lost. Now watch forward that the skip only
+      removes losers (no IntoWall winner it would have blocked).
 - [ ] **The PUT leak diagnosed** — understand *why* mech-GEX PUTs lose (2W/5L) before trusting live capital on
       the short side; either the entries measurably improve, or shorts are gated.
 
@@ -98,9 +105,9 @@ The strategy must handle every market type — where "handle" includes **correct
 
 ```
 Gate A  Performance         ░░░░░░░░░░  far   (−$615 sleeve, PF<1, 45% WR — target +$10k / PF 1.5 / 65%)
-Gate B  Sample & frozen      ░░░░░░░░░░  Day 0 (0 of 40 trades, 0 of 30 days from 2026-09-05)
+Gate B  Sample & frozen      ░░░░░░░░░░  Day 0 reset 2026-09-10 (0 of 40 trades, 0 of 30 days)
 Gate C  Regime coverage      ██░░░░░░░░  chop ✓ (09-04); bull/bear/event pending
-Gate D  Edge validation      █░░░░░░░░░  exhaustion live but in-sample; IntoWall watching; PUT leak open
+Gate D  Edge validation      ██░░░░░░░░  IntoWall skip live ✓; exhaustion in-sample; PUT leak open
 Gate E  System reliability   ███░░░░░░░  features built; always-on host + 20-clean-sessions pending
 Gate F  Live mechanics       ░░░░░░░░░░  not started (by design)
 ```

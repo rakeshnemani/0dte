@@ -432,8 +432,20 @@ class TradingBot:
                                 f"(Range_Exp {rexp:.2f} ≥ {config.GEX_RANGE_EXP_MAX}: day's expected move spent)")
             return None, "", {}
         if direction:
-            # Freeze the GEX context at order time (for the audit + Discord + forward-testing).
+            # Freeze the GEX context at order time (Gflip, ladders, Setup_Tag) — needed BOTH for
+            # the IntoWall gate just below AND for the audit / Discord / forward-testing record.
             indicators.update(self._freeze_gex_context(spot, direction))
+            # IntoWall gate (2026-09-10): skip a mechanical entry that buys INTO the nearest heavy
+            # wall (no runway in the profit direction). Every mechanical IntoWall trade has lost
+            # (08-18/08-19/09-10 = 0-3, −$2,795): sold into the wall, bounced, catastrophe stop.
+            # Mechanical GEX only — thesis fires through a different path. Toggle GEX_SKIP_INTOWALL.
+            if config.GEX_SKIP_INTOWALL and indicators.get('setup_tag') == 'IntoWall':
+                logger.info(f"[{symbol}] GEX IntoWall skip: {direction} buys into the nearest heavy "
+                            f"wall (no runway) — IntoWall is 0-3 live, a catastrophe-stop magnet.")
+                self._alert_blocked('gex', symbol,
+                                    f"{direction}: full GEX setup formed but SKIPPED — IntoWall "
+                                    f"(buying into the nearest heavy wall, no runway; 0-3 live)")
+                return None, "", {}
             indicators['range_exp_ratio'] = rexp   # log column (also gated just above)
             logger.info(f"[{symbol}] GEX SIGNAL: {reason} (entry-vol {indicators.get('iv_entry', 'n/a')})")
         elif reason:                          # an OR breakout formed but regime/momentum blocked it

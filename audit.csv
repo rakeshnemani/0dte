@@ -31,3 +31,5 @@ Timestamp,Strategy,Action,Symbol,Direction,Price,Underlying_Price,ADX,VWAP,ORB_H
 2026-09-01 10:36:54,gex,SELL,SPX,CALL,18.7,7658.90,45.26,7656.93,7640.60,7627.87,,"Trailing stop: peaked +108%, gave back to +85% (trail +86%, tier giveback 20%)",85.15%,860.00,,107.92%,-13.37%,,3.26,796469925,,,,,,,,,
 2026-09-02 10:00:34,gex,BUY,SPX,CALL,10.7,7645.30,,,7644.10,7633.62,,GEX CALL: neg-γ (spot<Gflip) | close 7645.30 > OR-level 7644.10 | 2-bar accel ↑,,,,,,,1.63,1825035324,7651.53,-0.081%,negative,-4397,3972,7675|7680|7670,7600|7625|7550,Runway,0.419
 2026-09-02 10:10:21,gex,SELL,SPX,CALL,16.6,7656.12,36.15,7651.17,7647.06,7633.62,,"Trailing stop: peaked +71%, gave back to +54% (trail +57%, tier giveback 20%)",55.14%,590.00,,71.03%,0.00%,,3.26,1825035325,,,,,,,,,
+2026-09-10 09:53:27,gex,BUY,SPX,PUT,14.0,7587.16,,,7600.19,7588.96,,GEX PUT: wall-breakout @7600 | close 7587.16 < OR-level 7588.96 | 2-bar accel ↓,,,,,,,1.63,1505577447,,,unknown,-36211,-17982,7690|7685|7710,7600|7550|7580,IntoWall,0.413
+2026-09-10 10:26:05,gex,SELL,SPX,PUT,5.2,7609.04,25.80,7593.86,7603.34,7580.16,,Catastrophe stop: lost 65%,-62.86%,-880.00,,12.86%,-64.64%,,3.26,1505577448,,,,,,,,,

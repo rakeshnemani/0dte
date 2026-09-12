@@ -21,7 +21,7 @@ no invalidation/stop). The whole game now: do these single-leg strategies clear 
 |---|---|
 | **P0 — live experiment** | **#42** flip — capture real SPX fill costs (the fee-edge gate); watch for trend-day bleed |
 | **P1 — soon** | **#36** cross-day circuit breaker · **#38** trail-trigger 0.50→0.45 · **#20/#35** fee ratio (wider spreads / contract cap) · **#2** total-exposure cap · **#16** always-on host |
-| **P2 — evidence-gated** | **#43** IntoWall entry guard (mechanical GEX; n=2, don't build yet) · **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
+| **P2 — evidence-gated** | **#43** IntoWall entry guard ✅ DONE 2026-09-10 · **#33** anchored/session VWAP · **#5** time stop · **#6** midday tightening · **#7** expected-move anchor · **#12** throttle stand-down · **#22/#28** condor tuning (condors OFF) |
 | **Design track (parallel)** | **#44** Thesis-GEX — human-thesis Discord channel + bot command rail (analyst = Claude, executor = bot) · ~~**#45** thesis confirm on completed bars~~ ✅ done 2026-08-31 |
 | **P3 — parked** | **#4** GLD/TLT · **#8** VIX1D |
 | **Resolved by evidence — do not reopen** | **#39** (filters aren't the bottleneck) · **#37** (→ #42) · **regime-router** (tested 07-28, not justified) |
@@ -115,18 +115,29 @@ re-enabled: breach exit fires too late (#22, exited −67% not −25%), and the 
 (#28). Also latent: condor strikes are computed from SPY (signal) levels but placed on the
 execution symbol — broken for index symbols until fixed. Leave off.
 
-**43. IntoWall entry guard for the MECHANICAL gex strategy (evidence-gated, n=2 — DO NOT build yet).**
-Both GEX PUT losses share one structural shape: entry sat *below* the heaviest put-support strike
-(7720) → `Setup_Tag=IntoWall` → price bounced off support, reverted up, hit the −80% catastrophe
-stop. **08-18 −$800 · 08-19 −$1,115** (`Runway` is 1-0). Candidate rule: **skip or downsize a
-mechanical GEX entry tagged `IntoWall`** — a PUT entered below the lead put-support strike, or a CALL
-above the lead call-resistance (i.e. buying/shorting *into* the wall dealers defend, no runway).
-Pure entry-filter on data we **already log** (`Setup_Tag` + `Put_Ladder`/`Call_Ladder` frozen at
-every order). **Gate:** n=2 is noise (learning #10 — never tune on a tiny sample). Let `Setup_Tag`
-accumulate; group `audit.csv` by it and promote to a coded guard **only if `IntoWall` stays clearly
-negative across a real sample.** ⚠️ **This guards the *mechanical* gex strategy — a different category
-from "thesis GEX" (#44).** The bot has no IntoWall check today, so it will keep taking these until this
-lands. See [docs/GEX_NOTES.md](docs/GEX_NOTES.md) H3.
+**43. IntoWall entry guard for the MECHANICAL gex strategy — ✅ DONE 2026-09-10 (`GEX_SKIP_INTOWALL`).**
+All three mechanical `IntoWall` trades lost — **08-18 −$800 · 08-19 −$1,115 · 09-10 −$880 = 0-3, −$2,795**:
+entry sat into the heaviest wall in the profit direction → price bounced off it → hit the catastrophe stop.
+The 09-10 loss (a PUT breaking below the 7600 heavy support wall, bounced to 7610, −60% stop) took the sample
+past "noise" (learning #10) and the user approved the skip. **Built:** mechanical GEX entry tagged
+`Setup_Tag=IntoWall` is now skipped (`config.GEX_SKIP_INTOWALL`, default true; `bot.evaluate_gex_entry`), with a
+⏸️ skip alert. Mechanical GEX only — thesis (#44) fires through a different, ungated path. Tested
+(`test_single_leg.py::test_intowall_gate`). Forward watch: confirm the skip only removes losers (no IntoWall
+winner it would have blocked) — see [docs/GO_LIVE_MECH_GEX.md](docs/GO_LIVE_MECH_GEX.md) Gate D.
+
+**45. Widen the live GEX chain fetch so `gamma_flip` doesn't return None on trend days (robustness, P1).**
+Root-caused 2026-09-10: `GEX_CHAIN_MAX_STRIKES=50` caps the fetched chain to the 50 strikes nearest ATM
+(~±1.6% at SPX 5-pt spacing), which **overrides** the `GEX_CHAIN_STRIKE_PCT=0.05` (±5%) intent. On a
+trend-**down** day the net-GEX zero-crossing (the flip) sits at/above the window's upside edge, so `net_gex`
+never crosses positive within the fetched strikes → `gamma_flip` returns None → `Regime=unknown`. This let
+09-10's wall-breakout PUT fire with **no regime confirmation** (into a support wall → −$880). Confirmed from the
+saved chain: at 09:32/10:02/14:06–15:06 the chain topped at ~7715 and gflip=None; when spot was a touch higher
+(crossing in-window) gflip computed fine — it *flickers* with the edge. **Fix candidates:** raise
+`GEX_CHAIN_MAX_STRIKES` (~100–120 → ±3–4%), or make the fetch guarantee coverage of the nearest positive-gamma
+region above spot; and/or **require a valid Gflip before a mechanical entry** (no regime → no trade). ⚠️ Touches
+what the bot sees → resets the Day-0 eval clock; flagged for the user, NOT yet applied. Also fix the separate
+`gex_dashboard.py:308` subprocess error that failed the bot's dashboard rebuild all day 09-10 (the standalone
+script runs fine — likely an invocation/arg/cwd difference).
 
 **44. Thesis-GEX — hand the bot a human thesis + Claude's judgment (design track).** The gap 08-18/08-19
 exposed: the bot's read was wrong while the user's was right, and there was no rail to act on the human
