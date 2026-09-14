@@ -4,24 +4,22 @@ The go-live gate **specifically for the mechanical `gex:SPX` sleeve** (not thesi
 Live money is switched on only when **every gate passes** — not when a good week feels convincing.
 This is the philosophy of [GO_LIVE.md](GO_LIVE.md), scoped to one strategy and re-based to a frozen ruleset.
 
-> **Day 0 = 2026-09-10** (reset from 09-05 when the IntoWall skip was added — a ruleset change resets the
-> clock). The evaluation clock starts here; the trading-day / trade counts below count **from the next
-> market session forward**. Trades before Day 0 are *pre-Day-0 history* — informative, but they do **not**
-> count toward the go-live sample (they were taken under a moving ruleset). *(The single 09-10 trade,
-> −$880 IntoWall, is the loss that motivated the skip — pre-change, doesn't count.)*
+> **Day 0 = 2026-09-13** (reset from 09-10 → 09-05 as robustness fixes landed: IntoWall skip on 09-10, then the
+> regime-known gate + widened chain on 09-13 — each ruleset change resets the clock). The evaluation clock counts
+> **from the next market session forward**. Pre-Day-0 trades are *history* and do **not** count (the only one,
+> the 09-10 −$880 IntoWall loss, motivated these very fixes). *(These are robustness/safety fixes — they make the
+> regime reliable and stop trading blind — not a change to the edge thesis; the clock resets to stay rigorous.)*
 
 ## The frozen ruleset under evaluation (as of Day 0)
 
 Changing any of these **resets the clock** (a go-live sample must test a *frozen* system):
 
-- **Entry:** neg-gamma OR wall-breakout · 15-min OR breakout · 2-bar momentum · low-vol skip (≥0.082) ·
-  **exhaustion gate `Range_Exp_Ratio` < 0.8** · **IntoWall skip** (2026-09-10, `GEX_SKIP_INTOWALL` — skip a
-  setup buying into the nearest heavy wall).
+- **Entry:** neg-gamma OR wall-breakout · **regime-known gate (2026-09-13: skip if `gamma_flip`=None)** · 15-min
+  OR breakout · 2-bar momentum · low-vol skip (≥0.082) · **exhaustion gate `Range_Exp_Ratio` < 0.8** ·
+  **IntoWall skip** (2026-09-10, `GEX_SKIP_INTOWALL` — skip a setup buying into the nearest heavy wall).
 - **Exit:** trailing (arm +35%, **tiered** giveback 60/35/20% by peak band) · **−60% catastrophe** · 15:55 EOD flatten. No fixed stop, no TP.
-- **Known open robustness gap (NOT yet changed):** the live chain fetch caps at `GEX_CHAIN_MAX_STRIKES=50`
-  (~±1.6% of spot), so on trend-down days the gamma flip can fall past the upside edge and `gamma_flip`
-  returns None → `Regime=unknown` (this let 09-10's wall-breakout fire with no regime). Widening the fetch is a
-  candidate fix — flagged, not applied.
+- **Chain fetch:** `GEX_CHAIN_MAX_STRIKES=100` (widened 50→100 on 2026-09-13 — the ±1.6% window let `gamma_flip`
+  return None on trend days → `Regime=unknown`, which let 09-10's wall-breakout fire blind; ~full ±5% now captures the flip).
 - Shared guards: cooldown 30m · circuit breaker 5 · daily loss −$400 · 12 trades/day · anti-cascade.
 
 ## Pre-Day-0 baseline (the honest starting line)
@@ -105,7 +103,7 @@ The strategy must handle every market type — where "handle" includes **correct
 
 ```
 Gate A  Performance         ░░░░░░░░░░  far   (−$615 sleeve, PF<1, 45% WR — target +$10k / PF 1.5 / 65%)
-Gate B  Sample & frozen      ░░░░░░░░░░  Day 0 reset 2026-09-10 (0 of 40 trades, 0 of 30 days)
+Gate B  Sample & frozen      ░░░░░░░░░░  Day 0 reset 2026-09-13 (0 of 40 trades, 0 of 30 days)
 Gate C  Regime coverage      ██░░░░░░░░  chop ✓ (09-04); bull/bear/event pending
 Gate D  Edge validation      ██░░░░░░░░  IntoWall skip live ✓; exhaustion in-sample; PUT leak open
 Gate E  System reliability   ███░░░░░░░  features built; always-on host + 20-clean-sessions pending

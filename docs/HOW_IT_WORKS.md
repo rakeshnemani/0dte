@@ -76,7 +76,9 @@ short-term momentum (`GEX_MOMENTUM_BARS`), **plus** the vol gate, **plus** an **
 (skip if `Range_Exp_Ratio` ≥ `GEX_RANGE_EXP_MAX` = 0.8 — the day's IV-expected move is largely spent;
 mechanical-GEX only, thesis is ungated), **plus an IntoWall gate** (2026-09-10: skip if `Setup_Tag` =
 `IntoWall` — buying into the nearest heavy wall with no runway; `GEX_SKIP_INTOWALL`, mechanical-GEX only;
-IntoWall is 0-3 / −$2,795 live). A setup that forms but fails a condition fires the same
+IntoWall is 0-3 / −$2,795 live), **plus a regime-known gate** (2026-09-13: no mechanical entry when `gamma_flip`
+can't be computed — `Regime=unknown` — so a breakout never fires blind; the chain fetch was widened
+`GEX_CHAIN_MAX_STRIKES` 50→100 so this is rare). A setup that forms but fails a condition fires the same
 throttled skip alert. The live regime is logged every ~5 min.
 
 ## 6. Order execution (single-leg)

@@ -409,6 +409,17 @@ class TradingBot:
         # _collect_gex_data — always-on, so it keeps running while a position is held.)
         direction, reason, indicators, _ = strategy.gex_entry_signal(
             symbol, df, now, gflip, zones)
+        # Regime-known gate (2026-09-13): if gamma_flip couldn't be computed (no net-GEX zero-crossing in
+        # the fetched strikes → Regime unknown), don't fire a mechanical entry. On 09-10 a wall-breakout
+        # fired with Gflip=n/a and took an IntoWall PUT (−$880). The widened chain (GEX_CHAIN_MAX_STRIKES
+        # 50→100) makes 'unknown' rare; when it still happens we skip rather than trade a breakout blind.
+        if direction and gflip is None:
+            logger.info(f"[{symbol}] GEX skip: regime UNKNOWN (gamma_flip=None — flip past the fetched "
+                        f"strike window). Not trading a wall-breakout with no regime confirmation.")
+            self._alert_blocked('gex', symbol,
+                                f"{direction}: full GEX setup formed but SKIPPED — regime UNKNOWN "
+                                f"(no Gflip computed; not trading a breakout blind)")
+            return None, "", {}
         if direction and config.GEX_SKIP_LOWIV > 0:
             ive = strategy.entry_realized_vol(df)      # open→now, no lookahead
             if ive < config.GEX_SKIP_LOWIV:

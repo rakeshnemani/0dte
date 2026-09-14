@@ -210,8 +210,8 @@ def main():
     reg_color = NEG if regime == "negative" else POS
     metrics = [
         ("Spot", f"{spot:.2f}", "#f0c040"),
-        ("Gflip", f"{gflip:.2f}", "#58a6ff"),
-        ("Distance", f"{spot-gflip:+.1f} ({dist:+.2f}%)", reg_color),
+        ("Gflip", f"{gflip:.2f}" if gflip is not None else "n/a", "#58a6ff"),
+        ("Distance", f"{spot-gflip:+.1f} ({dist:+.2f}%)" if gflip is not None else "unknown", reg_color),
         ("Regime", regime.upper(), reg_color),
         ("Net GEX (total)", f"{net_total:,.0f}M", "#ddd"),
         ("Net GEX (0DTE)", f"{net_0dte:,.0f}M", "#ddd"),
@@ -299,7 +299,8 @@ noise zone (the node cluster ± a small buffer) and take the break.</div>
     with open(os.path.join(outdir, "latest.html"), "w") as f:
         f.write(html)
     print(f"✅ wrote {out}")
-    print(f"   spot {spot:.2f} · Gflip {gflip:.2f} ({dist:+.2f}%, {regime}) · "
+    gflip_str = f"{gflip:.2f} ({dist:+.2f}%, {regime})" if gflip is not None else "n/a (regime unknown)"
+    print(f"   spot {spot:.2f} · Gflip {gflip_str} · "
           f"net {net_total:,.0f}M · heaviest support {puts[0][0]:.0f} ({puts[0][1]/1e6:,.0f}M)")
     return 0
 

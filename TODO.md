@@ -125,7 +125,15 @@ past "noise" (learning #10) and the user approved the skip. **Built:** mechanica
 (`test_single_leg.py::test_intowall_gate`). Forward watch: confirm the skip only removes losers (no IntoWall
 winner it would have blocked) — see [docs/GO_LIVE_MECH_GEX.md](docs/GO_LIVE_MECH_GEX.md) Gate D.
 
-**45. Widen the live GEX chain fetch so `gamma_flip` doesn't return None on trend days (robustness, P1).**
+**45. Widen the live GEX chain fetch so `gamma_flip` doesn't return None on trend days — ✅ DONE 2026-09-13.**
+Fixed three ways: (1) **`GEX_CHAIN_MAX_STRIKES` 50→100** (`config.py`) — the ~±1.6% window let the flip fall past
+the upside edge on trend-down days; 100 nearest ≈ the full ±5%, so the crossing is captured (peak data-lines stay
+50, cancelled per batch → only fetch time grows ~48s→~95s). (2) **Regime-known gate** (`bot.evaluate_gex_entry`):
+no mechanical entry when `gamma_flip`=None — don't trade a wall-breakout blind (the 09-10 failure). Tested
+`test_single_leg.py::test_regime_unknown_gate`. (3) **None-safe printing** in `gex_snapshot.py` + `gex_dashboard.py`
+(they crashed formatting `f"{gflip:.2f}"` on None — the "dashboard rebuild failed" errors all day 09-10). Both
+degrade to "n/a / regime unknown" now. ⚠️ Resets the Day-0 eval clock (ruleset change). Original analysis:
+
 Root-caused 2026-09-10: `GEX_CHAIN_MAX_STRIKES=50` caps the fetched chain to the 50 strikes nearest ATM
 (~±1.6% at SPX 5-pt spacing), which **overrides** the `GEX_CHAIN_STRIKE_PCT=0.05` (±5%) intent. On a
 trend-**down** day the net-GEX zero-crossing (the flip) sits at/above the window's upside edge, so `net_gex`

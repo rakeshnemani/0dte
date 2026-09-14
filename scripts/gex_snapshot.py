@@ -94,8 +94,12 @@ def main():
     print("\n" + "=" * 60)
     print(f" GEX SNAPSHOT — {SYMBOL}   (spot {spot:.2f})")
     print("=" * 60)
-    print(f" Gflip        : {gflip:.2f}"
-          + (f"   (spot {dist:+.2f}% vs flip → {regime.upper()} gamma)" if dist is not None else ""))
+    if gflip is None:
+        print(" Gflip        : n/a — no net-GEX zero-crossing in the fetched strikes (thin/stale chain,"
+              " or a trend day where the flip sits past the ±window). Regime UNKNOWN. See TODO #45.")
+    else:
+        print(f" Gflip        : {gflip:.2f}"
+              + (f"   (spot {dist:+.2f}% vs flip → {regime.upper()} gamma)" if dist is not None else ""))
     print(f" Net GEX      : {net_total:,.0f}M total   |   {net_0dte:,.0f}M 0DTE")
     print()
     print(" RESISTANCE ladder (call side, most +GEX, heaviest first):")

@@ -101,13 +101,15 @@ def test_lowvol_gate():
 
 def test_intowall_gate():
     print("\nIntoWall gate — mechanical GEX skips a setup buying INTO the nearest heavy wall (09-10)")
-    import bot as bot_mod
+    import bot as bot_mod, gex as gex_mod
     b = _make_bot(); b.broker = FakeBroker()
     b._gex_chain = [{'strike': 7585, 'oi_call': 1.0, 'oi_put': 1.0, 'iv': 0.2, 'T': 0.001}]  # non-empty
     b._alert_blocked = lambda *a, **k: None
     b.broker.fetch_intraday_data = lambda s: pd.DataFrame({'close': [7600 + 8 * (i % 2) for i in range(30)]})
     b._entry_exhaustion = lambda df: 0.4                       # under the 0.8 exhaustion gate
     orig_sig, orig_erv = strategy.gex_entry_signal, strategy.entry_realized_vol
+    orig_gflip = gex_mod.gamma_flip
+    gex_mod.gamma_flip = lambda *a, **k: 7660.0                # known regime → passes the regime-unknown gate
     strategy.gex_entry_signal = lambda *a, **k: ('PUT', 'GEX PUT: wall-breakout @7600', {}, None)
     strategy.entry_realized_vol = lambda df: 0.15             # clears the 0.082 low-vol gate
     orig_flag = config.GEX_SKIP_INTOWALL
@@ -125,7 +127,34 @@ def test_intowall_gate():
         check("Runway  + gate ON  → trades (only IntoWall is gated)", d == 'PUT')
     finally:
         strategy.gex_entry_signal, strategy.entry_realized_vol = orig_sig, orig_erv
+        gex_mod.gamma_flip = orig_gflip
         config.GEX_SKIP_INTOWALL = orig_flag
+
+
+def test_regime_unknown_gate():
+    print("\nRegime-unknown gate — skip a mechanical entry when gamma_flip=None (2026-09-13)")
+    import gex as gex_mod
+    b = _make_bot(); b.broker = FakeBroker()
+    b._gex_chain = [{'strike': 7585, 'oi_call': 1.0, 'oi_put': 1.0, 'iv': 0.2, 'T': 0.001}]
+    b._alert_blocked = lambda *a, **k: None
+    b.broker.fetch_intraday_data = lambda s: pd.DataFrame({'close': [7600 + 8 * (i % 2) for i in range(30)]})
+    orig_gflip, orig_zones = gex_mod.gamma_flip, gex_mod.concentration_zones
+    orig_sig, orig_erv = strategy.gex_entry_signal, strategy.entry_realized_vol
+    gex_mod.concentration_zones = lambda *a, **k: {'call_walls': [], 'put_walls': []}
+    strategy.gex_entry_signal = lambda *a, **k: ('PUT', 'GEX PUT: wall-breakout @7600', {}, None)
+    strategy.entry_realized_vol = lambda df: 0.15
+    b._entry_exhaustion = lambda df: 0.4
+    b._freeze_gex_context = lambda spot, direction: {'setup_tag': 'Runway', 'regime': 'negative'}
+    try:
+        gex_mod.gamma_flip = lambda *a, **k: None            # regime UNKNOWN
+        d, _, _ = b.evaluate_gex_entry('SPX')
+        check("gflip=None → SKIPPED (won't trade a breakout blind)", d is None)
+        gex_mod.gamma_flip = lambda *a, **k: 7660.0          # regime known → gate passes
+        d, _, _ = b.evaluate_gex_entry('SPX')
+        check("gflip known → passes the regime gate (trades)", d == 'PUT')
+    finally:
+        gex_mod.gamma_flip, gex_mod.concentration_zones = orig_gflip, orig_zones
+        strategy.gex_entry_signal, strategy.entry_realized_vol = orig_sig, orig_erv
 
 
 def test_mae_tracking():
@@ -192,6 +221,7 @@ if __name__ == '__main__':
     test_single_leg_order()
     test_lowvol_gate()
     test_intowall_gate()
+    test_regime_unknown_gate()
     test_mae_tracking()
     test_gex_exit_rules()
     print()

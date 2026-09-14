@@ -131,7 +131,9 @@ The GEX scan runs only inside a `GEX_WINDOWS` slot, on symbols with no open `gex
 1. **Regime** — **spot < Gflip** (negative gamma) **OR** a **wall breakout**: price was at an OI
    concentration wall within the last ~5 bars and has now cleared it in the trade direction (tolerance
    `GEX_WALL_TOL_PCT`, ~0.15% of spot). *(A breakout that forms in positive gamma fires a skip alert:
-   "dealers dampen, breakouts fade".)*
+   "dealers dampen, breakouts fade".)* **Regime-known gate (2026-09-13):** if `gamma_flip` can't be computed
+   (`Regime=unknown` — no net-GEX zero-crossing in the fetched strikes), **no mechanical entry fires** — we don't
+   trade a breakout with no regime confirmation (this is what let 09-10's wall-breakout fire blind → −$880).
 2. **Opening-range breakout** — the latest 1-min close is beyond the **15-minute opening range**
    (`GEX_OR_MINUTES`): above the OR high for a CALL, below the OR low for a PUT (using the more
    significant of the OR level and the prior-session H/L when available).
@@ -183,7 +185,7 @@ those cut a winner at −4% on 08-17 before it ran to +100%. GEX exits *only* vi
 | `GEX_TRAIL_TRIGGER` / `_GIVEBACK` | 0.35 / 0.20 | Trailing stop: arm level / giveback of peak |
 | `GEX_CATASTROPHE_STOP` | 0.60 | Downside backstop (0.80→0.60, 09-02) |
 | `GEX_TAKE_PROFIT` | 0.0 (off) | Optional hard TP (>0 re-enables) |
-| `GEX_CHAIN_STRIKE_PCT` / `_EXPIRIES` / `_MAX_STRIKES` | 0.05 / 3 / 50 | Chain fetch scope |
+| `GEX_CHAIN_STRIKE_PCT` / `_EXPIRIES` / `_MAX_STRIKES` | 0.05 / 3 / **100** | Chain fetch scope (`_MAX_STRIKES` 50→100 on 09-13 so `gamma_flip` doesn't return None on trend days) |
 | `GEX_REFRESH_MIN` | 30 | How often to re-fetch the OI chain |
 
 ---

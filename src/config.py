@@ -95,7 +95,11 @@ GEX_MOMENTUM_BARS = int(os.getenv("GEX_MOMENTUM_BARS", "2"))          # price mo
 GEX_WALL_TOL_PCT = float(os.getenv("GEX_WALL_TOL_PCT", "0.0015"))     # "at a wall" tolerance (~0.15% of spot)
 GEX_CHAIN_STRIKE_PCT = float(os.getenv("GEX_CHAIN_STRIKE_PCT", "0.05"))  # fetch strikes within ±5% of spot
 GEX_CHAIN_EXPIRIES = int(os.getenv("GEX_CHAIN_EXPIRIES", "3"))        # nearest N expirations to include
-GEX_CHAIN_MAX_STRIKES = int(os.getenv("GEX_CHAIN_MAX_STRIKES", "50")) # cap strikes nearest ATM (data-line budget)
+# Widened 50→100 on 2026-09-13: at 50 (~±1.6% at SPX 5-pt spacing) the net-GEX zero-crossing (Gflip) fell
+# PAST the window edge on trend days → gamma_flip=None → Regime=unknown (this let 09-10's wall-breakout fire
+# with no regime → −$880 IntoWall). 100 nearest ≈ the full ±5% window, so the flip is captured. Peak data-lines
+# stay 50 (cancelled per batch in fetch_gex_chain) — only fetch TIME grows (~48s→~95s, fine at a 30-min refresh).
+GEX_CHAIN_MAX_STRIKES = int(os.getenv("GEX_CHAIN_MAX_STRIKES", "100")) # strikes nearest ATM (see note above)
 GEX_REFRESH_MIN = int(os.getenv("GEX_REFRESH_MIN", "30"))            # re-fetch OI chain every N min (OI is ~static intraday)
 
 # ── Thesis-GEX command rail (TODO #44) ───────────────────────────────────────
