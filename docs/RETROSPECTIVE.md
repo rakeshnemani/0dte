@@ -149,6 +149,36 @@ regime's sample.
 
 ---
 
+## 2026-09-14 (Mon) — ⚪ 0 trades on a gap-down-then-run — exhaustion gate blocked the fade; BOTH new fixes validated live
+
+**The user called the gap-down (−59, even bigger than the 25–50 guessed). 0 trades — and the gate that stopped
+the one setup was right.** Also the first live proof of both 09-13 fixes.
+
+**The day:** Fri close 7659 → **gapped down to 7600** (open) → low **7593** (~10:52) → **ran up to 7647 by 12:57
+ET** → faded to close **7620** (net +20 from the open, −39 from Fri; range 53). **Negative gamma all day (77/77)**
+— the gap flipped it below the 7654 pivot, exactly as the pre-open map said.
+
+**Why no trade during the 12–13 ET run (the user asked):** a CALL OR-breakout formed ~12:15, but the **exhaustion
+gate blocked it** — `Range_Exp` had hit **1.13→1.20** (day already realized 113–120% of its IV-expected move: the
+−59 gap + the +54 run spent the range fast). Correct call: the run **peaked 7647 at 12:57 then faded to 7620
+close**, so a CALL there scratches/loses. Earlier setups failed the momentum (2-bar) and low-vol gates. Tallies:
+44 low-vol · 25 exhaustion · 24 no-momentum · 5 kauf · **1 IntoWall**.
+
+**Both 09-13 fixes confirmed working LIVE (this is the day that would have broken the old code):**
+- **Regime-known:** `Regime=unknown` fired **0 times** — Gflip computed cleanly all day (~7657) even though spot sat
+  ~30 pt *below* the flip in negative gamma, the exact shape that returned None before the `GEX_CHAIN_MAX_STRIKES`
+  50→100 widen. ✅
+- **IntoWall skip:** fired **once** — first live trigger; the bot refused a setup buying into a wall instead of
+  taking it. ✅
+
+**So today's 0 trades was correct on every count:** the gap is exogenous (untradeable), the run was an *exhausted*
+neg-γ bounce that faded (gate blocked it rightly), and the one IntoWall setup was correctly skipped. Capital
+preserved on a day that looked tradeable but wasn't.
+
+**Eval tally: Day-0 (reset 09-13) session 1 of ≥30 · still 1 lifetime trade · book flat.**
+
+---
+
 ## 2026-09-11 (Fri) — ⚪ 0 trades on a green gap-up — the positive-γ blind spot again, but a *cheap* miss this time
 
 **The user called it — gap up, stay green — and was right: prior close 7590 → gapped +69 to 7659 → closed green

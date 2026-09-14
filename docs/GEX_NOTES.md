@@ -177,12 +177,24 @@ predicts tomorrow" test (that mostly failed) — same-morning-of is a different,
 whether the *levels* are reliable enough to pre-frame a thesis (they needn't predict *direction* — the human/again-
 at-9:45 read supplies that).
 
+**Score so far (as of 2026-09-14): 5/5** pre-open calls correctly identified the day's **pivot / key level**, with
+the mapped level landing **~1–10 pt from the actual turn/low** (09-08 mapped 7675→low 7674 = 1pt · 09-09 7630→7627
+= 3pt · 09-10 7600→pinned ±10pt · 09-11 flip 7661→gapped to 7659 = 2pt · 09-14 support 7600→low 7593 = 7pt).
+**Mean |miss| ≈ 4–5 pt.** ⚠️ **Scope — narrower than it looks:** this scores the level *in the direction price
+actually travelled*. The **opposite-direction level was UNTESTED every day** (resist on the 4 down-days, support on
+09-11's up-day) — neither confirmed nor refuted. And 4 of 5 were down-days, so it's mostly a *downside/support*
+result. Also: the pre-open "spot" ≈ prior close (cash index not live pre-mkt), so the actual open gapped far from
+it (09-11 mapped 7591 → opened 7659; 09-14 mapped 7657 → opened 7600) — the map calls *levels*, not the gap or the
+open. On 09-11 the minor resist nodes (7630/35) were blown through; the **flip pivot** is the reliable call, plus
+the heavy support walls. So: a promising **one-sided pre-framing** tool, not yet a validated two-sided predictor.
+
 | Date | Pre-open call (pivot / support / cap) | Actual O/H/L/C | Held? |
 |------|----------------------------------------|----------------|-------|
 | 2026-09-08 | pivot **7709** · support **7675** · cap **7750** ("below 7709 → down to 7675; more room down than up") | 7706 / 7706 / **7674** / 7674 | ✅ opened below pivot → took the down branch; **low 7674 = 7675 support to the tick**; cap untested (never rallied) |
 | 2026-09-09 (CPI day) | flip **7697** · **NEG gamma** (spot 7673 *on* the heavy 7675 support) · support stack 7675/7650/7630/7600 · resist 7720/7730 ("break 7675 → 7650/7630; reclaim 7697 → 7720/7730") — ⚠️ provisional, 8:30 CPI can override | 7651 / 7654 / **7627** / 7638 | ✅ gapped **through** 7675 → walked to 7650 → **stalled at 7627 (the 7630 node) all afternoon**; support ladder nailed. Caveat: "break 7675" was the *overnight gap* (macro), not a tradeable intraday break |
 | 2026-09-10 | flip **7672** · **NEG gamma** (spot 7636, thin patch) · nearer support 7620/7625 · **heavy floor 7600 (−2,424M)** · resist 7680/7720 ("break 7620/25 → 7600; reclaim 7672 → 7680") | 7603 / 7610 / **7590** / 7590 | ✅ gapped to 7600 overnight → **oscillated 7590–7610 around the 7600 wall all day, closed 7590**; the mapped heavy floor WAS the battleground. ⚠️ the bot traded a PUT *into* 7600 (IntoWall) and lost −$880 — map right, trade wrong |
 | 2026-09-11 | flip **7661** · deep **NEG gamma** (spot 7591, −0.90%) · heavy support 7550/7500 · thin resist 7630/7635 ("gap-up has clear air to the 7661 flip = the neg-γ-long vs pos-γ-grind pivot; user expects gap-up & green") | 7659 / 7676 / 7652 / 7659 | ✅✅ **gapped +69 straight to the 7661 flip, reclaimed it → POSITIVE γ all day → mech sat out** (6 CALL-breakout skips) — the *pivot* call was exact. Intraday flat after the gap (range 23) so the sit-out was ≈neutral, not a costly miss |
+| 2026-09-14 | flip **7654** · thin **POSITIVE γ** (spot 7657 *on* the flip, +0.03%) · support 7625/7600 · resist 7675/7720 ("pivot 7654: below → neg-γ + 7625/7600; user guesses 25-50pt gap DOWN") | 7600 / 7647 / **7593** / 7620 | ✅ **gapped DOWN −59 through the 7654 pivot → NEG γ all day → into the 7600 support** (low 7593, 7pt past); user's gap-down right (bigger). Ran up midday but exhaustion-gated. Regime computed all day (fix ✅), 1 IntoWall skip (fix ✅) |
 
 **Read after enough rows:** if the pre-open levels keep holding (pivot acts as the day's fulcrum, walls cap/floor
 the extremes), promote the pre-market snapshot to a **standing step in the daily workflow** (CLAUDE.md) and lean on
