@@ -18,6 +18,10 @@ WHEN TO RUN IT
 
 USAGE
     python scripts/gex_snapshot.py [SYMBOL]        # default SPX
+    python scripts/gex_snapshot.py SPX --no-discord   # skip the Discord map post
+
+By default it also POSTS the day's map (pivot + nearest walls) to the Discord webhook (the same
+channel the bot alerts to), so the levels land on the phone right after the snapshot. `--no-discord` mutes it.
 """
 import asyncio
 asyncio.set_event_loop(asyncio.new_event_loop())
@@ -33,9 +37,12 @@ config.IBKR_CLIENT_ID = 13          # distinct from bot=1 / reconcile=9 / backfi
 import csv                          # noqa: E402
 import gex                          # noqa: E402
 import market_time                  # noqa: E402
+import notifier                     # noqa: E402
 from broker import IBKRBroker       # noqa: E402
 
-SYMBOL = sys.argv[1] if len(sys.argv) > 1 else "SPX"
+_args = [a for a in sys.argv[1:] if not a.startswith("-")]
+SYMBOL = _args[0] if _args else "SPX"
+POST_DISCORD = "--no-discord" not in sys.argv    # posts the map to Discord by default; --no-discord to mute
 GEX_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "gex")
 
 
@@ -58,6 +65,32 @@ def _save_chain(symbol, spot, chain):
                         c["strike"], int(c["oi_call"]), int(c["oi_put"]),
                         round(c["iv"], 4), round(c["T"], 6)])
     return path
+
+
+def _post_map_to_discord(symbol, spot, gflip, regime, calls, puts, net_total):
+    """Post the day's GEX map (pivot + nearest walls) to the Discord webhook — same channel the bot
+    alerts to — so it lands on the phone right after the pre-market snapshot. Best-effort: never
+    breaks the snapshot if Discord is down or unconfigured."""
+    if not config.DISCORD_WEBHOOK_URL:
+        print(" (no DISCORD_WEBHOOK_URL — map not posted to Discord)")
+        return
+    try:
+        res = sorted(k for k, _ in calls if k > spot)[:3]                 # nearest resistance above
+        sup = sorted((k for k, _ in puts if k < spot), reverse=True)[:3]  # nearest support below
+        pivot = f"{gflip:.0f} ({regime})" if gflip is not None else "n/a (regime unknown)"
+        now = market_time.now_et()
+        desc = (f"**Pivot (Gflip):** {pivot}\n"
+                f"**Resistance ↑:** {' · '.join(f'{k:.0f}' for k in res) or '—'}\n"
+                f"**Support ↓:** {' · '.join(f'{k:.0f}' for k in sup) or '—'}\n"
+                f"**Net GEX:** {net_total:,.0f}M\n"
+                f"*spot {spot:.0f} @ {now:%H:%M} ET · levels firm up after the open — refine ~9:45.*")
+        color = (0x2ecc71 if regime == "negative" else       # green = neg-γ (momentum)
+                 0xf1c40f if regime == "positive" else        # amber = pos-γ (dampen)
+                 0x95a5a6)                                     # gray  = regime unknown
+        notifier.send(f"🗺️ {symbol} GEX Map — {now:%Y-%m-%d}", desc, color)
+        print(" 🗺️ map posted to Discord (--no-discord to mute)")
+    except Exception as e:
+        print(f" (Discord map post skipped: {e})")
 
 
 def main():
@@ -125,6 +158,8 @@ def main():
     print("=" * 60)
     print(f" saved chain snapshot → {os.path.relpath(saved)}")
     print(" render the visual:     python scripts/gex_dashboard.py")
+    if POST_DISCORD:
+        _post_map_to_discord(SYMBOL, spot, gflip, regime, calls, puts, net_total)
     return 0
 
 

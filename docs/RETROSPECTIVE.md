@@ -149,6 +149,70 @@ regime's sample.
 
 ---
 
+## 2026-09-16 (Wed) — 🟢 +$350: FIRST Day-0 eval trade, a clean neg-γ CALL — and the trail SAVED it from a crash
+
+**Finally a mover (range 109pt!), and mechGEX did exactly what it's built for.** First trade of the frozen-ruleset
+eval (Day 0 = 09-13), and it's green.
+
+**The trade:** 09:51 BUY SPXW **7610 CALL @ $23.10** — signal *neg-γ (spot<Gflip) · broke OR-high 7609 · 2-bar
+accel ↑ · entry-vol 0.091 · Setup=Runway · Rexp 0.205*. Every gate clean; mechGEX's actual wheelhouse (neg-γ
+momentum long). 12:06 SELL **@ $26.60, +15.15% / +$350** on the trailing stop (*peaked +38%, gave back to +15%*).
+
+**The trail didn't just "follow our logic" — it SAVED the trade.** After the +15% exit at 12:06, **SPX reversed
+hard: 7624 hi → 7514 lo, closed 7550** (a −110pt collapse). Holding the CALL would have gone from +38% peak to
+near-total loss (spot ended 60pt *below* the 7610 strike). The trail banked the green *before* the reversal. This
+is the convex-tail exit earning its keep on the downside-protection side, not just the runner side.
+
+**The nuance the user flagged (peaked +38%, sold +15%):** that's the tiered giveback — in the [35–50%) band the
+giveback is a loose **60%** (floor = peak×0.40 = ~15%). A *tighter* band would've captured ~+30% here (~$700). But
+the loose low-band exists to not choke trend-day runners past +50%; today peaked only +38% so it gave back more.
+Trade-off, and today it still won *and* dodged the crash — fine. (CLAUDE.md's standing note: tighten/raise the arm
+once entries are proven; not yet.)
+
+**⚠️ Big design finding for R<P / mapAndCompass:** this winner would have been **SKIPPED by the *simple* R<P floor.**
+Premium was **$23.10** (23 pts) but the nearest resistance was only ~10–15pt away → R/P < 1 → "can't clear the
+premium." Yet it **peaked +38% on a mere +14pt move** (7610→7624) — because an ATM 0DTE option profits from
+**delta**, not just intrinsic, when sold intraday. **Proof the expiry-intrinsic R<P floor is too conservative and
+would kill real winners** — the **BS-projection** version (which credits delta + time value) is the *necessary*
+one, not the simple floor. Logged in the mapAndCompass doc.
+
+**Eval tally: Day-0 (09-13) session 3 · FIRST eval trade · +$350 (1W/0L) · book +$350.** The pattern holds: skip
+the grinds/IntoWall days (09-08→15), trade the mover — and the mover paid.
+
+---
+
+## 2026-09-15 (Tue) — ⚪ 0 trades — a 30pt drop ran a *gauntlet* of gates; IntoWall fired 4× on the mapped wall
+
+**A real 30pt morning drop (7605 → 7575) and still no trade — because it hit every gate in sequence, each rightly.**
+The clearest demo yet of the gate stack working together, and the IntoWall gate earning its keep.
+
+**The day:** open 7605 (on the 7600/7595 mega-support I'd flagged pre-open, ≈ −5.2B) → held to ~10:00 → **dropped to
+7575 by 10:52** → bounced and chopped 7575–7583 → close **7581** (net −24, range 34). Negative γ all day.
+
+**Why the drop didn't trade — a cascade, not one blocker:**
+- **10:01** trend PUT flip → **kauf 70 > 50** (choppy, not a clean trend).
+- **10:07–10:12** GEX PUT → **IntoWall ×4** — the PUT was diving *into* the 7600/7595 wall (no runway). The new
+  gate did exactly what the morning map predicted ("a PUT here = IntoWall/skip").
+- **10:14–10:28** GEX PUT → **exhaustion** (Range_Exp 0.83 → 1.07 — the 30pt drop spent the day's expected move).
+- throughout: **79 low-vol + 24 no-momentum** skips (slow grind, not an impulse).
+
+**Was it right? Yes.** The drop bottomed at 7575 (only ~15pt past the wall), then bounced/chopped to a 7581 close —
+no follow-through. A PUT mid-drop would've scratched. The move was *spent, into a wall, and slow* — exactly the
+shape the gates refuse.
+
+**Map scorecard: another hit** — flagged the 7600 wall pre-open; price broke <7595 to the next support (7575/7580),
+stalled, bounced — as mapped. IntoWall fired 4× right on it. (Pre-market watch updated.)
+
+**The honest tension (worth stating plainly):** this is a long run of correct no-trade days — the regime keeps
+producing the *same shape* (drops into heavy support walls, slow + self-exhausting), so mechGEX correctly but
+**very rarely** trades. Capital preserved (0-trade > red day), but the sample barely grows — and the strategy
+still needs *movement it can catch* (a fast break with runway, not a grind into a wall) to ever prove an edge.
+This is the argument for the **mapAndCompassGEX** direction work, not for loosening a gate.
+
+**Eval tally: Day-0 (09-13) session 2 of ≥30 · still 1 lifetime trade · book flat.**
+
+---
+
 ## 2026-09-14 (Mon) — ⚪ 0 trades on a gap-down-then-run — exhaustion gate blocked the fade; BOTH new fixes validated live
 
 **The user called the gap-down (−59, even bigger than the 25–50 guessed). 0 trades — and the gate that stopped

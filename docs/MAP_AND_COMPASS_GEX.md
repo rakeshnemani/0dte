@@ -33,7 +33,12 @@ uses GEX only for the target/runway — the part that's actually proven.
      hold time-to-expiry); if `projected_value ≤ premium + fees + margin`, skip. This is the quantified upgrade of
      the binary IntoWall tag — from "is there runway?" to "is the runway worth the premium?"
 4. **Inherited gates** — keep low-vol skip (dead chop), exhaustion skip (spent move), and a **regime-known**
-   requirement (Gflip must compute). IntoWall becomes subsumed by the viability gate (no-runway = fails viability).
+   requirement (Gflip must compute). **Keep IntoWall TOO — it is NOT subsumed by R<P** (corrected 2026-09-15): the
+   two catch *different* failure modes. IntoWall = "heaviest wall is against you → bounce-back" (08-18 R/P 6.20,
+   08-19 R/P 1.57 — big runway to the nearest wall, but the heavy wall was *above* and bounced them; R<P misses
+   these). R<P = "target too close to clear the premium" (08-28 R/P 0.60 — Runway-tagged, so IntoWall misses it).
+   Only 09-10 overlaps. On the logged mech trades: IntoWall-only book +$1,300, R<P-only +$260, **both +$2,175
+   (5W/3L, no winners cut)**. So R<P goes *alongside* IntoWall, never replacing it.
 5. **Stop / invalidation** — candidate: price falls back inside the OR (the break failed). TBD.
 
 **Exit:** convex-tail trailing (arm +35%, tiered giveback) + −60% catastrophe + EOD flatten — **identical to
@@ -64,6 +69,15 @@ evidence phase.**
      *mechanical* catch beyond IntoWall is just 08-28 −$875; 09-01 is thesis/ungated); and this is the
      conservative expiry-intrinsic floor — the **BS-projection** version would pin the real intraday threshold
      (likely a bit above P, since delta<1 + theta mean you need R somewhat > P to actually profit).
+   - **⚠️ CONFIRMED 2026-09-16 — the simple R<P floor is TOO CONSERVATIVE and WOULD KILL WINNERS.** The 09-16
+     mechGEX CALL won **+$350** (peaked +38%) on a **+14pt move** — but its premium was **$23.10** and the nearest
+     resistance was only ~10–15pt away, so **R<P would have skipped it.** An ATM 0DTE option profits from **delta**
+     (not intrinsic) when sold intraday, so a move *short of the wall* can still be a big % gain. **Takeaway: do
+     NOT ship the intrinsic R<P floor — only the BS-projection version** (which credits delta + time value at the
+     target spot) is safe. The floor is a *skip-only-if-even-BS-can't-clear* backstop, not the gate itself.
+   - **And R<P does NOT replace IntoWall** (backtested 2026-09-15): they catch different failure modes (IntoWall =
+     heavy wall against you → bounce; R<P = target too close to pay). Mech book: IntoWall-only +$1,300, R<P-only
+     +$260, **both +$2,175**. Use them together, never one instead of the other.
 2. **Chain+regime backtest — ⚠️ DONE 2026-09-14, RESULT CAUTIONARY (and P&L unreliable).**
    Simulated OR-break entries + BS-reconstructed convex-tail P&L across 19 days (`scratchpad/mac_backtest.py`).
    - **P&L is untrustworthy** — 0DTE ATM options reconstructed via BS on **5-min bars** are hyper-sensitive, so the

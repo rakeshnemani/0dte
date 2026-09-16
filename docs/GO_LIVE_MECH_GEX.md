@@ -4,6 +4,9 @@ The go-live gate **specifically for the mechanical `gex:SPX` sleeve** (not thesi
 Live money is switched on only when **every gate passes** — not when a good week feels convincing.
 This is the philosophy of [GO_LIVE.md](GO_LIVE.md), scoped to one strategy and re-based to a frozen ruleset.
 
+> **📊 Live scoreboard: `python scripts/go_live_status.py`** — per-eval-trade net-P&L ledger and the current
+> pass/fail of every numeric gate below. Run it any time to see how close we are.
+
 > **Day 0 = 2026-09-13** (reset from 09-10 → 09-05 as robustness fixes landed: IntoWall skip on 09-10, then the
 > regime-known gate + widened chain on 09-13 — each ruleset change resets the clock). The evaluation clock counts
 > **from the next market session forward**. Pre-Day-0 trades are *history* and do **not** count (the only one,

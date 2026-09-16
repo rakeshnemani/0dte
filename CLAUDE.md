@@ -160,7 +160,8 @@ restarted** (state is in-memory).
   the gamma-weighted support/resistance ladders, and the strike-by-strike shelf). Own clientId (13), runs
   alongside the bot. Reuses `broker.fetch_gex_chain` + `src/gex.py`, and **saves the fetched chain to
   `data/gex/chain_<date>.csv`** (same format the bot writes) so `gex_dashboard.py` can render it standalone.
-  **Run ~9:45–10:15 ET** (0DTE OI builds after the open; weekend/pre-market returns a stale/thin chain — and
+  **Also posts the day's map (pivot + nearest walls) to the Discord webhook by default** (2026-09-14; `--no-discord`
+  to mute) so the levels reach the phone right after the run. **Run ~9:45–10:15 ET** (0DTE OI builds after the open; weekend/pre-market returns a stale/thin chain — and
   running the *bot* on the weekend does nothing, it only collects GEX during market hours).
 - `scripts/gex_dashboard.py [YYYY-MM-DD]` — **visual** GEX dashboard from a saved `data/gex/chain_*.csv`
   (default: latest). Renders **`data/gex/dashboards/dashboard_<date>.html`** — a net-GEX-by-strike bar chart
@@ -170,6 +171,9 @@ restarted** (state is in-memory).
   a browser left open stays live. Offline (reads the CSV, no IBKR); reuses `src/gex.py`. **The bot regenerates
   it every ~5 min during the session** (in `_collect_gex_data`) and once at EOD — so it's effectively
   real-time. (Serve `data/gex/dashboards/` over a tunnel/Tailscale to view it on a phone.)
+- `scripts/go_live_status.py [DAY0]` — **mechanical-GEX go-live scoreboard**: per-eval-trade net-P&L ledger + the
+  live status of every numeric gate (+$10k fee-adj / PF≥1.5 / 65%WR / 40 trades / 30 days / ≤$2.5k drawdown).
+  Reads `audit.csv`, filters mech-`gex` trades from Day 0 (2026-09-13). This is where to see "how close to go-live."
 - `scripts/backfill_permid.py` — retro-fill `PermId` on recent audit rows (~24h window).
 - `scripts/build_dashboard.py` — `audit.csv` → `dashboard.xlsx`.
 - `scripts/counterfactual.py SYMBOL HH:MM` — "what did SYMBOL do after this ET time?" (retro helper).
