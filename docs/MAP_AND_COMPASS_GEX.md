@@ -75,6 +75,10 @@ evidence phase.**
      (not intrinsic) when sold intraday, so a move *short of the wall* can still be a big % gain. **Takeaway: do
      NOT ship the intrinsic R<P floor — only the BS-projection version** (which credits delta + time value at the
      target spot) is safe. The floor is a *skip-only-if-even-BS-can't-clear* backstop, not the gate itself.
+     **2nd confirmation 2026-09-18:** the 09-18 PUT (premium $10.50, nearest support 7625 only ~10pt away → R/P
+     0.95 < 1) would ALSO have been skipped by the floor — yet it made **+104%** (moved 21pt, blew through 7625 to
+     7614) → +$860. **BOTH Day-0 eval winners (09-16 CALL, 09-18 PUT) would have been killed by the intrinsic
+     floor.** Ship only the BS-projection version.
    - **And R<P does NOT replace IntoWall** (backtested 2026-09-15): they catch different failure modes (IntoWall =
      heavy wall against you → bounce; R<P = target too close to pay). Mech book: IntoWall-only +$1,300, R<P-only
      +$260, **both +$2,175**. Use them together, never one instead of the other.

@@ -149,6 +149,68 @@ regime's sample.
 
 ---
 
+## 2026-09-18 (Fri) — 🟢 +$860: neg-γ PUT caught the early drop, trail banked +82% of a +104% peak before the recovery
+
+**A green *close*, but we made $860 on a PUT — because we caught the early DOWN-leg and the trail exited before the
+V-shaped recovery.** 2nd eval trade, 2nd winner. Eval now **2W/0L, +$1,203 (12% to $10k)**.
+
+**The trade:** 09:50 BUY SPXW **7635 PUT @ $10.50** — signal *neg-γ (spot<Gflip) · broke OR-low 7638 · 2-bar accel
+↓ · entry-vol 0.087 · Setup=Runway · Rexp 0.61*. Clean, on-thesis (matched the morning "break <7625 → down"
+branch). 10:06 SELL **@ $19.10, +81.90% / +$860** — trailing stop, *peaked +104%, gave back to +82%*.
+
+**What went right (a lot):**
+- **Entry nailed the map's down-branch:** spot fell 7646 → **7614** (through the 7625 support toward the mapped
+  7600) in the first 30 min; the PUT rode it to **+104%**.
+- **The tiered trail's HIGH band did exactly its job:** at a +104% peak the giveback tightens to 20% (floor
+  peak×0.80 = 83%), so it captured **+82%** — a *tight* hold on a big winner, the opposite of the loose low-band.
+  This is the tiered design paying off: loose early (don't choke), tight once it's a monster.
+- **Exited before the reversal (again):** banked $860 at 10:06, then SPX **recovered to close 7650** (green, back
+  above the 7635 strike). Holding = the PUT decays to near-nothing. **2nd straight day the trail saved the trade
+  from a V-reversal** (yesterday's CALL, today's PUT).
+
+**What we may have missed — honestly, very little:**
+- Gave back +104% → +82% (22 pts of peak). But that's the *designed* 20% high-band giveback; capturing the exact
+  +104% needs a TP (we reject — it caps the tail) or a tighter trail (hurts other days). +82% capture is excellent.
+- After the exit the day recovered to a green close, but **no CALL fired** — the recovery never broke the OR *high*
+  (stayed below) and was a slow, choppy grind (60 low-vol + 22 no-momentum skips). So no clean second-trade miss.
+
+**R<P finding — 2nd confirmation the intrinsic floor is TOO aggressive:** this PUT's premium was $10.50 and the
+nearest support target (7625) was only ~10pt away → **R/P 0.95 < 1 → the simple R<P floor would have SKIPPED it** —
+yet it made **+104%** (moved 21pt, blew *through* the 7625 target to 7614). **Both eval winners so far (09-16 CALL,
+09-18 PUT) would have been killed by the intrinsic floor.** Only the BS-projection version is safe. Logged in the
+mapAndCompass doc.
+
+**Eval: Day-0 session · 2nd trade · +$860 · 2W/0L, +$1,203.** The pattern holds beautifully: skip the grinds/walls,
+trade the clean neg-γ breakout, let the tiered trail bank the convex tail before the reversal.
+
+---
+
+## 2026-09-17 (Thu) — ⚪ 0 trades — the selloff REVERSED (+91), and the positive-γ blind spot ate it (4th time)
+
+**"Understandable" — but let's be precise: this wasn't a quiet chop day, it was a volatile REVERSAL up-day the
+bot is structurally blind to.** The week-long selloff flipped: pre-market ~7551 → **gapped up +83 to open 7634**
+(above the 7617 flip → **positive gamma**) → dipped to **7552** → recovered to **close 7642** (+91 vs prior close,
+range 91).
+
+**Why no trades:** **positive gamma all day (1/77 neg)** → the regime gate refused **4 CALL breakouts** ("dealers
+dampen, breakouts fade") + 7 trend flips on **kauf > 50** (the V-shape read as choppy). No low-vol/exhaustion/IntoWall
+skips — purely the **positive-γ regime gate**.
+
+**This is the H5 blind spot, 4th instance (08-27 · 09-03 · 09-11 · 09-17).** The bot only goes long in *negative*
+gamma; a gap-up that opens *above* the flip → positive γ → it refuses every CALL. The day closed at its high (+90
+off the 7552 low), so a CALL on the recovery would've won — *but* the V-shape (gap up, −82 dip, then recover) was
+genuinely messy (kauf > 50), so it's a *harder* miss than 09-03's clean trend. Still: **not a correctly-dodged
+chop day — a missed reversal.** Exactly what **mapAndCompassGEX** (direction from the OR, not the regime) exists to
+catch. n now 4 on this pattern.
+
+**Map note:** the +83 gap made the pre-open *direction* call moot (gaps are exogenous), BUT the mapped **7550
+support held to the tick** (low 7552) and price bounced from it back through the flip — the *level* was accurate
+even across the gap. (Pre-market watch updated.)
+
+**Eval: no eval trade (0 trades). Book stays +$350 (1 trade).** `python scripts/go_live_status.py` for the board.
+
+---
+
 ## 2026-09-16 (Wed) — 🟢 +$350: FIRST Day-0 eval trade, a clean neg-γ CALL — and the trail SAVED it from a crash
 
 **Finally a mover (range 109pt!), and mechGEX did exactly what it's built for.** First trade of the frozen-ruleset
