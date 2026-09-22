@@ -51,7 +51,7 @@ def main():
     n = len(ev); nw = len(wins)
     wr = nw / n
     gp, gl = sum(wins), abs(sum(losses))
-    pf = (gp / gl) if gl > 0 else float("inf")
+    pf = (gp / gl) if gl > 0 else None       # None = no losses yet → PF undefined (not a real pass)
     peak_eq = 0.0; dd = 0.0
     for c in curve:                       # max peak-to-trough drawdown of the equity curve
         peak_eq = max(peak_eq, c); dd = max(dd, peak_eq - c)
@@ -61,15 +61,17 @@ def main():
         f = max(0.0, min(1.0, frac)); return "█"*int(f*10) + "░"*(10-int(f*10))
     def mark(ok): return "✅" if ok else "  "
 
+    pf_ok = pf is not None and pf >= TARGET_PF     # undefined (no losses yet) is NOT a pass
+    pf_str = f"{pf:.2f}" if pf is not None else "n/a"
     print("\n GATE STATUS")
     print(f"  {mark(cum>=TARGET_PNL)} Cumulative net P&L : {cum:>+8.0f} / +{TARGET_PNL:,.0f}   {bar(cum/TARGET_PNL)}  ({cum/TARGET_PNL*100:.1f}%)")
-    print(f"  {mark(pf>=TARGET_PF)} Profit factor      : {('inf' if pf==float('inf') else f'{pf:.2f}'):>8} / ≥{TARGET_PF}")
+    print(f"  {mark(pf_ok)} Profit factor      : {pf_str:>8} / ≥{TARGET_PF}" + ("   (no losses yet)" if pf is None else ""))
     print(f"  {mark(wr>=TARGET_WR)} Win rate           : {wr*100:>7.0f}% / ≥{TARGET_WR*100:.0f}%   ({nw}W/{n-nw}L)")
-    print(f"  {mark(cum/n>0)} Expectancy/trade   : {expectancy:>+8.0f}  (net)")
     print(f"  {mark(dd<=MAX_DD)} Max drawdown       : {dd:>8.0f} / ≤{MAX_DD:,.0f}")
+    print(f"     Expectancy/trade   : {expectancy:>+8.0f}  (info — net P&L ÷ trades, not a separate gate)")
     print(f"  {mark(n>=TARGET_TRADES)} Trades             : {n:>8} / {TARGET_TRADES}   {bar(n/TARGET_TRADES)}")
     print(f"  {mark(len(days)>=TARGET_DAYS)} Trading days       : {len(days):>8} / {TARGET_DAYS}   {bar(len(days)/TARGET_DAYS)}")
-    passed = sum([cum>=TARGET_PNL, pf>=TARGET_PF, wr>=TARGET_WR, dd<=MAX_DD, n>=TARGET_TRADES, len(days)>=TARGET_DAYS])
+    passed = sum([cum>=TARGET_PNL, pf_ok, wr>=TARGET_WR, dd<=MAX_DD, n>=TARGET_TRADES, len(days)>=TARGET_DAYS])
     print(f"\n  → {passed}/6 numeric gates passed. Full checklist (regime/reliability): docs/GO_LIVE_MECH_GEX.md")
     print(f"  → NOT live until every gate passes. This is the paper eval scoreboard.\n")
     return 0

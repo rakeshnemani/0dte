@@ -149,6 +149,62 @@ regime's sample.
 
 ---
 
+## 2026-09-22 (Tue) — ⚪ 0 trades — deep-pos-γ PIN, and this time sitting out was CORRECT (the discriminator worked)
+
+**Same "0 trades, pos-γ CALL skips" as yesterday — opposite verdict, and the pre-open read called it right.**
+Yesterday (09-21) was thin-pos-γ + catalyst → +118 trend → *wrongly* sat out. **Today was deep-pos-γ pin → 22-pt
+chop → *correctly* sat out.** The distinction the map drew pre-open held.
+
+**The day:** open 7780 (right at the 7780 peak call wall) → chopped **7758–7780** → close 7768. **net −12, range
+just 22.** Positive gamma all day (0/77). 29 CALL breakouts refused ("breakouts fade") + 5 kauf — and every refusal
+was **right**: chasing a CALL into the 7780 mega-wall in deep positive γ (+30B net) would've been an IntoWall fade.
+
+**Why this matters (the discriminator is real):** pre-open I split the two pos-γ cases —
+- **thin margin + catalyst** (09-21, spot on the flip) → *trend* → the blind-spot MISS,
+- **deep margin + huge net GEX** (today, +44 above flip, +30B) → *pin/chop* → the CORRECT skip.
+
+Both played out exactly. **So the pos-γ blind spot is NOT "always a miss"** — on deep-pos-γ pin days the regime
+gate is *right*. This is a key constraint for any future mapAndCompass fix: it must **only** take the *thin-margin
++ catalyst* pos-γ trend, not churn CALLs into deep-pos-γ pin days like today (that'd bleed). The fix has to be
+selective on margin-to-flip + net-GEX size, not "trade all pos-γ up days."
+
+**Does NOT add to the H5 miss log** (that's for *missed trends* — 09-03/11/17/21). Today was a correct skip, so
+the tally stays n=4.
+
+**Eval: 0 trades, unchanged 2W/0L, +$1,203.** A good day to sit out, and the machine did.
+
+---
+
+## 2026-09-21 (Mon) — ⚪ 0 trades on a +118 TREND-UP — the positive-γ blind spot at its WORST (#5); user right, my wall-read wrong
+
+**The clearest, most costly miss of the whole forward test — and two candid corrections.**
+
+**The day:** gap up +44 → open **7694** → ran *through* 7700 by 09:51 → **trended to 7777** → close **7768**
+(+118 vs prior close, **+74 intraday**, range 83). **Positive gamma all day (0/75 neg).** mechGEX refused **32
+CALL breakouts** ("dealers dampen, breakouts fade") + 8 kauf. No exhaustion/IntoWall — purely the regime gate.
+
+**Correction #1 — the user was RIGHT, I was WRONG.** He called "opens or runs to 7700"; it hit 7700 at 09:51 and
+**blew clean through to 7777.** My pre-open read said 7700 was "the top of the call-wall stack, a magnet/cap it
+stalls at — pin/fade, not a clean break." **It did not pin — it cleared the entire wall stack and trended +77 past
+7700.** Lesson: **positive-γ + heavy call walls does NOT reliably pin — a catalyst-driven trend overrides the gamma
+structure.** The "walls cap the day" heuristic has a hard limit, and today broke it. The user's directional read
+(macro/after-hours) beat my structural read again (as it did on 09-14's gap-down).
+
+**Correction #2 — this is NOT a "cheap miss" like 09-17.** 09-17/09-11 were messy (V-shape, gap-then-flat).
+**Today was a clean, sustained +74 intraday uptrend** (open 7694 → close 7768, near the high) — a CALL on any of
+those 32 refused breakouts would have been a **big** winner. This is the 5th H5 instance (08-27 · 09-03 · 09-11 ·
+09-17 · 09-21) and the **most blatant and most costly** — a textbook catchable trend the bot is structurally blind
+to because it only goes long in *negative* gamma.
+
+**So today is the strongest possible argument for mapAndCompassGEX** (direction from the OR, regime-agnostic; map
+for the target). The regime gate's premise "positive γ → dealers dampen → breakouts fade" is **demonstrably false
+on catalyst trend-up days**, and it has now cost us 5 green up-days, today the worst. The human read keeps catching
+these; the machine keeps refusing them.
+
+**Eval unchanged: 2W/0L, +$1,203** (mechGEX took nothing today). `python scripts/go_live_status.py`.
+
+---
+
 ## 2026-09-18 (Fri) — 🟢 +$860: neg-γ PUT caught the early drop, trail banked +82% of a +104% peak before the recovery
 
 **A green *close*, but we made $860 on a PUT — because we caught the early DOWN-leg and the trail exited before the

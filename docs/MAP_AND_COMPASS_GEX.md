@@ -1,7 +1,26 @@
 # mapAndCompassGEX — design (NOT built; evidence-gated)
 
-**Status: DESIGN / ideation (2026-09-14).** No code yet. Build is gated on the evidence step below.
+**Status: DEFERRED by user decision (2026-09-21) — DO NOT BUILD YET.** Keep *logging* the evidence (the H5
+blind-spot instances below + the pre-market watch); build later. Reason: mechGEX is mid-eval on a **frozen
+ruleset** (Day 0 = 09-13) and this sleeve shares the exit/gate code — building now would contaminate the go-live
+forward test. Also the compass (OR-break) still needs rethinking (see the backtest). Revisit when the user says so.
 A **3rd GEX sleeve** alongside `mechGEX` (mechanical, regime-driven) and `thesisGEX` (human-in-the-loop).
+
+## H5 blind-spot log — the evidence that keeps accumulating (positive-γ up-days mechGEX sat out)
+
+The case for this sleeve. Every one: positive gamma → the regime gate refused CALL breakouts ("breakouts fade") →
+mechGEX took **0 trades** on a green/up day the human read (or an OR-break) would have caught. Append each new one.
+
+| Date | Day move | mechGEX | Note |
+|------|----------|---------|------|
+| 2026-09-03 | +~1% trend-up | 0 trades (29 pos-γ CALL skips) | first named; clean intraday trend missed |
+| 2026-09-11 | green gap-up, flat intraday | 0 trades (6 skips) | *cheap* miss (gap was the move; intraday flat) |
+| 2026-09-17 | +91 reversal (V-shape) | 0 trades (4 skips) | messy/whippy — harder miss |
+| 2026-09-21 | **+118 TREND (+74 intraday)** | 0 trades (**32** skips) | **worst + clearest**; clean sustained uptrend, big catchable CALL |
+
+**Also learned 09-21:** heavy call walls do **not** pin a catalyst-driven trend (7700 was blown through to 7777) —
+so the "map caps the day" heuristic fails on trend days; the *direction* (OR/human), not the wall, is what matters
+on these. n=4 clean misses and counting.
 
 ## The one-line idea
 
