@@ -149,6 +149,34 @@ regime's sample.
 
 ---
 
+## 2026-09-23 (Wed) — ⚪ 0 trades on a −0.84% SLOW grind-down — my pin-call was WRONG; gates skipped it on low-vol
+
+**SPX fell ~0.84% and my pre-open "deep-pos-γ pin/chop" read was wrong — but 0 trades anyway, because the fall was
+a slow grind the low-vol + momentum gates rightly (borderline) refused.** Candid retro.
+
+**The day:** open 7760 → **drifted down all day → close 7703** (−57 from open, ~−0.84% vs prior close; low 7697,
+range 62). **Broke down through the flip → flipped to NEGATIVE γ (72/77).** So it *fell away* from the call wall
+instead of pinning under it.
+
+**Correction — the pin call failed.** 09-22 deep-pos-γ pinned (22pt); today deep-pos-γ **fell −65** through the
+flip. **Deep positive γ does NOT guarantee a pin — a directional catalyst overrides it.** So "deep pos-γ = pin" is
+a *base case absent selling pressure*, not a rule (1 pin / 1 fall over the two days). Logged with that caveat.
+
+**Why no trade — a slow grind, not an impulse:** PUT signals formed all day but were blocked in sequence — early
+**pos-γ "breakouts fade"** (2, spot just above flip), then **no-momentum** (20, the drop wasn't 2 accelerating
+bars — a steady drift), and **low-vol (93 skips)** with entry-vol stuck **0.071–0.081, just under 0.082**. The
+tape fell −0.84% but *slowly* (range 62 over 6.5h) — the gates judged it too slow to outrun theta.
+
+**Borderline for the low-vol watch (flagged, not concluded):** range 62 > the 50-pt trigger and directional, vol
+marginally below (0.076–0.081) → a *candidate* miss. BUT the **momentum gate co-blocked** it (a grind, not an
+impulse), and without option P&L I can't say a slow −63pt PUT would've *won* vs scratched after theta. So: 1st
+soft candidate; need clean, faster ≥50-pt days to actually trip the re-run. (Low-vol watch updated.)
+
+**Eval: 0 trades, unchanged 2W/0L, +$1,203.** Not the pos-γ up-trend blind spot (this was a down day) — a
+low-vol/slow-grind skip, defensible but borderline.
+
+---
+
 ## 2026-09-22 (Tue) — ⚪ 0 trades — deep-pos-γ PIN, and this time sitting out was CORRECT (the discriminator worked)
 
 **Same "0 trades, pos-γ CALL skips" as yesterday — opposite verdict, and the pre-open read called it right.**
