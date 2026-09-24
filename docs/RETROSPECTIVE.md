@@ -149,6 +149,32 @@ regime's sample.
 
 ---
 
+## 2026-09-24 (Thu) — 🟢 GEX CALL +$457 (eval #3) · 🔴 trend CALL −$370 → trend DISABLED; go-live P&L is gex-only
+
+**Two trades, opposite outcomes — and it's the cleanest illustration yet of why GEX stays and trend goes.** The
+day gapped down to 7674, dipped to **7665** (≈ the mapped 7675 support, which held), then **V-recovered to 7716**,
+closed 7705 (range 51, mostly neg-γ).
+
+**🟢 GEX CALL (eval sleeve) — +$457, 3rd eval win.** 09:54 BUY 7680 CALL @ $13.20 — neg-γ, broke the OR-high on the
+**bounce off the 7665/7675 support**, 2-bar accel ↑. Peaked **+55%**, mid-band trail (35% giveback) exited **+35% /
++$460** at 10:10 (MAE only −11%). Nimble: caught the bounce, banked it. **mechGEX now 3W/0L, +$1,660 (16.6% to
+$10k).**
+
+**🔴 Trend CALL — −$370, and its last trade.** 14:00 BUY CALL @ $8.00 on a Supertrend flip (kauf 45) — then
+**Supertrend flipped right back within 3 minutes**; it never gained (peak 0%), MAE −46%, reversed-out −45.6% /
+−$370. A textbook late, whipsaw-prone trend fire in a chop regime — exactly the failure mode that's dogged trend.
+**→ Trend DISABLED (`STRATEGY=gex`, user call).** Code untouched; re-add `trend,` to re-enable.
+
+**Bookkeeping (per user):** the **−$370 trend loss is NOT in the go-live P&L.** `go_live_status.py` filters
+`Strategy=='gex'`, so the eval board is the 3 GEX trades only (+$1,660). Day all-in incl. trend = +$90; the *eval*
+tracks GEX alone.
+
+**The lesson in one line:** on the same V-day, the fast neg-γ **GEX** OR-breakout + trail caught the bounce (+$457),
+while the slow **trend** Supertrend flip fired late into a reversal (−$370). Nimble beats slow in chop — hence
+GEX stays the go-live candidate, trend is parked.
+
+---
+
 ## 2026-09-23 (Wed) — ⚪ 0 trades on a −0.84% SLOW grind-down — my pin-call was WRONG; gates skipped it on low-vol
 
 **SPX fell ~0.84% and my pre-open "deep-pos-γ pin/chop" read was wrong — but 0 trades anyway, because the fall was

@@ -20,8 +20,12 @@ Three position slots run together, each keyed `strategy:symbol`:
 **Read this block first, then the linked docs.** Everything below is current; the dated status/bug
 paragraphs further down are *history*.
 
-**What's running:** `STRATEGY=trend,gex` + the `thesis:SPX` rail, on an **always-on laptop** (Gateway on
+**What's running:** `STRATEGY=gex` + the `thesis:SPX` rail, on an **always-on laptop** (Gateway on
 `:4002`, laptop never sleeps — see Operational setup). Restart the bot to apply any code change.
+**⚠️ Trend DISABLED 2026-09-24** (user call): after weeks of the kauf gate blocking its flips, trend finally fired
+09-24 and lost −$370 (instant Supertrend reversal). Dropped from `STRATEGY` to focus the eval on the GEX sleeve
+(mechGEX). Trend code is untouched — re-add `trend,` to `STRATEGY` in `.env` + restart to re-enable. Docs below
+that still say `STRATEGY=trend,gex` describe the two-strategy engine generically; the *live* config is gex-only.
 
 **Added 2026-08-19→24 (all live, all documented):**
 - **Thesis-GEX command rail (#44)** — `src/commands.py` (pure) + bot wiring. Drop `data/commands/*.json`
