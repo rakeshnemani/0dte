@@ -17,10 +17,12 @@ mechGEX took **0 trades** on a green/up day the human read (or an OR-break) woul
 | 2026-09-11 | green gap-up, flat intraday | 0 trades (6 skips) | *cheap* miss (gap was the move; intraday flat) |
 | 2026-09-17 | +91 reversal (V-shape) | 0 trades (4 skips) | messy/whippy — harder miss |
 | 2026-09-21 | **+118 TREND (+74 intraday)** | 0 trades (**32** skips) | **worst + clearest**; clean sustained uptrend, big catchable CALL |
+| 2026-09-25 | +40 (V-recovery, +18 intraday) | 0 trades (29 skips) | *moderate/messy* miss — closed near high but V-shaped (−33 dip first); like 09-11/17 |
 
 **Also learned 09-21:** heavy call walls do **not** pin a catalyst-driven trend (7700 was blown through to 7777) —
 so the "map caps the day" heuristic fails on trend days; the *direction* (OR/human), not the wall, is what matters
-on these. n=4 clean misses and counting.
+on these. **n=5 pos-γ up-days sat out** (09-21 the clean/worst; 09-11/17/25 moderate V-shaped; 09-03 the original)
+— and counting.
 
 ## The one-line idea
 

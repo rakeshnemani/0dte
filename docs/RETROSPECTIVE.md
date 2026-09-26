@@ -149,6 +149,31 @@ regime's sample.
 
 ---
 
+## 2026-09-25 (Fri) — ⚪ 0 trades on a green pos-γ up-day — H5 blind spot #5 (moderate, V-shaped miss)
+
+**Another positive-γ up-day mechGEX sat out — the 5th H5 instance, though a messier/moderate one, not a clean
+trend like 09-21.** Also the first clean confirmation trend is off (0 kauf skips — no trend scans).
+
+**The day:** open 7727 → dipped to **7694** → recovered to **7749, close 7745** (+40 vs prior close, +18 intraday,
+range 55). **Positive gamma all day** (3/77 neg). mechGEX refused **29 CALL breakouts** ("dealers dampen, breakouts
+fade") + 7 exhaustion (late). No low-vol/IntoWall/kauf.
+
+**Miss or correct skip? A *moderate* miss.** It closed near the high (+51 off the 7694 low), so a CALL on the
+recovery would've won — that's the H5 pattern (pos-γ up-day the regime gate refuses). But it was **V-shaped**
+(−33 dip first, then recover) and modest net intraday (+18), so it's a messier miss like 09-11/09-17, not the
+clean +74 trend of 09-21. Logged as H5 #5, qualified.
+
+**No pre-market snapshot today** (went straight to the retro), so no pre-open map call to score — the bot's own
+market-hours chain/regime collection still saved the data.
+
+**Trend confirmed off:** 0 kauf skips today (vs the usual handful) — `STRATEGY=gex` took effect, trend no longer
+scans. Clean.
+
+**Eval unchanged: 3W/0L, +$1,660** (mechGEX took nothing — pos-γ). The asymmetry stands: mechGEX is perfect on the
+neg-γ/coiled days it trades (3-0) but blind to pos-γ up-days (now 5 sat out) — the mapAndCompass case, still parked.
+
+---
+
 ## 2026-09-24 (Thu) — 🟢 GEX CALL +$457 (eval #3) · 🔴 trend CALL −$370 → trend DISABLED; go-live P&L is gex-only
 
 **Two trades, opposite outcomes — and it's the cleanest illustration yet of why GEX stays and trend goes.** The
